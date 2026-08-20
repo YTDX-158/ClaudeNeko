@@ -18,6 +18,28 @@ function asciiTmpDir() {
   return process.env.SystemRoot ? path.join(process.env.SystemRoot, 'Temp') : os.tmpdir();
 }
 
+/** 检测 python 依赖（cv2 / faster-whisper），结果缓存。 */
+let depsCache = null;
+function checkDep(cmd) {
+  return new Promise((resolve) => {
+    const py = spawn('python', ['-c', cmd], { windowsHide: true });
+    let out = '';
+    py.stdout.on('data', (d) => (out += d));
+    py.stderr.on('data', () => {});
+    py.on('close', (code) => resolve(code === 0 && out.trim() === 'ok'));
+    py.on('error', () => resolve(false));
+  });
+}
+async function checkDeps() {
+  if (depsCache) return depsCache;
+  const [cv2, whisper] = await Promise.all([
+    checkDep("import cv2; print('ok')"),
+    checkDep("import faster_whisper; print('ok')"),
+  ]);
+  depsCache = { cv2, whisper };
+  return depsCache;
+}
+
 /** 用 python cv2 抽视频最多 3 个关键帧（开头/中间/结尾）。 */
 function extractVideoFrames(videoBuf) {
   return new Promise((resolve) => {
@@ -112,6 +134,10 @@ export async function describeMedia(kind, buf, mime, fileName) {
   if (kind === 'image') return describeImage(buf, mime);
 
   if (kind === 'video') {
+    const deps = await checkDeps();
+    if (!deps.cv2) {
+      return { ok: false, error: '视频理解需要 python + opencv-python，请安装：pip install opencv-python' };
+    }
     const frames = await extractVideoFrames(buf);
     if (!frames.length) return { ok: false, error: '视频抽帧失败（需 python+cv2）' };
     const texts = [];
@@ -126,6 +152,10 @@ export async function describeMedia(kind, buf, mime, fileName) {
   }
 
   if (kind === 'audio') {
+    const deps = await checkDeps();
+    if (!deps.whisper) {
+      return { ok: false, error: '音频理解需要 python + faster-whisper，请安装：pip install faster-whisper' };
+    }
     return transcribeAudio(buf);
   }
 
