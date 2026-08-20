@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -73,6 +74,41 @@ function serveStatic(req, res, url) {
     res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream' });
     fs.createReadStream(filePath).pipe(res);
   });
+}
+
+/* ---------- 开机自启（HKCU Run，登录时后台启动后端，无需管理员） ---------- */
+const RUN_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const AUTOSTART_NAME = 'ClaudeNekoWeb';
+
+function runPowerShell(script) {
+  return new Promise((resolve) => {
+    const child = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.on('close', () => resolve(out.trim()));
+    child.on('error', () => resolve(''));
+  });
+}
+
+async function getAutoStartEnabled() {
+  const out = await runPowerShell(
+    `(Get-ItemProperty -Path '${RUN_KEY}' -Name '${AUTOSTART_NAME}' -ErrorAction SilentlyContinue).'${AUTOSTART_NAME}'`,
+  );
+  return !!out;
+}
+
+async function setAutoStart(enabled) {
+  if (enabled) {
+    // 登录时隐藏启动后端（run-node.vbs 动态定位，不硬编码路径）
+    const vbs = path.join(SERVER_DIR, '..', 'run-node.vbs');
+    await runPowerShell(
+      `Set-ItemProperty -Path '${RUN_KEY}' -Name '${AUTOSTART_NAME}' -Value 'wscript "${vbs}"'`,
+    );
+  } else {
+    await runPowerShell(
+      `Remove-ItemProperty -Path '${RUN_KEY}' -Name '${AUTOSTART_NAME}' -ErrorAction SilentlyContinue`,
+    );
+  }
 }
 
 /* ---------- API ---------- */
@@ -197,6 +233,15 @@ async function routeApi(req, res, url) {
 
   if (method === 'GET' && pathname === '/api/models') {
     return sendJson(res, 200, { models: config.models, default: config.defaultModel });
+  }
+
+  if (method === 'GET' && pathname === '/api/autostart') {
+    return sendJson(res, 200, { enabled: await getAutoStartEnabled() });
+  }
+  if (method === 'POST' && pathname === '/api/autostart') {
+    const body = await readBody(req);
+    await setAutoStart(Boolean(body.enabled));
+    return sendJson(res, 200, { enabled: Boolean(body.enabled) });
   }
 
   if (method === 'GET' && pathname === '/api/sessions') {

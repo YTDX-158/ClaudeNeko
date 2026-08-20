@@ -33,4 +33,6 @@ export const api = {
     request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteSession: (id) => request(`/sessions/${id}`, { method: 'DELETE' }),
   listMessages: (id) => request(`/sessions/${id}/messages`),
+  getAutostart: () => request('/autostart'),
+  setAutostart: (enabled) => request('/autostart', { method: 'POST', body: JSON.stringify({ enabled }) }),
 };

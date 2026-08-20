@@ -4,6 +4,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { skinEngine } from './skinEngine.js';
+import { api } from '../api.js';
 
 const ACCENTS = ['#74c0fc', '#34d399', '#4f83f2', '#f472b6', '#f59e0b', '#a78bfa', '#22d3ee', '#f87171'];
 const GRADIENTS = [
@@ -42,7 +43,27 @@ export default function SkinSettings({ open, onClose }) {
   const [tab, setTab] = useState('theme');
   const [accent, setAccent] = useState(() => localStorage.getItem('dsw-dream-skin:accent') || '');
   const [confirmReset, setConfirmReset] = useState(false);
+  const [autostart, setAutostart] = useState(null); // null=加载中 / true|false=开关状态
   const fileRef = useRef(null);
+
+  // 打开设置时读取开机自启当前状态
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.getAutostart().then((r) => { if (!cancelled) setAutostart(r.enabled); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open]);
+
+  const toggleAutostart = async () => {
+    const next = !autostart;
+    setAutostart(next); // 乐观更新
+    try {
+      const r = await api.setAutostart(next);
+      if (r.enabled !== next) setAutostart(r.enabled);
+    } catch {
+      setAutostart(!next); // 失败回滚
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -266,6 +287,20 @@ export default function SkinSettings({ open, onClose }) {
               </div>
             </>
           )}
+        </div>
+
+        <div className="skin-section" style={{ borderTop: '1px solid var(--border, rgba(255,255,255,0.08))' }}>
+          <div className="skin-section-title">系统</div>
+          <div className="skin-row">
+            <span>开机自启（登录时后台启动服务，不用再点 neko://）</span>
+            <button
+              className={`skin-btn${autostart ? ' active' : ''}`}
+              onClick={toggleAutostart}
+              disabled={autostart === null}
+            >
+              {autostart === null ? '…' : autostart ? '开 ✓' : '关'}
+            </button>
+          </div>
         </div>
 
         <div className="skin-footer">
