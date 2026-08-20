@@ -10,6 +10,8 @@ import { createClaudeRunner } from './lib/claudeRunner.js';
 import { sseHeaders, writeSse } from './lib/sse.js';
 import { fetchBalance } from './lib/balance.js';
 import { saveMedia, listMedia, getMedia, getMediaPath, deleteMedia } from './lib/mediaStore.js';
+import { describeImage } from './lib/vision.js';
+import { extractDocumentText } from './lib/docText.js';
 
 const config = resolveConfig();
 const store = new SessionStore(config.dataDir);
@@ -226,6 +228,30 @@ function serveMediaFile(req, res, rec, asDownload) {
   }
 }
 
+/** 附件上下文：文档抽字 + 图片视觉转描述 → 拼成给主模型的文本块。 */
+async function buildAttachmentContext(attachments) {
+  const lines = [];
+  for (const a of attachments) {
+    const rec = getMedia(a.id);
+    if (!rec) continue;
+    const filePath = getMediaPath(rec);
+    try {
+      if (rec.kind === 'image') {
+        const r = await describeImage(fs.readFileSync(filePath), rec.mime);
+        lines.push(`[图片附件 ${a.name}] ${r.ok ? r.text : `（${r.error}）`}`);
+      } else if (rec.kind === 'document' || rec.kind === 'file') {
+        const text = extractDocumentText(filePath, rec.ext);
+        lines.push(`[文档附件 ${a.name} 内容]${text ? `\n${text}` : '（无法抽取文字）'}`);
+      } else {
+        lines.push(`[附件 ${a.name}]（该类型暂不支持 AI 读取）`);
+      }
+    } catch {
+      lines.push(`[附件 ${a.name}]（读取失败）`);
+    }
+  }
+  return lines.length ? `\n\n[附件内容，请基于以下内容回复]\n${lines.join('\n\n')}` : '';
+}
+
 /* ---------- API ---------- */
 
 function sendErrorTo(res, message) {
@@ -255,8 +281,9 @@ async function handleMessage(req, res, url) {
   if (!prompt && attachments.length === 0) {
     return sendJson(res, 400, { error: '消息内容不能为空（请输入文字或附加文件）' });
   }
-  // 纯附件消息给 claude 一个占位 prompt，避免空 prompt 报错
-  const claudePrompt = prompt || '（消息含附件，无文字内容）';
+  // 附件上下文：文档抽字 + 图片视觉转描述（在 claude 调用前同步完成，让主模型"读到"附件）
+  const attachCtx = await buildAttachmentContext(attachments);
+  const claudePrompt = [prompt, attachCtx].filter(Boolean).join('\n\n') || '（附件消息，无文字内容）';
 
   busy.add(id);
   sseHeaders(res);
