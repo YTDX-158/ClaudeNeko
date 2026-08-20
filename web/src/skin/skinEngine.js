@@ -240,6 +240,11 @@ function shadeTokens() {
     '--dsw-specific-assistant-bg': { light: toRgba(bgColor, readAssistantOpacity()), dark: toRgba(bgColor, readAssistantOpacity()) },
     '--dsw-specific-user-bg': { light: toRgba(bgColor, readUserOpacity()), dark: toRgba(bgColor, readUserOpacity()) },
     '--dsw-specific-code-bg': { light: toRgba(bgColor, readCodeOpacity()), dark: toRgba(bgColor, readCodeOpacity()) },
+    // 行内代码：默认浅淡白底（不黑），可被"代码块"滑块微调（0.08~0.3 白）
+    '--dsw-specific-inline-code-bg': {
+      light: toRgba('rgb(255,255,255)', Math.min(0.08 + readCodeOpacity() * 0.12, 0.3)),
+      dark: toRgba('rgb(255,255,255)', Math.min(0.08 + readCodeOpacity() * 0.12, 0.3)),
+    },
   };
   wallpaperOverrideDispose?.();
   wallpaperOverrideDispose = overrideTokens('dream-skin:wallpaper', overrides);

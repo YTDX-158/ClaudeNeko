@@ -497,7 +497,7 @@ body {
 }
 /* 行内代码（排除代码块 pre 内部的 code） */
 .md :not(pre) > code {
-  background: var(--dsw-alias-markdown-inline-code, #14161a);
+  background: var(--dsw-specific-inline-code-bg, rgba(255, 255, 255, 0.1));
   color: var(--dsw-alias-label-primary, inherit);
   padding: 1px 5px;
   border-radius: 4px;
