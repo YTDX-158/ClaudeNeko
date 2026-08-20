@@ -51,6 +51,7 @@ export default function CatMascot() {
   const [pos, setPos] = useState(loadPos);
   const [visible, setVisible] = useState(() => skinEngine.catVisible);
   const dragRef = useRef(null); // { startX, startY, origX, origY, moved }
+  const bubbleTimerRef = useRef(null); // 气泡消失定时器（卸载时清理）
 
   // 设置里「猫猫」开关实时生效（关掉后连粒子一起消失）
   useEffect(() => {
@@ -63,6 +64,11 @@ export default function CatMascot() {
     const onResize = () => setPos((p) => clampPos(p.x, p.y));
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // 卸载时清掉气泡定时器，避免卸载后 setState
+  useEffect(() => {
+    return () => window.clearTimeout(bubbleTimerRef.current);
   }, []);
 
   const handlePointerDown = (e) => {
@@ -109,7 +115,8 @@ export default function CatMascot() {
     const pick = CAT_KAOMOJI[Math.floor(Math.random() * CAT_KAOMOJI.length)];
     setBubble(pick);
     setLocked(true);
-    setTimeout(() => {
+    window.clearTimeout(bubbleTimerRef.current);
+    bubbleTimerRef.current = window.setTimeout(() => {
       setBubble(null);
       setLocked(false);
     }, BUBBLE_MS);

@@ -250,7 +250,7 @@ async function routeApi(req, res, url) {
   const method = req.method;
 
   if (method === 'GET' && pathname === '/api/health') {
-    return sendJson(res, 200, { ok: true, version: '1.2.0' });
+    return sendJson(res, 200, { ok: true, version: '1.3.0' });
   }
 
   if (method === 'GET' && pathname === '/api/balance') {
