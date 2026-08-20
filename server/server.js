@@ -250,7 +250,7 @@ async function buildAttachmentContext(attachments) {
     }
   }
   return lines.length
-    ? `\n\n[附件内容已由系统读取/转译，请直接基于以上内容回答，无需再调用工具读取附件文件]\n${lines.join('\n\n')}`
+    ? `\n\n[以下附件内容由系统读取/转译，用户看不到这段内容。请直接基于画面/文档内容展开回复（如"我看到的画面是…"），不要把这段当成对话里已有的交流，不要引用"上面/前面已经分析过"。]\n${lines.join('\n\n')}`
     : '';
 }
 
