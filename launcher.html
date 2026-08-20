@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ClaudeNeko 启动器</title>
+<style>
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #0f1115;
+    color: #f9fafb;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+  }
+  .card {
+    text-align: center;
+    padding: 48px 56px;
+    background: #16181d;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .4);
+    max-width: 440px;
+  }
+  .cat { font-size: 56px; line-height: 1; }
+  h1 { font-size: 22px; margin: 12px 0 4px; letter-spacing: .5px; }
+  .status { color: #8b93a1; font-size: 14px; margin: 10px 0 24px; min-height: 20px; }
+  .btn {
+    display: inline-block;
+    background: #74c0fc;
+    color: #0f1115;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 28px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .btn:hover { background: #93d0fd; }
+  .tip { color: #5c6370; font-size: 12px; margin-top: 18px; line-height: 1.7; }
+  .spin {
+    display: inline-block;
+    width: 13px;
+    height: 13px;
+    border: 2px solid #74c0fc;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: rot 1s linear infinite;
+    vertical-align: -2px;
+    margin-right: 8px;
+  }
+  @keyframes rot { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="cat">🐱</div>
+  <h1>ClaudeNeko</h1>
+  <div class="status" id="status">正在检测服务…</div>
+  <div id="action"></div>
+  <div class="tip" id="tip"></div>
+</div>
+
+<script>
+const API = 'http://localhost:4000/api/health';
+const statusEl = document.getElementById('status');
+const actionEl = document.getElementById('action');
+const tipEl = document.getElementById('tip');
+let checking = true;
+
+function probe() {
+  return new Promise((resolve) => {
+    fetch(API, { mode: 'no-cors', cache: 'no-store' })
+      .then(() => resolve(true))
+      .catch(() => resolve(false));
+  });
+}
+
+async function check() {
+  const ok = await probe();
+  if (ok) {
+    statusEl.innerHTML = '✅ 服务运行中，正在进入…';
+    actionEl.innerHTML = '';
+    tipEl.innerHTML = '';
+    location.href = 'http://localhost:4000';
+  } else if (checking) {
+    // 第一次检查失败：显示启动按钮
+    statusEl.innerHTML = '⚠️ 服务未启动';
+    actionEl.innerHTML = '<a href="neko://launch" class="btn" id="launch">启动服务</a>';
+    tipEl.innerHTML = '点击后会弹出一个「打开 neko?」确认框，选「打开」即可。<br>服务启动后本页会自动跳转，无需手动刷新。';
+    checking = false;
+  } else {
+    // 已点击启动：轮询等待服务起来
+    statusEl.innerHTML = '<span class="spin"></span>正在启动服务…';
+    setTimeout(check, 1500);
+  }
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'launch') {
+    // 用户手势点击协议链接；延迟开始轮询，等协议处理
+    setTimeout(() => { checking = false; check(); }, 800);
+  }
+});
+
+check();
+</script>
+</body>
+</html>

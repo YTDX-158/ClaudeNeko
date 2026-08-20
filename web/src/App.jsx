@@ -50,7 +50,7 @@ export default function App() {
       />
       {serverOk === false && (
         <div className="banner" role="alert">
-          无法连接后端（127.0.0.1:4000）——请确认 server 已启动：<code>npm run dev</code>
+          无法连接后端（127.0.0.1:4000）——请双击桌面「启动ClaudeNeko.bat」启动服务
         </div>
       )}
       <SkinSettings open={skinOpen} onClose={() => setSkinOpen(false)} />

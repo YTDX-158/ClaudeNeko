@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 
 /**
@@ -24,6 +24,40 @@ export function useSessions() {
       .catch((e) => console.error('加载会话失败', e))
       .finally(() => setLoading(false));
   }, [refresh]);
+
+  // 多页面同步：每 3s 轮询会话列表，内容没变化就不重绘；当前会话被别处删除时回退到最近会话
+  useEffect(() => {
+    let cancelled = false;
+    const sigRef = { current: '' };
+    const tick = async () => {
+      if (document.hidden) return;
+      try {
+        // api.listSessions() 返回 { sessions: [...] }，必须解构取出数组
+        const { sessions: arr } = await api.listSessions();
+        const sig = JSON.stringify(arr);
+        if (sig === sigRef.current) return;
+        sigRef.current = sig;
+        if (cancelled) return;
+        setSessions(arr);
+        setActiveId((prev) => {
+          if (prev && arr.some((s) => s.id === prev)) return prev;
+          return arr.length ? arr[0].id : null;
+        });
+      } catch {
+        // 后端瞬时不可用则忽略，下个周期再试
+      }
+    };
+    const onVisible = () => {
+      if (!document.hidden) tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    const timer = setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   const create = useCallback(async (model) => {
     const { session, cleanedIds } = await api.createSession(model);

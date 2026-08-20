@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import MessageBubble from './MessageBubble.jsx';
 
-export default function MessageList({ messages, error }) {
+export default function MessageList({ messages, error, onReload, onQuote }) {
   const endRef = useRef(null);
 
   useEffect(() => {
@@ -19,7 +19,7 @@ export default function MessageList({ messages, error }) {
       )}
 
       {messages.map((m) => (
-        <MessageBubble key={m.id ?? m.ts} message={m} />
+        <MessageBubble key={m.id ?? m.ts} message={m} onReload={onReload} onQuote={onQuote} />
       ))}
 
       {error && <div className="msg-error">{error}</div>}

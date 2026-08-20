@@ -6,3 +6,4 @@ config.env
 .env
 *.local
 .DS_Store
+server/log.txt

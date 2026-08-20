@@ -78,6 +78,13 @@ export class SessionStore {
   /** 追加一条消息到会话日志。 */
   appendMessage(id, msg) {
     fs.appendFileSync(path.join(this.messagesDir, `${id}.jsonl`), `${JSON.stringify(msg)}\n`);
+    // 消息落盘即视为会话有更新：刷新 updatedAt（内存 + 落盘），
+    // 让多开 3s 轮询同步与会话排序依赖"消息落盘"，而非 model_update 副作用
+    const s = this.sessions.find((x) => x.id === id);
+    if (s) {
+      s.updatedAt = Date.now();
+      this.#save();
+    }
   }
 
   /** 读取会话消息。 */
