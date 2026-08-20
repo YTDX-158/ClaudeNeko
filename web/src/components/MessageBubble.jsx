@@ -98,11 +98,14 @@ export default function MessageBubble({ message, onQuote }) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
-              a: ({ href, children }) => (
-                <a href={href} target="_blank" rel="noopener noreferrer">
-                  {children}
-                </a>
-              ),
+              a: ({ href, children }) =>
+                /\.(mp4|webm|mov|ogg)$/i.test(href || '') ? (
+                  <video src={href} controls className="md-video" />
+                ) : (
+                  <a href={href} target="_blank" rel="noopener noreferrer">
+                    {children}
+                  </a>
+                ),
               pre: ({ children }) => <pre className="msg-code">{children}</pre>,
             }}
           >

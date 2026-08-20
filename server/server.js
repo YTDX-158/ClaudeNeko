@@ -9,6 +9,7 @@ import { SessionStore } from './lib/sessionStore.js';
 import { createClaudeRunner } from './lib/claudeRunner.js';
 import { sseHeaders, writeSse } from './lib/sse.js';
 import { fetchBalance } from './lib/balance.js';
+import { saveMedia, listMedia, getMedia, getMediaPath, deleteMedia } from './lib/mediaStore.js';
 
 const config = resolveConfig();
 const store = new SessionStore(config.dataDir);
@@ -166,6 +167,65 @@ function listSkills() {
   return out;
 }
 
+/* ---------- 媒体库（上传/列表/预览下载/删除） ---------- */
+const MAX_MEDIA_SIZE = 50 * 1024 * 1024; // 50MB 上传上限
+
+function readRawBody(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > MAX_MEDIA_SIZE) {
+        req.destroy();
+        resolve(null);
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', () => resolve(null));
+  });
+}
+
+function serveMediaFile(req, res, rec, asDownload) {
+  const filePath = getMediaPath(rec);
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    sendJson(res, 404, { error: '文件不存在' });
+    return;
+  }
+  const base = {
+    'Accept-Ranges': 'bytes',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Type': rec.mime,
+  };
+  if (asDownload) base['Content-Disposition'] = `attachment; filename="${encodeURIComponent(rec.originalName)}"`;
+  const range = req.headers.range;
+  if (range && !asDownload) {
+    // 视频拖动需要 Range（HTTP 206）
+    const m = range.match(/bytes=(\d*)-(\d*)/);
+    const start = m && m[1] ? parseInt(m[1], 10) : 0;
+    const end = m && m[2] ? parseInt(m[2], 10) : stat.size - 1;
+    if (start >= stat.size || end >= stat.size) {
+      res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
+      res.end();
+      return;
+    }
+    res.writeHead(206, {
+      ...base,
+      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+      'Content-Length': end - start + 1,
+    });
+    fs.createReadStream(filePath, { start, end }).pipe(res);
+  } else {
+    res.writeHead(200, { ...base, 'Content-Length': stat.size });
+    fs.createReadStream(filePath).pipe(res);
+  }
+}
+
 /* ---------- API ---------- */
 
 function sendErrorTo(res, message) {
@@ -307,6 +367,33 @@ async function routeApi(req, res, url) {
 
   if (method === 'GET' && pathname === '/api/skills') {
     return sendJson(res, 200, { skills: listSkills() });
+  }
+
+  if (method === 'POST' && pathname === '/api/media') {
+    const name = url.searchParams.get('name') || '';
+    const buf = await readRawBody(req);
+    if (!buf) return sendJson(res, 413, { error: '文件过大（>50MB）或上传失败' });
+    const r = saveMedia(buf, decodeURIComponent(name));
+    if (!r.ok) return sendJson(res, 400, { error: r.error });
+    return sendJson(res, 201, r.media);
+  }
+
+  if (method === 'GET' && pathname === '/api/media') {
+    return sendJson(res, 200, { media: listMedia() });
+  }
+
+  const mm = pathname.match(/^\/api\/media\/([^/]+)(\/download)?$/);
+  if (mm) {
+    const [, mid, dl] = mm;
+    const rec = getMedia(mid);
+    if (!rec) return sendJson(res, 404, { error: '文件不存在' });
+    if (method === 'GET') {
+      return serveMediaFile(req, res, rec, !!dl);
+    }
+    if (method === 'DELETE') {
+      deleteMedia(rec.id);
+      return sendJson(res, 200, { ok: true });
+    }
   }
 
   if (method === 'GET' && pathname === '/api/models') {

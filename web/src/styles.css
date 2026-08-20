@@ -1073,3 +1073,49 @@ body {
   overflow-y: auto;
   user-select: text;
 }
+
+/* ============ 媒体库 ============ */
+.media-box { width: min(1100px, 94vw); max-height: 90vh; overflow-y: auto; }
+.media-actions { display: flex; align-items: center; gap: 8px; }
+.media-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 2px 4px; }
+.media-tab {
+  padding: 5px 14px; border-radius: 6px; border: 1px solid var(--border);
+  background: transparent; color: var(--muted); font-size: 12.5px; cursor: pointer;
+  font-family: var(--font-ui);
+}
+.media-tab:hover { border-color: var(--accent); color: var(--text); }
+.media-tab.active { background: var(--accent); color: #0f1115; font-weight: 600; border-color: var(--accent); }
+.media-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px; padding: 10px 2px;
+}
+.media-card {
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  background: var(--panel); display: flex; flex-direction: column;
+  transition: border-color 0.15s var(--ease);
+}
+.media-card:hover { border-color: var(--accent); }
+.media-preview {
+  height: 130px; background: #000; display: flex; align-items: center;
+  justify-content: center; overflow: hidden;
+}
+.media-preview img { width: 100%; height: 100%; object-fit: cover; }
+.media-preview video { width: 100%; height: 100%; object-fit: contain; }
+.media-doc-icon { font-size: 42px; opacity: 0.85; }
+.media-card-info { padding: 8px 10px 4px; }
+.media-name {
+  font-size: 12px; color: var(--text); display: block;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.media-meta { font-size: 11px; color: var(--muted-2); }
+.media-card-actions { display: flex; gap: 6px; padding: 0 10px 10px; }
+.media-btn {
+  flex: 1; text-align: center; padding: 4px 6px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+  font-size: 11.5px; cursor: pointer; text-decoration: none; font-family: var(--font-ui);
+}
+.media-btn:hover { border-color: var(--accent); }
+.media-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+
+/* 对话内视频（markdown 链接为视频 URL 时渲染播放器） */
+.md-video { max-width: 100%; border-radius: 8px; margin: 6px 0; display: block; }
