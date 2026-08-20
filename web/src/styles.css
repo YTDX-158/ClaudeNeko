@@ -372,7 +372,7 @@ body {
   word-break: break-word;
 }
 
-/* 消息操作按钮组：复制 / 重新加载对话 / 引用 */
+/* 消息操作按钮组：复制 / 引用 */
 .msg-actions {
   display: flex;
   gap: 4px;

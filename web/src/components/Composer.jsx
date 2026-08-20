@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 
 /**
  * 输入区：Enter 发送 / Shift+Enter 换行；生成中显示停止按钮。
- * 受控组件：文本状态由父级（ChatWindow）持有，供「重新加载对话/引用」从消息气泡回填。
+ * 受控组件：文本状态由父级（ChatWindow）持有，供「引用」从消息气泡回填。
  * 引用：quote 非空时在输入框上方显示一条引用栏（微信/QQ 式），输入框保持独立；
  * 发送后由父级把引用拼成 markdown 引用块一起发出。
  */
