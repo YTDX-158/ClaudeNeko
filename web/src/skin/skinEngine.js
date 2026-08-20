@@ -198,6 +198,9 @@ function applyWallpaper() {
     const bg = wallpaperBackgroundCss();
     if (!bg) {
       teardownWallpaper();
+      // 无壁纸也应用透明度 wash：各区域透明度（气泡/侧栏/输入区…）独立生效，
+      // 否则 --dsw-specific-* 覆盖从不生成，滑块写入后无效（气泡兜底深色）
+      shadeTokens();
       return;
     }
     if (wallpaperEl === null || !document.body.contains(wallpaperEl)) {
