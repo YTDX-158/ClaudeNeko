@@ -26,9 +26,15 @@ function sendJson(res, status, body) {
 function readBody(req) {
   return new Promise((resolve) => {
     let data = '';
+    let tooLarge = false;
     req.on('data', (chunk) => {
+      if (tooLarge) return;
       data += chunk;
-      if (data.length > 1e6) req.destroy();
+      if (data.length > 1e6) {
+        tooLarge = true;
+        resolve({ __tooLarge: true }); // 标记超限，由调用方返回 413
+        req.pause(); // 暂停接收，等 413 响应发出后连接自然关闭（destroy 会抢先断连）
+      }
     });
     req.on('end', () => {
       try {
@@ -37,7 +43,7 @@ function readBody(req) {
         resolve({});
       }
     });
-    req.on('error', () => resolve({}));
+    req.on('error', () => {});
   });
 }
 
@@ -129,6 +135,7 @@ async function handleMessage(req, res, url) {
   if (busy.has(id)) return sendJson(res, 409, { error: '该会话正在生成中' });
 
   const body = await readBody(req);
+  if (body && body.__tooLarge) return sendJson(res, 413, { error: '内容超过 1MB 上限，请缩短后重试' });
   const prompt = String(body.prompt ?? '').trim();
   if (!prompt) return sendJson(res, 400, { error: 'prompt 不能为空' });
 

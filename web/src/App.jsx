@@ -15,10 +15,19 @@ export default function App() {
   const [skinOpen, setSkinOpen] = useState(false);
 
   useEffect(() => {
-    api
-      .health()
-      .then(() => setServerOk(true))
-      .catch(() => setServerOk(false));
+    const check = () => {
+      api
+        .health()
+        .then(() => setServerOk(true))
+        .catch(() => setServerOk(false));
+    };
+    check();
+    // 切回本页时重新检测，服务后启动/恢复时横幅自动消失
+    const onVisible = () => {
+      if (!document.hidden) check();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, []);
 
   const chat = useChatStream(
