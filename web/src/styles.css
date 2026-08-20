@@ -695,6 +695,27 @@ body {
   font-weight: 600;
 }
 .skin-tab-body { min-height: 200px; }
+
+/* 设置一级分区：左侧竖排（外观/功能） */
+.skin-layout { display: flex; gap: 14px; }
+.skin-nav { display: flex; flex-direction: column; gap: 6px; width: 76px; flex-shrink: 0; padding-top: 2px; }
+.skin-nav-btn {
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--dsw-alias-label-secondary, #a0a6b0);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.skin-nav-btn:hover { background: rgba(255, 255, 255, 0.06); }
+.skin-nav-btn.active {
+  background: var(--dsw-alias-brand-primary, #74c0fc);
+  color: #0f1115;
+  font-weight: 600;
+}
+.skin-main { flex: 1; min-width: 0; }
 .skin-close {
   width: 28px;
   height: 28px;

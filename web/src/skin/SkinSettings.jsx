@@ -41,6 +41,7 @@ function SliderRow({ label, value, min = 0, max = 1, step = 0.05, onChange }) {
 export default function SkinSettings({ open, onClose }) {
   const [, setTick] = useState(0);
   const [tab, setTab] = useState('theme');
+  const [section, setSection] = useState('appearance'); // 一级分区：appearance(外观) | features(功能)
   const [accent, setAccent] = useState(() => localStorage.getItem('dsw-dream-skin:accent') || '');
   const [confirmReset, setConfirmReset] = useState(false);
   const [autostart, setAutostart] = useState(null); // null=加载中 / true|false=开关状态
@@ -96,26 +97,44 @@ export default function SkinSettings({ open, onClose }) {
     <div className="skin-modal" onClick={onClose}>
       <div className="skin-modal-box" onClick={(e) => e.stopPropagation()}>
         <div className="skin-modal-header">
-          <span className="skin-modal-title">外观 / Theme</span>
+          <span className="skin-modal-title">{section === 'appearance' ? '外观 / Theme' : '功能 / Features'}</span>
           <button className="skin-close" onClick={onClose} title="关闭">✕</button>
         </div>
 
-        {/* 标签页栏 */}
-        <div className="skin-tabs" role="tablist">
-          {TABS.map((t) => (
+        {/* 一级分区：外观 | 功能（左侧竖排） */}
+        <div className="skin-layout">
+          <div className="skin-nav" role="navigation">
             <button
-              key={t.id}
-              role="tab"
-              aria-selected={tab === t.id}
-              className={`skin-tab${tab === t.id ? ' active' : ''}`}
-              onClick={() => setTab(t.id)}
+              className={`skin-nav-btn${section === 'appearance' ? ' active' : ''}`}
+              onClick={() => setSection('appearance')}
             >
-              {t.label}
+              外观
             </button>
-          ))}
-        </div>
+            <button
+              className={`skin-nav-btn${section === 'features' ? ' active' : ''}`}
+              onClick={() => setSection('features')}
+            >
+              功能
+            </button>
+          </div>
+          <div className="skin-main">
+          {section === 'appearance' ? (
+            <>
+            <div className="skin-tabs" role="tablist">
+              {TABS.map((t) => (
+                <button
+                  key={t.id}
+                  role="tab"
+                  aria-selected={tab === t.id}
+                  className={`skin-tab${tab === t.id ? ' active' : ''}`}
+                  onClick={() => setTab(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
 
-        <div className="skin-tab-body">
+            <div className="skin-tab-body">
           {/* ============ 主题页 ============ */}
           {tab === 'theme' && (
             <div className="skin-section">
@@ -287,19 +306,26 @@ export default function SkinSettings({ open, onClose }) {
               </div>
             </>
           )}
-        </div>
-
-        <div className="skin-section" style={{ borderTop: '1px solid var(--border, rgba(255,255,255,0.08))' }}>
-          <div className="skin-section-title">系统</div>
-          <div className="skin-row">
-            <span>开机自启（登录时后台启动服务，不用再点 neko://）</span>
-            <button
-              className={`skin-btn${autostart ? ' active' : ''}`}
-              onClick={toggleAutostart}
-              disabled={autostart === null}
-            >
-              {autostart === null ? '…' : autostart ? '开 ✓' : '关'}
-            </button>
+            </div>
+            </>
+          ) : (
+            <div className="skin-tab-body">
+              <div className="skin-section">
+                <div className="skin-section-title">功能</div>
+                <div className="skin-row">
+                  <span>开机自启（登录时后台启动服务，不用再点 neko://）</span>
+                  <button
+                    className={`skin-btn${autostart ? ' active' : ''}`}
+                    onClick={toggleAutostart}
+                    disabled={autostart === null}
+                  >
+                    {autostart === null ? '…' : autostart ? '开 ✓' : '关'}
+                  </button>
+                </div>
+                <div className="skin-hint">更多功能开关会陆续加到这里</div>
+              </div>
+            </div>
+          )}
           </div>
         </div>
 
