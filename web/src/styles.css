@@ -1123,13 +1123,13 @@ body {
 /* 侧栏媒体库入口（新建会话下方） */
 .media-nav-btn {
   margin: 0 12px 10px;
-  padding: 8px 12px;
+  padding: 9px 12px;
   border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--muted);
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   font-family: var(--font-ui);
   cursor: pointer;
   transition: all 0.15s var(--ease);
@@ -1137,7 +1137,7 @@ body {
   align-items: center;
   gap: 6px;
 }
-.media-nav-btn:hover { border-color: var(--accent); color: var(--text); }
+.media-nav-btn:hover { background: var(--accent); color: #0b0f17; }
 
 /* 媒体选择器：选中高亮 + 底部操作 */
 .media-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
