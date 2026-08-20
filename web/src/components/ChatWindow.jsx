@@ -14,13 +14,6 @@ export default function ChatWindow({ session, chat }) {
   const [quote, setQuote] = useState(null); // { text, role } | null
   const taRef = useRef(null);
 
-  // 把某条 user 消息放回输入框，可编辑后重发
-  const handleReload = (text) => {
-    setComposerText(text);
-    setQuote(null);
-    taRef.current?.focus();
-  };
-
   // 引用：在输入框上方挂一条引用栏（不污染输入框内容）
   const handleQuote = (text, role) => {
     setQuote({ text, role });
@@ -50,7 +43,6 @@ export default function ChatWindow({ session, chat }) {
       <MessageList
         messages={chat.messages}
         error={chat.error}
-        onReload={handleReload}
         onQuote={handleQuote}
       />
 

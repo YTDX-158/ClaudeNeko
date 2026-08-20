@@ -48,7 +48,7 @@ function renderUserText(text) {
   return html;
 }
 
-export default function MessageBubble({ message, onReload, onQuote }) {
+export default function MessageBubble({ message, onQuote }) {
   const isUser = message.role === 'user';
   const text = message.text ?? '';
   const [copied, setCopied] = useState(false);
@@ -69,11 +69,6 @@ export default function MessageBubble({ message, onReload, onQuote }) {
       <button className={`msg-action${copied ? ' copied' : ''}`} onClick={handleCopy}>
         {copied ? '已复制' : '复制'}
       </button>
-      {isUser && (
-        <button className="msg-action" onClick={() => onReload?.(text)}>
-          重新加载对话
-        </button>
-      )}
       <button className="msg-action" onClick={() => onQuote?.(text, message.role)}>
         引用
       </button>
