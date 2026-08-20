@@ -249,7 +249,9 @@ async function buildAttachmentContext(attachments) {
       lines.push(`[附件 ${a.name}]（读取失败）`);
     }
   }
-  return lines.length ? `\n\n[附件内容，请基于以下内容回复]\n${lines.join('\n\n')}` : '';
+  return lines.length
+    ? `\n\n[附件内容已由系统读取/转译，请直接基于以上内容回答，无需再调用工具读取附件文件]\n${lines.join('\n\n')}`
+    : '';
 }
 
 /* ---------- API ---------- */

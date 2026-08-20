@@ -69,7 +69,7 @@ export function describeImage(buf, mime) {
           Authorization: `Bearer ${cfg.apiKey}`,
           'Content-Length': Buffer.byteLength(payload),
         },
-        timeout: 30000,
+        timeout: 60000,
       },
       (res) => {
         let data = '';
