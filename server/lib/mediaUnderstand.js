@@ -20,14 +20,15 @@ function asciiTmpDir() {
 
 /** 检测 python 依赖（cv2 / faster-whisper），结果缓存。 */
 let depsCache = null;
-function checkDep(cmd) {
+function checkDep(cmd, timeoutMs = 10000) {
   return new Promise((resolve) => {
     const py = spawn('python', ['-c', cmd], { windowsHide: true });
     let out = '';
+    const timer = setTimeout(() => { try { py.kill(); } catch {} resolve(false); }, timeoutMs);
     py.stdout.on('data', (d) => (out += d));
     py.stderr.on('data', () => {});
-    py.on('close', (code) => resolve(code === 0 && out.trim() === 'ok'));
-    py.on('error', () => resolve(false));
+    py.on('close', (code) => { clearTimeout(timer); resolve(code === 0 && out.trim() === 'ok'); });
+    py.on('error', () => { clearTimeout(timer); resolve(false); });
   });
 }
 async function checkDeps() {
@@ -72,9 +73,15 @@ print('|'.join(outs))
 `;
     const py = spawn('python', ['-c', script], { windowsHide: true });
     let out = '';
+    const timer = setTimeout(() => {
+      try { py.kill(); } catch {}
+      try { fs.unlinkSync(inPath); } catch {}
+      resolve([]);
+    }, 60000);
     py.stdout.on('data', (d) => (out += d));
     py.stderr.on('data', () => {});
     py.on('close', () => {
+      clearTimeout(timer);
       try { fs.unlinkSync(inPath); } catch {}
       const frames = out
         .trim()
@@ -92,7 +99,7 @@ print('|'.join(outs))
         .filter(Boolean);
       resolve(frames);
     });
-    py.on('error', () => { try { fs.unlinkSync(inPath); } catch {} resolve([]); });
+    py.on('error', () => { clearTimeout(timer); try { fs.unlinkSync(inPath); } catch {} resolve([]); });
   });
 }
 
@@ -115,14 +122,20 @@ print(''.join(s.text for s in segments))
 `;
     const py = spawn('python', ['-c', script], { windowsHide: true });
     let out = '';
+    const timer = setTimeout(() => {
+      try { py.kill(); } catch {}
+      try { fs.unlinkSync(inPath); } catch {}
+      resolve({ ok: false, error: '转写超时（音频过大或环境慢）' });
+    }, 180000);
     py.stdout.on('data', (d) => (out += d));
     py.stderr.on('data', () => {});
     py.on('close', () => {
+      clearTimeout(timer);
       try { fs.unlinkSync(inPath); } catch {}
       const t = out.trim();
       resolve(t ? { ok: true, text: t } : { ok: false, error: '转写无结果（可能无语音）' });
     });
-    py.on('error', () => { try { fs.unlinkSync(inPath); } catch {} resolve({ ok: false, error: 'python 不可用' }); });
+    py.on('error', () => { clearTimeout(timer); try { fs.unlinkSync(inPath); } catch {} resolve({ ok: false, error: 'python 不可用' }); });
   });
 }
 

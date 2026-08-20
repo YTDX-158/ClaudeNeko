@@ -177,17 +177,19 @@ function readRawBody(req) {
   return new Promise((resolve) => {
     const chunks = [];
     let size = 0;
+    const timer = setTimeout(() => { req.destroy(); resolve(null); }, 30000); // 上传 30s 超时
     req.on('data', (c) => {
       size += c.length;
       if (size > MAX_MEDIA_SIZE) {
+        clearTimeout(timer);
         req.destroy();
         resolve(null);
         return;
       }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', () => resolve(null));
+    req.on('end', () => { clearTimeout(timer); resolve(Buffer.concat(chunks)); });
+    req.on('error', () => { clearTimeout(timer); resolve(null); });
   });
 }
 
