@@ -61,7 +61,8 @@ export async function describeImage(buf, mime) {
 
   const { buf: cb, mime: cm } = await maybeCompress(buf, mime);
   const h = hashImage(cb);
-  if (cache.has(h)) return { ok: true, text: cache.get(h) };
+  const cacheKey = `${cfg.model}:${h}`; // 缓存按模型隔离，避免不同模型串结果
+  if (cache.has(cacheKey)) return { ok: true, text: cache.get(cacheKey) };
 
   const base64 = cb.toString('base64');
   const payload = JSON.stringify({
@@ -97,7 +98,7 @@ export async function describeImage(buf, mime) {
             const j = JSON.parse(data);
             const text = j.choices?.[0]?.message?.content || '';
             if (text) {
-              cache.set(h, text);
+              cache.set(cacheKey, text);
               resolve({ ok: true, text });
             } else {
               resolve({ ok: false, error: `视觉 API 无返回（${j.error?.message || '未知'}）` });
