@@ -36,6 +36,7 @@ const STORAGE_FLUID_BRIGHT = 'dsw-dream-skin:fluid-brightness';
 const STORAGE_FLUID_COLORS = 'dsw-dream-skin:fluid-colors';
 const STORAGE_TEXT_COLOR = 'dsw-dream-skin:text-color';
 const STORAGE_CAT_VISIBLE = 'dsw-dream-skin:cat-visible';
+const STORAGE_NIANG_VISIBLE = 'dsw-dream-skin:niang-visible';
 
 /** 流体预设：一组「滑块值」组合。点预设 = 把 6 个滑块一次性设成这套值（所见即所得）。 */
 const FLUID_PRESETS = {
@@ -485,6 +486,16 @@ export const skinEngine = {
   },
   setCatVisible(v) {
     writeStorage(STORAGE_CAT_VISIBLE, v ? 'true' : 'false');
+    notify();
+  },
+
+  /* ---- claude娘 显示开关（默认关） ---- */
+  get niangVisible() {
+    const raw = readStorage(STORAGE_NIANG_VISIBLE);
+    return raw === 'true';
+  },
+  setNiangVisible(v) {
+    writeStorage(STORAGE_NIANG_VISIBLE, v ? 'true' : 'false');
     notify();
   },
 

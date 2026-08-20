@@ -42,6 +42,13 @@ export default function ClaudeNiang({ status = 'idle' }) {
   const bubbleTimerRef = useRef(null); // 气泡两阶段定时器（颜文字 → 余额）
   const statusRef = useRef('idle'); // 最新 status，供点击流程收尾时恢复状态气泡
   const clickingRef = useRef(false); // 点击流程进行中（颜文字 → 余额），状态气泡让位
+  const [visible, setVisible] = useState(() => skinEngine.niangVisible); // 功能页开关（默认关）
+
+  // 功能页「claude娘」开关实时生效（关掉整个隐藏）
+  useEffect(() => {
+    const unsub = skinEngine.subscribe(() => setVisible(skinEngine.niangVisible));
+    return unsub;
+  }, []);
 
   // 点击流程收尾：颜文字 → 余额 两段播完后，让位给当前状态气泡（若存在）
   const finishClick = () => {
@@ -176,6 +183,8 @@ export default function ClaudeNiang({ status = 'idle' }) {
     }
     popBubble();
   };
+
+  if (!visible) return null;
 
   return (
     <div

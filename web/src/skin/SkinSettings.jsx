@@ -344,6 +344,19 @@ export default function SkinSettings({ open, onClose }) {
                     {skinEngine.catVisible ? '开 ✓' : '关'}
                   </button>
                 </div>
+                <div className="skin-row">
+                  <span>claude娘（挂件互动，默认关）</span>
+                  <button
+                    className={`skin-btn${skinEngine.niangVisible ? ' active' : ''}`}
+                    onClick={() => skinEngine.setNiangVisible(!skinEngine.niangVisible)}
+                  >
+                    {skinEngine.niangVisible ? '开 ✓' : '关'}
+                  </button>
+                </div>
+                <div className="skin-hint">
+                  点击 claude娘 可查询 DeepSeek 官网 api 余额{' '}
+                  <a href="https://platform.deepseek.com" target="_blank" rel="noopener noreferrer">🔗</a>
+                </div>
                 <div className="skin-hint">更多功能开关会陆续加到这里</div>
               </div>
             </div>
