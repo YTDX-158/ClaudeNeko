@@ -47,7 +47,7 @@ export default function MediaPicker({ open, onClose, onSelect }) {
               <div className="media-preview">
                 {m.kind === 'image' && <img src={`/api/media/${m.id}`} alt={m.originalName} loading="lazy" />}
                 {m.kind === 'video' && <div className="media-doc-icon">🎬</div>}
-                {m.kind === 'document' && <div className="media-doc-icon">📄</div>}
+                {(m.kind === 'document' || m.kind === 'file') && <div className="media-doc-icon">📄</div>}
                 {m.kind === 'audio' && <div className="media-doc-icon">🎵</div>}
               </div>
               <div className="media-card-info">

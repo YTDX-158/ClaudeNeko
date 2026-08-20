@@ -34,7 +34,7 @@ function AttachmentCard({ att }) {
   }
   return (
     <a className="msg-attach-card" href={`/api/media/${att.id}`} target="_blank" rel="noopener noreferrer">
-      {att.kind === 'document' ? '📄' : '🎵'} {att.name}
+      {att.kind === 'audio' ? '🎵' : '📄'} {att.name}
     </a>
   );
 }
@@ -106,11 +106,13 @@ export default function MessageBubble({ message, onQuote }) {
     return (
       <div className="msg msg-user">
         <div className="msg-body">
-          {/* 已通过 escapeHtml 转义，注入安全 */}
-          <p
-            className="msg-text"
-            dangerouslySetInnerHTML={{ __html: renderUserText(text) }}
-          />
+          {/* 已通过 escapeHtml 转义，注入安全；纯附件消息不渲染空文字气泡 */}
+          {text && (
+            <p
+              className="msg-text"
+              dangerouslySetInnerHTML={{ __html: renderUserText(text) }}
+            />
+          )}
           {message.attachments?.length > 0 && (
             <div className="msg-attach-row">
               {message.attachments.map((a) => (

@@ -52,8 +52,12 @@ function saveIndex(idx) {
 
 /** 保存上传的二进制 → 返回 { ok, media | error } */
 export function saveMedia(buffer, originalName) {
-  const type = detectType(buffer);
-  if (!type) return { ok: false, error: '不支持的文件类型（仅限图片/视频/PDF/MP3）' };
+  let type = detectType(buffer);
+  if (!type) {
+    // 未知类型 → 通用附件（application/octet-stream 兜底，RFC 2046 标准），可下载不预览
+    const ext = (originalName.match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || 'bin';
+    type = { ext, mime: 'application/octet-stream', kind: 'file' };
+  }
   const id = crypto.randomUUID();
   const fileName = `${id}.${type.ext}`;
   fs.mkdirSync(MEDIA_DIR, { recursive: true });

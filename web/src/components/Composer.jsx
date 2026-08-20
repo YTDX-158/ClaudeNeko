@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import MediaPicker from './MediaPicker.jsx';
 
-/** 上传文件到媒体库，返回附件快照 { id, name, kind }。 */
+/** 上传文件到媒体库，返回附件快照 { id, name, kind }；失败 reject（不会伪装成功）。 */
 function uploadToMedia(file) {
   return fetch(`/api/media?name=${encodeURIComponent(file.name || 'pasted.png')}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream' },
     body: file,
   })
-    .then((r) => r.json())
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error('上传失败'))))
     .then((m) => ({ id: m.id, name: m.originalName, kind: m.kind }));
 }
 
@@ -39,7 +39,7 @@ export default function Composer({
 
   const submit = () => {
     const t = value.trim();
-    if (!t || streaming || disabled || uploading) return;
+    if ((!t && !attachments.length) || streaming || disabled || uploading) return;
     onChange('');
     if (taRef.current) taRef.current.style.height = 'auto';
     onSend(t, attachments);
@@ -150,10 +150,10 @@ export default function Composer({
                 <img className="thumb" src={`/api/media/${a.id}`} alt="" />
               ) : a.kind === 'video' ? (
                 '🎬'
-              ) : a.kind === 'document' ? (
-                '📄'
-              ) : (
+              ) : a.kind === 'audio' ? (
                 '🎵'
+              ) : (
+                '📄'
               )}
               <span className="attach-name">{a.name}</span>
               <button
@@ -184,7 +184,7 @@ export default function Composer({
         {streaming ? (
           <button className="stop-btn" onClick={onStop}>■ 停止</button>
         ) : (
-          <button className="send-btn" onClick={submit} disabled={disabled || !value.trim() || uploading}>
+          <button className="send-btn" onClick={submit} disabled={disabled || (!value.trim() && !attachments.length) || uploading}>
             {uploading ? '上传中…' : '发送'}
           </button>
         )}
