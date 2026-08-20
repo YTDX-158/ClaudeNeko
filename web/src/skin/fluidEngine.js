@@ -53,29 +53,6 @@ export const SITE_FLUID_PARAMS = {
   color3: '#FFFFFF',
 };
 
-/** 流体预设：几套不同配色/流动形态的参数组合。 */
-export const FLUID_PRESETS = {
-  ocean: { ...SITE_FLUID_PARAMS, color1: '#2E58A4', color2: '#D2E2EE', color3: '#FFFFFF' },
-  aurora: {
-    ...SITE_FLUID_PARAMS,
-    color1: '#34d399',
-    color2: '#8b5cf6',
-    color3: '#22d3ee',
-    swirl: 18,
-    distortion: 28,
-    speed: 18,
-  },
-  ember: {
-    ...SITE_FLUID_PARAMS,
-    color1: '#f97316',
-    color2: '#ef4444',
-    color3: '#fbbf24',
-    rotation: 10,
-    swirl: 20,
-    speed: 16,
-  },
-};
-
 const VERTEX_SHADER = `#version 300 es
 in vec4 a_position;
 out vec2 vUv;

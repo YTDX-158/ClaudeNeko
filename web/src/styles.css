@@ -940,8 +940,8 @@ body {
 /* ============ claude娘 挂件（v1.3 移植，与小猫平级共存） ============ */
 .claude-niang {
   position: absolute;
-  right: 26px;
-  bottom: 96px;
+  left: 30px;   /* 默认左下，错开小猫（小猫默认右下） */
+  bottom: 110px;
   z-index: 998;
   opacity: 0.78;
   pointer-events: auto;

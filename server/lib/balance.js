@@ -24,7 +24,7 @@ function readApiKey() {
  * 查询 DeepSeek 账户余额。
  * @returns {Promise<{ok:boolean, total_balance?:string, currency?:string, is_available?:boolean, error?:string}>}
  */
-export function fetchBalance() {
+function doFetch() {
   const key = readApiKey();
   if (!key) return Promise.resolve({ ok: false, error: '未配置 DeepSeek API Key' });
 
@@ -60,5 +60,20 @@ export function fetchBalance() {
       req.destroy();
       resolve({ ok: false, error: '查询超时' });
     });
+  });
+}
+
+// 30 秒短期缓存：连点 claude娘 不会反复打 DeepSeek 接口
+const CACHE_MS = 30000;
+let _cache = null;
+let _cacheAt = 0;
+
+export function fetchBalance() {
+  const now = Date.now();
+  if (_cache && now - _cacheAt < CACHE_MS) return Promise.resolve(_cache);
+  return doFetch().then((r) => {
+    _cache = r;
+    _cacheAt = now;
+    return r;
   });
 }

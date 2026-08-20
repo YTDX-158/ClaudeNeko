@@ -186,6 +186,10 @@ export default function ClaudeNiang({ status = 'idle' }) {
 
   if (!visible) return null;
 
+  // 气泡字号随文字长度自适应：长文字（状态提示）缩小字号，保证不溢出素材思考气泡
+  const bubbleLen = bubble ? bubble.length : 0;
+  const bubbleFont = Math.max(size * 0.042, Math.min(size * 0.075, (size * 0.68) / Math.max(bubbleLen, 6) / 0.6));
+
   return (
     <div
       className="claude-niang"
@@ -214,9 +218,10 @@ export default function ClaudeNiang({ status = 'idle' }) {
               opacity: 0.95, // 固定清晰（不再跟用户气泡透明度，避免被调低连累文字变淡）
               // 素材像素分析：思考气泡中心 = 图片 (40.5%, 26.9%)，镜像后翻到右侧
               left: flip ? '59.5%' : '40.5%',
-              width: size * 0.7,
+              width: 'max-content', // 宽度随文字自适应，限制在椭圆内
+              maxWidth: size * 0.68,
               height: size * 0.45,
-              fontSize: size * 0.07,
+              fontSize: bubbleFont, // 字号随文字长度自适应
             }}
           >
             <span className="claude-niang-bubble-text">{bubble}</span>
