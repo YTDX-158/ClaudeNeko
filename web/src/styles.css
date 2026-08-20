@@ -936,3 +936,78 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.6px;
 }
+
+/* ============ claude娘 挂件（v1.3 移植，与小猫平级共存） ============ */
+.claude-niang {
+  position: absolute;
+  right: 26px;
+  bottom: 96px;
+  z-index: 998;
+  opacity: 0.5;
+  pointer-events: auto;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.claude-niang:hover { opacity: 0.85; }
+.claude-niang:active { cursor: grabbing; }
+.claude-niang-body {
+  position: relative;
+  transition: transform 0.2s var(--ease);
+}
+.claude-niang-body.claude-q-pop { animation: claude-q-pop 0.3s var(--ease); }
+@keyframes claude-q-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.1) rotate(-2deg); }
+  70% { transform: scale(0.96) rotate(1deg); }
+  100% { transform: scale(1); }
+}
+.claude-niang-img {
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+/* claude娘 气泡：无背景纯文字，显示在素材思考气泡椭圆里（中心 40.5%/26.9%） */
+.claude-niang-bubble {
+  position: absolute;
+  left: 40.5%;
+  top: 26.9%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  color: #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  box-sizing: border-box;
+  padding: 2px 8px;
+  line-height: 1.15;
+  pointer-events: none;
+  animation: claude-bubble-pop 0.2s var(--ease);
+}
+.claude-niang-bubble-text {
+  user-select: none;
+  white-space: nowrap;
+}
+@keyframes claude-bubble-pop {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* ============ 会话栏最近对话时间 ============ */
+.session-item-sub {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.session-item-model {
+  font-size: 11px;
+  color: var(--muted-2);
+  font-family: var(--font-mono);
+}
+.session-item-time {
+  font-size: 11px;
+  color: var(--muted-2);
+  white-space: nowrap;
+}

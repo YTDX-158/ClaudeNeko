@@ -7,6 +7,7 @@ import { resolveConfig } from './lib/settings.js';
 import { SessionStore } from './lib/sessionStore.js';
 import { createClaudeRunner } from './lib/claudeRunner.js';
 import { sseHeaders, writeSse } from './lib/sse.js';
+import { fetchBalance } from './lib/balance.js';
 
 const config = resolveConfig();
 const store = new SessionStore(config.dataDir);
@@ -214,13 +215,27 @@ async function handleMessage(req, res, url) {
   });
 
   activeRunners.set(id, runner);
-  res.on('close', () => runner.cancel());
+
+  // 释放锁/runner（防重复执行：客户端断开、正常结束都只生效一次）
+  let settled = false;
+  const release = () => {
+    if (settled) return;
+    settled = true;
+    activeRunners.delete(id);
+    busy.delete(id);
+  };
+
+  // 客户端断开（刷新/关页面）：立即取消 claude 进程并释放锁，
+  // 不等 runner.done —— 否则 claude 进程若卡住，busy 会永久占着，该会话再也发不了消息。
+  res.on('close', () => {
+    runner.cancel();
+    release();
+  });
 
   try {
     await runner.done;
   } finally {
-    activeRunners.delete(id);
-    busy.delete(id);
+    release();
     // 结束 SSE 流，前端据此收到流结束并定稿
     try {
       res.end();
@@ -236,6 +251,10 @@ async function routeApi(req, res, url) {
 
   if (method === 'GET' && pathname === '/api/health') {
     return sendJson(res, 200, { ok: true, version: '1.2.0' });
+  }
+
+  if (method === 'GET' && pathname === '/api/balance') {
+    return sendJson(res, 200, await fetchBalance());
   }
 
   if (method === 'GET' && pathname === '/api/models') {

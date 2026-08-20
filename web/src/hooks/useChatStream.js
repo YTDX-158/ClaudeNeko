@@ -9,6 +9,7 @@ import { StreamClient } from '../streamClient.js';
 export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
   const [messages, setMessages] = useState([]);
   const [streaming, setStreaming] = useState(false);
+  const [responding, setResponding] = useState(false); // 是否已开始输出文本（区分「思考中」与「回答中」）
   const [error, setError] = useState(null);
   const abortRef = useRef(null);
   // 供轮询闭包读取的最新值（避免在 effect 依赖里塞入 streaming/sessionId 导致重建定时器）
@@ -80,6 +81,7 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
       if (!sessionId || streaming) return;
       setError(null);
       setStreaming(true);
+      setResponding(false);
 
       const userMsg = { id: `tmp-u-${Date.now()}`, role: 'user', text: prompt, ts: Date.now() };
       const streamMsg = { id: `tmp-s-${Date.now()}`, role: 'assistant', text: '', streaming: true };
@@ -93,6 +95,7 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
         signal: controller.signal,
         onEvent: (event, data) => {
           if (event === 'text_delta') {
+            setResponding(true);
             setMessages((prev) => {
               const copy = [...prev];
               const last = copy[copy.length - 1];
@@ -100,6 +103,7 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
               return copy;
             });
           } else if (event === 'assistant') {
+            setResponding(true);
             // 全量文本块（resume 重放 / partial 快照）。防御性处理：
             // 仅当流式气泡仍为空时用它填充——正常生成靠 text_delta 累加，
             // 避免全量快照与增量重复拼接；历史消息切会话时已由 listMessages 加载
@@ -133,6 +137,7 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
         if (e.name !== 'AbortError') setError(e.message);
       } finally {
         setStreaming(false);
+        setResponding(false);
         abortRef.current = null;
         // 定型 streaming 气泡；若无增量则用 done 全量回填
         setMessages((prev) =>
@@ -147,5 +152,5 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
     abortRef.current?.abort();
   }, []);
 
-  return { messages, streaming, error, send, stop };
+  return { messages, streaming, responding, error, send, stop };
 }

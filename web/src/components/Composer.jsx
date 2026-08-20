@@ -49,12 +49,12 @@ export default function Composer({ value, onChange, onSend, streaming, onStop, d
         <textarea
           ref={taRef}
           className="composer-input"
-          placeholder={disabled ? '先新建一个会话' : streaming ? '正在生成…' : '输入消息，Enter 发送，Shift+Enter 换行'}
+          placeholder={disabled ? '先新建一个会话' : streaming ? '生成中，可预打字…（结束后发送）' : '输入消息，Enter 发送，Shift+Enter 换行'}
           value={value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           rows={1}
-          disabled={disabled || streaming}
+          disabled={disabled}
         />
         {streaming ? (
           <button className="stop-btn" onClick={onStop}>

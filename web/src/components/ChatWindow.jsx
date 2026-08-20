@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import MessageList from './MessageList.jsx';
 import Composer from './Composer.jsx';
 import CatMascot from './CatMascot.jsx';
+import ClaudeNiang from './ClaudeNiang.jsx';
 
 /**
  * 右侧聊天窗口：标题栏 + 消息流 + 输入区。
@@ -30,6 +31,16 @@ export default function ChatWindow({ session, chat }) {
     chat.send(full);
   };
 
+  // claude娘 心情：生成中按阶段（思考中 → 回答中），否则看输入框是否在打字
+  const typing = composerText.trim().length > 0;
+  const mascotStatus = chat.streaming
+    ? chat.responding
+      ? 'responding'
+      : 'thinking'
+    : typing
+      ? 'typing'
+      : 'idle';
+
   return (
     <main className="chat">
       <header className="chat-header">
@@ -45,8 +56,9 @@ export default function ChatWindow({ session, chat }) {
         onQuote={handleQuote}
       />
 
-      {/* 粒子猫猫（纯视觉点缀，输入框上方） */}
+      {/* 小猫（可拖动）+ claude娘（状态气泡/余额/挂件交互）平级共存 */}
       <CatMascot />
+      <ClaudeNiang status={mascotStatus} />
 
       <Composer
         value={composerText}
