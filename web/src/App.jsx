@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
 import SkinSettings from './skin/SkinSettings.jsx';
 import FluidCanvas from './skin/FluidCanvas.jsx';
+import MediaLibrary from './components/MediaLibrary.jsx';
 
 export default function App() {
   const sessions = useSessions();
@@ -13,6 +14,7 @@ export default function App() {
 
   const [serverOk, setServerOk] = useState(null);
   const [skinOpen, setSkinOpen] = useState(false);
+  const [mediaOpen, setMediaOpen] = useState(false);
 
   useEffect(() => {
     const check = () => {
@@ -50,6 +52,7 @@ export default function App() {
         {...sessions}
         onCreate={handleCreate}
         onOpenSettings={() => setSkinOpen(true)}
+        onOpenMedia={() => setMediaOpen(true)}
         onRename={(id, title) => patch(id, { title })}
       />
       <ChatWindow
@@ -63,6 +66,7 @@ export default function App() {
         </div>
       )}
       <SkinSettings open={skinOpen} onClose={() => setSkinOpen(false)} />
+      <MediaLibrary open={mediaOpen} onClose={() => setMediaOpen(false)} />
     </div>
   );
 }

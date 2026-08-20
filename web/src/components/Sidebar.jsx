@@ -15,6 +15,7 @@ export default function Sidebar({
   remove,
   setActiveId,
   onOpenSettings,
+  onOpenMedia,
   onRename,
 }) {
   return (
@@ -30,6 +31,10 @@ export default function Sidebar({
 
       <button className="new-btn-primary" title="新建会话" onClick={onCreate}>
         ＋ 新建会话
+      </button>
+
+      <button className="media-nav-btn" title="媒体库（图片/视频/文档）" onClick={onOpenMedia}>
+        🗂 媒体库
       </button>
 
       <div className="sidebar-scroll">

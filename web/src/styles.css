@@ -1119,3 +1119,22 @@ body {
 
 /* 对话内视频（markdown 链接为视频 URL 时渲染播放器） */
 .md-video { max-width: 100%; border-radius: 8px; margin: 6px 0; display: block; }
+
+/* 侧栏媒体库入口（新建会话下方） */
+.media-nav-btn {
+  margin: 0 12px 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: all 0.15s var(--ease);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.media-nav-btn:hover { border-color: var(--accent); color: var(--text); }
