@@ -77,13 +77,19 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
   }, [sessionId]);
 
   const send = useCallback(
-    async (prompt) => {
+    async (prompt, attachments = []) => {
       if (!sessionId || streaming) return;
       setError(null);
       setStreaming(true);
       setResponding(false);
 
-      const userMsg = { id: `tmp-u-${Date.now()}`, role: 'user', text: prompt, ts: Date.now() };
+      const userMsg = {
+        id: `tmp-u-${Date.now()}`,
+        role: 'user',
+        text: prompt,
+        ts: Date.now(),
+        ...(attachments.length ? { attachments } : {}),
+      };
       const streamMsg = { id: `tmp-s-${Date.now()}`, role: 'assistant', text: '', streaming: true };
       setMessages((prev) => [...prev, userMsg, streamMsg]);
 
@@ -132,7 +138,7 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
       });
 
       try {
-        await client.send(`/api/sessions/${sessionId}/messages`, { prompt });
+        await client.send(`/api/sessions/${sessionId}/messages`, { prompt, attachments });
       } catch (e) {
         if (e.name !== 'AbortError') setError(e.message);
       } finally {

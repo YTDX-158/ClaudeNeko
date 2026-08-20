@@ -12,6 +12,33 @@ import remarkGfm from 'remark-gfm';
  *   - 引用：以 Markdown 引用块形式插入输入框
  */
 
+/** 消息附件卡片（图片/视频/文档/音频）；文件被删除时显示占位。 */
+function AttachmentCard({ att }) {
+  const [broken, setBroken] = useState(false);
+  if (broken) return <span className="msg-attach-broken">📎 {att.name}（文件已删除）</span>;
+  if (att.kind === 'image') {
+    return (
+      <span className="msg-attach-card">
+        <img className="thumb" src={`/api/media/${att.id}`} alt={att.name} onError={() => setBroken(true)} />
+        <span>{att.name}</span>
+      </span>
+    );
+  }
+  if (att.kind === 'video') {
+    return (
+      <span className="msg-attach-card">
+        <video src={`/api/media/${att.id}`} controls preload="metadata" onError={() => setBroken(true)} />
+        <span>{att.name}</span>
+      </span>
+    );
+  }
+  return (
+    <a className="msg-attach-card" href={`/api/media/${att.id}`} target="_blank" rel="noopener noreferrer">
+      {att.kind === 'document' ? '📄' : '🎵'} {att.name}
+    </a>
+  );
+}
+
 /** 转义 HTML 特殊字符，防止注入（用户消息用）。 */
 function escapeHtml(text) {
   return text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -84,6 +111,13 @@ export default function MessageBubble({ message, onQuote }) {
             className="msg-text"
             dangerouslySetInnerHTML={{ __html: renderUserText(text) }}
           />
+          {message.attachments?.length > 0 && (
+            <div className="msg-attach-row">
+              {message.attachments.map((a) => (
+                <AttachmentCard key={a.id} att={a} />
+              ))}
+            </div>
+          )}
           {actions}
         </div>
       </div>

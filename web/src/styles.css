@@ -1138,3 +1138,47 @@ body {
   gap: 6px;
 }
 .media-nav-btn:hover { border-color: var(--accent); color: var(--text); }
+
+/* 媒体选择器：选中高亮 + 底部操作 */
+.media-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.media-picker-actions { padding: 10px 2px 2px; text-align: right; }
+/* 输入框附件条 */
+.composer-attachments {
+  display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 0 2px;
+}
+.composer-attach {
+  position: relative; display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px;
+  background: var(--panel-2); font-size: 12px; color: var(--text);
+}
+.composer-attach img.thumb { width: 34px; height: 34px; object-fit: cover; border-radius: 4px; }
+.composer-attach .attach-name { max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.composer-attach .attach-remove {
+  border: none; background: none; color: var(--muted-2); cursor: pointer; font-size: 14px; padding: 0 2px;
+}
+.composer-attach .attach-remove:hover { color: var(--danger); }
+.composer-attach .attach-state { font-size: 11px; color: var(--muted-2); }
+.composer-attach .attach-state.error { color: var(--danger); }
+/* 对话里附件的删除占位 */
+.msg-attach-broken { color: var(--muted-2); font-size: 12px; font-style: italic; padding: 4px 0; }
+.msg-attach-row { display: flex; gap: 6px; margin-top: 6px; }
+.msg-attach-card {
+  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px;
+  background: var(--panel-2); font-size: 12px; color: var(--text); max-width: 260px;
+}
+.msg-attach-card img.thumb { width: 40px; height: 40px; object-fit: cover; }
+.msg-attach-card video { width: 200px; max-height: 140px; }
+
+/* 输入区附件按钮 / 拖拽提示 / 上传错误 */
+.composer-attach-btn {
+  flex-shrink: 0; width: 32px; height: 32px; border: none; border-radius: 8px;
+  background: transparent; color: var(--muted); font-size: 16px; cursor: pointer;
+}
+.composer-attach-btn:hover { background: var(--panel-2); color: var(--text); }
+.composer-drop-hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.5); border: 2px dashed var(--accent); border-radius: 12px;
+  color: var(--accent); font-size: 14px; z-index: 5; pointer-events: none;
+}
+.composer-upload-error { color: var(--danger); font-size: 12px; padding: 2px 4px; }

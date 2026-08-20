@@ -13,6 +13,7 @@ import { downloadText, exportSessionText } from '../utils/export.js';
 export default function ChatWindow({ session, chat }) {
   const [composerText, setComposerText] = useState('');
   const [quote, setQuote] = useState(null); // { text, role } | null
+  const [attachments, setAttachments] = useState([]); // 待发送附件（媒体库快照）
   const taRef = useRef(null);
 
   // 引用：在输入框上方挂一条引用栏（不污染输入框内容）
@@ -21,15 +22,15 @@ export default function ChatWindow({ session, chat }) {
     taRef.current?.focus();
   };
 
-  // 发送：有引用则拼成 markdown 引用块 + 用户文字
-  const handleSend = (userText) => {
+  // 发送：有引用则拼成 markdown 引用块 + 用户文字 + 附件
+  const handleSend = (userText, msgAttachments = []) => {
     let full = userText;
     if (quote) {
       const quoted = '> ' + quote.text.trim().split('\n').join('\n> ');
       full = `${quoted}\n\n${userText}`;
     }
     setQuote(null);
-    chat.send(full);
+    chat.send(full, msgAttachments);
   };
 
   // 导出当前对话为 .txt 聊天记录
@@ -79,6 +80,8 @@ export default function ChatWindow({ session, chat }) {
         taRef={taRef}
         quote={quote}
         onCancelQuote={() => setQuote(null)}
+        attachments={attachments}
+        onAttachmentsChange={setAttachments}
       />
     </main>
   );

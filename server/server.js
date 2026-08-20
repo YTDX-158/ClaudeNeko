@@ -247,6 +247,12 @@ async function handleMessage(req, res, url) {
   if (body && body.__tooLarge) return sendJson(res, 413, { error: '内容超过 1MB 上限，请缩短后重试' });
   const prompt = String(body.prompt ?? '').trim();
   if (!prompt) return sendJson(res, 400, { error: 'prompt 不能为空' });
+  // 附件（媒体库 id + 展示快照）：仅消息展示用，不传给 claude prompt（模型暂不看图）
+  const attachments = Array.isArray(body.attachments)
+    ? body.attachments
+        .filter((a) => a && typeof a.id === 'string')
+        .map((a) => ({ id: a.id, name: a.name || a.id, kind: a.kind || 'file' }))
+    : [];
 
   busy.add(id);
   sseHeaders(res);
@@ -267,7 +273,12 @@ async function handleMessage(req, res, url) {
   const isNewSession = !session.claudeSessionId;
 
   // 乐观落盘 user 消息；新会话标题取第一句前 15 字，并通过 SSE 推给前端
-  store.appendMessage(id, { role: 'user', text: prompt, ts: Date.now() });
+  store.appendMessage(id, {
+    role: 'user',
+    text: prompt,
+    ts: Date.now(),
+    ...(attachments.length ? { attachments } : {}),
+  });
   if (session.title === '新会话') {
     const title = prompt.slice(0, 15);
     store.update(id, { title });
