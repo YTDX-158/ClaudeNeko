@@ -12,6 +12,7 @@ import { fetchBalance } from './lib/balance.js';
 import { saveMedia, listMedia, getMedia, getMediaPath, deleteMedia } from './lib/mediaStore.js';
 import { describeImage } from './lib/vision.js';
 import { extractDocumentText } from './lib/docText.js';
+import { describeMedia } from './lib/mediaUnderstand.js';
 
 const config = resolveConfig();
 const store = new SessionStore(config.dataDir);
@@ -242,10 +243,9 @@ async function buildAttachmentContext(attachments) {
       } else if (rec.kind === 'document' || rec.kind === 'file') {
         const text = extractDocumentText(filePath, rec.ext);
         lines.push(`[文档附件 ${a.name} 内容]${text ? `\n${text}` : '（无法抽取文字）'}`);
-      } else if (rec.kind === 'video') {
-        lines.push(`[视频附件 ${a.name}]（视频理解功能暂未开放，AI 无法读取画面内容，请用文字描述或等待后续支持）`);
-      } else if (rec.kind === 'audio') {
-        lines.push(`[音频附件 ${a.name}]（音频理解功能暂未开放，AI 无法读取声音内容，请用文字描述或等待后续支持）`);
+      } else if (rec.kind === 'video' || rec.kind === 'audio') {
+        const r = await describeMedia(rec.kind, fs.readFileSync(filePath), rec.mime, rec.originalName);
+        lines.push(`[${rec.kind === 'video' ? '视频' : '音频'}附件 ${a.name}] ${r.ok ? r.text : `（${r.error}）`}`);
       } else {
         lines.push(`[附件 ${a.name}]（该类型暂不支持 AI 读取）`);
       }
