@@ -322,6 +322,15 @@ export default function SkinSettings({ open, onClose }) {
                     {autostart === null ? '…' : autostart ? '开 ✓' : '关'}
                   </button>
                 </div>
+                <div className="skin-row">
+                  <span>猫猫（右下角粒子猫，可拖动）</span>
+                  <button
+                    className={`skin-btn${skinEngine.catVisible ? ' active' : ''}`}
+                    onClick={() => skinEngine.setCatVisible(!skinEngine.catVisible)}
+                  >
+                    {skinEngine.catVisible ? '开 ✓' : '关'}
+                  </button>
+                </div>
                 <div className="skin-hint">更多功能开关会陆续加到这里</div>
               </div>
             </div>

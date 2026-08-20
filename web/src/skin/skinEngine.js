@@ -35,6 +35,7 @@ const STORAGE_FLUID_SAT = 'dsw-dream-skin:fluid-saturation';
 const STORAGE_FLUID_BRIGHT = 'dsw-dream-skin:fluid-brightness';
 const STORAGE_FLUID_COLORS = 'dsw-dream-skin:fluid-colors';
 const STORAGE_TEXT_COLOR = 'dsw-dream-skin:text-color';
+const STORAGE_CAT_VISIBLE = 'dsw-dream-skin:cat-visible';
 
 const DEFAULT_SKIN = 'system';        // 无自定义皮肤 → 跟随系统/内置
 const DEFAULT_BLUR = 0;
@@ -443,6 +444,16 @@ export const skinEngine = {
       teardownWallpaper();
       notify();
     },
+  },
+
+  /* ---- 猫咪显示开关 ---- */
+  get catVisible() {
+    const raw = readStorage(STORAGE_CAT_VISIBLE);
+    return raw === null ? true : raw === 'true';
+  },
+  setCatVisible(v) {
+    writeStorage(STORAGE_CAT_VISIBLE, v ? 'true' : 'false');
+    notify();
   },
 
   /* ---- 强调色 ---- */

@@ -6,6 +6,7 @@
  *  - 气泡固定清晰（0.95 不透明），字符颜色同步正文
  */
 import { useEffect, useRef, useState } from 'react';
+import { skinEngine } from '../skin/skinEngine.js';
 
 const CAT_KAOMOJI = [
   '(=^･ω･^=)', 'ฅ^•ﻌ•^ฅ', '(=^‥^=)', '(=｀ω´=)', '(=^-ω-^=)',
@@ -48,7 +49,14 @@ export default function CatMascot() {
   const [bubble, setBubble] = useState(null);
   const [locked, setLocked] = useState(false);
   const [pos, setPos] = useState(loadPos);
+  const [visible, setVisible] = useState(() => skinEngine.catVisible);
   const dragRef = useRef(null); // { startX, startY, origX, origY, moved }
+
+  // 设置里「猫猫」开关实时生效（关掉后连粒子一起消失）
+  useEffect(() => {
+    const unsub = skinEngine.subscribe(() => setVisible(skinEngine.catVisible));
+    return unsub;
+  }, []);
 
   // 窗口变化时把猫 clamp 回可视区（避免缩小窗口后猫跑出界）
   useEffect(() => {
@@ -106,6 +114,8 @@ export default function CatMascot() {
       setLocked(false);
     }, BUBBLE_MS);
   };
+
+  if (!visible) return null;
 
   return (
     <>
