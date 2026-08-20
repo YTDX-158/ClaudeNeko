@@ -943,13 +943,13 @@ body {
   right: 26px;
   bottom: 96px;
   z-index: 998;
-  opacity: 0.5;
+  opacity: 0.78;
   pointer-events: auto;
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
 }
-.claude-niang:hover { opacity: 0.85; }
+.claude-niang:hover { opacity: 1; }
 .claude-niang:active { cursor: grabbing; }
 .claude-niang-body {
   position: relative;

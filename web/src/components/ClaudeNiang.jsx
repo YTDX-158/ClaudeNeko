@@ -211,7 +211,7 @@ export default function ClaudeNiang({ status = 'idle' }) {
           <div
             className="claude-niang-bubble"
             style={{
-              opacity: skinEngine.wallpaper.userOpacity,
+              opacity: 0.95, // 固定清晰（不再跟用户气泡透明度，避免被调低连累文字变淡）
               // 素材像素分析：思考气泡中心 = 图片 (40.5%, 26.9%)，镜像后翻到右侧
               left: flip ? '59.5%' : '40.5%',
               width: size * 0.7,
