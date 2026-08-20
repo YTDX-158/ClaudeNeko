@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { Jimp } from 'jimp';
 
 /**
  * vision.js — 图片转文字描述（给纯文本模型"看图"）
@@ -36,16 +37,33 @@ function hashImage(buf) {
  * 把图片 buffer 转成文字描述。
  * @returns {Promise<{ok:boolean, text?:string, error?:string}>}
  */
-export function describeImage(buf, mime) {
+const MAX_VISION_BYTES = 500 * 1024; // 超过 500KB 先压缩，避免豆包视觉对超大图超时
+const MAX_DIM = 1024;
+
+/** 大图压缩：缩到最长边 1536 + JPEG q85（视觉 API 处理小图快很多）。 */
+async function maybeCompress(buf, mime) {
+  if (buf.length <= MAX_VISION_BYTES) return { buf, mime };
+  try {
+    const image = await Jimp.read(buf);
+    image.scaleToFit({ w: MAX_DIM, h: MAX_DIM });
+    const out = await image.getBuffer('image/jpeg', { quality: 85 });
+    return { buf: out, mime: 'image/jpeg' };
+  } catch {
+    return { buf, mime }; // 压缩失败用原图
+  }
+}
+
+export async function describeImage(buf, mime) {
   const cfg = readVisionConfig();
   if (!cfg.apiKey || !cfg.model) {
-    return Promise.resolve({ ok: false, error: '未配置视觉 API（请在 ~/.claude/settings.json 加 VISION_API_KEY / VISION_MODEL）' });
+    return { ok: false, error: '未配置视觉 API（请在 ~/.claude/settings.json 加 VISION_API_KEY / VISION_MODEL）' };
   }
 
-  const h = hashImage(buf);
-  if (cache.has(h)) return Promise.resolve({ ok: true, text: cache.get(h) });
+  const { buf: cb, mime: cm } = await maybeCompress(buf, mime);
+  const h = hashImage(cb);
+  if (cache.has(h)) return { ok: true, text: cache.get(h) };
 
-  const base64 = buf.toString('base64');
+  const base64 = cb.toString('base64');
   const payload = JSON.stringify({
     model: cfg.model,
     messages: [
@@ -53,7 +71,7 @@ export function describeImage(buf, mime) {
         role: 'user',
         content: [
           { type: 'text', text: '请详细描述这张图片的内容（主体、颜色、画面布局、画面里的文字、关键细节、风格）' },
-          { type: 'image_url', image_url: { url: `data:${mime || 'image/png'};base64,${base64}` } },
+          { type: 'image_url', image_url: { url: `data:${cm || 'image/png'};base64,${base64}` } },
         ],
       },
     ],
@@ -69,7 +87,7 @@ export function describeImage(buf, mime) {
           Authorization: `Bearer ${cfg.apiKey}`,
           'Content-Length': Buffer.byteLength(payload),
         },
-        timeout: 60000,
+        timeout: 180000,
       },
       (res) => {
         let data = '';
