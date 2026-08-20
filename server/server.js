@@ -34,23 +34,39 @@ function readBody(req) {
   return new Promise((resolve) => {
     let data = '';
     let tooLarge = false;
+    let settled = false;
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(v);
+    };
+    // 30s 超时：客户端连上但不发请求体（或挂起）时释放，防挂起请求占着 busy 锁
+    const timer = setTimeout(() => {
+      try {
+        req.destroy();
+      } catch {
+        // 已关闭
+      }
+      finish({});
+    }, 30000);
     req.on('data', (chunk) => {
       if (tooLarge) return;
       data += chunk;
       if (data.length > 1e6) {
         tooLarge = true;
-        resolve({ __tooLarge: true }); // 标记超限，由调用方返回 413
+        finish({ __tooLarge: true }); // 标记超限，由调用方返回 413
         req.pause(); // 暂停接收，等 413 响应发出后连接自然关闭（destroy 会抢先断连）
       }
     });
     req.on('end', () => {
       try {
-        resolve(data ? JSON.parse(data) : {});
+        finish(data ? JSON.parse(data) : {});
       } catch {
-        resolve({});
+        finish({});
       }
     });
-    req.on('error', () => {});
+    req.on('error', () => finish({}));
   });
 }
 
