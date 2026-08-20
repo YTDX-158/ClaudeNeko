@@ -54,9 +54,22 @@ function saveIndex(idx) {
 export function saveMedia(buffer, originalName) {
   let type = detectType(buffer);
   if (!type) {
-    // 未知类型 → 通用附件（application/octet-stream 兜底，RFC 2046 标准），可下载不预览
     const ext = (originalName.match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || 'bin';
-    type = { ext, mime: 'application/octet-stream', kind: 'file' };
+    // 文档/文本类扩展名归为 document（无魔数签名的纯文本、Office 文档等）
+    const docExts = [
+      // 纯文本 / 标记
+      'txt', 'md', 'markdown', 'text', 'log', 'ini', 'conf', 'cfg', 'env',
+      'json', 'xml', 'yaml', 'yml', 'csv', 'tsv',
+      'html', 'htm', 'css', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx',
+      'py', 'sh', 'bat', 'cmd', 'ps1', 'vbs',
+      'java', 'c', 'cpp', 'cc', 'h', 'hpp', 'rb', 'go', 'rs', 'php', 'sql',
+      'swift', 'kt', 'dart', 'lua', 'pl', 'r',
+      // Office / 开放文档
+      'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
+    ];
+    type = docExts.includes(ext)
+      ? { ext, mime: 'text/plain', kind: 'document' }
+      : { ext, mime: 'application/octet-stream', kind: 'file' };
   }
   const id = crypto.randomUUID();
   const fileName = `${id}.${type.ext}`;
