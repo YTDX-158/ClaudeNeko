@@ -975,7 +975,7 @@ body {
   top: 26.9%;
   transform: translate(-50%, -50%);
   z-index: 2;
-  color: #333;
+  color: var(--text); /* 跟主题文字色（与小猫气泡一致） */
   display: flex;
   align-items: center;
   justify-content: center;
