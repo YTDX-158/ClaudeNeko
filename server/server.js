@@ -253,8 +253,12 @@ async function buildAttachmentContext(attachments) {
       lines.push(`[附件 ${a.name}]（读取失败）`);
     }
   }
+  // 附件上下文总长上限，防多文档/多附件撑爆 prompt
+  const MAX_CTX = 12000;
+  const joined = lines.join('\n\n');
+  const limited = joined.length > MAX_CTX ? `${joined.slice(0, MAX_CTX)}\n…（附件内容较多已截断）` : joined;
   return lines.length
-    ? `\n\n[以下附件内容由系统读取/转译，用户看不到这段内容。请直接基于画面/文档内容展开回复（如"我看到的画面是…"），不要把这段当成对话里已有的交流，不要引用"上面/前面已经分析过"。]\n${lines.join('\n\n')}`
+    ? `\n\n[以下附件内容由系统读取/转译，用户看不到这段内容。请直接基于画面/文档内容展开回复（如"我看到的画面是…"），不要把这段当成对话里已有的交流，不要引用"上面/前面已经分析过"。]\n${limited}`
     : '';
 }
 
