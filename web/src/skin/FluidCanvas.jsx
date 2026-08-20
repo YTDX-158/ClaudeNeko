@@ -5,17 +5,16 @@
  */
 import { useEffect, useRef } from 'react';
 import { skinEngine } from './skinEngine.js';
-import { attachFluidShader, FLUID_PRESETS, fluidHueColors } from './fluidEngine.js';
+import { attachFluidShader, SITE_FLUID_PARAMS, fluidHueColors } from './fluidEngine.js';
 
-/** 由预设 + 色相/饱和/亮度 + 速度/漩涡/色彩数生成当前流体参数。 */
+/** 由 6 个滑块生成当前流体参数（预设已把滑块设好，滑块全权决定配色与流动）。 */
 function buildParams() {
-  const preset = FLUID_PRESETS[skinEngine.fluid.preset] || FLUID_PRESETS.ocean;
   const hc = fluidHueColors(skinEngine.fluid.hue, skinEngine.fluid.saturation, skinEngine.fluid.brightness);
-  // 用户可调：速度 0~100 → 4~44；漩涡 0~40；色彩数 1/2/3
+  // 速度 0~100 → 4~44；漩涡 0~40；色彩数 1/2/3
   const speed = 4 + skinEngine.fluid.speed * 0.4;
   const swirl = skinEngine.fluid.swirl;
   const colorCount = skinEngine.fluid.colorCount;
-  return { ...preset, color1: hc.color1, color2: hc.color2, color3: hc.color3, speed, swirl, colorCount };
+  return { ...SITE_FLUID_PARAMS, color1: hc.color1, color2: hc.color2, color3: hc.color3, speed, swirl, colorCount };
 }
 
 export default function FluidCanvas() {

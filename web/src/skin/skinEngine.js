@@ -37,6 +37,15 @@ const STORAGE_FLUID_COLORS = 'dsw-dream-skin:fluid-colors';
 const STORAGE_TEXT_COLOR = 'dsw-dream-skin:text-color';
 const STORAGE_CAT_VISIBLE = 'dsw-dream-skin:cat-visible';
 
+/** 流体预设：一组「滑块值」组合。点预设 = 把 6 个滑块一次性设成这套值（所见即所得）。 */
+const FLUID_PRESETS = {
+  ocean: { hue: 205, saturation: 75, brightness: 60, speed: 35, swirl: 25, colorCount: 3 }, // 海洋·蓝
+  aurora: { hue: 155, saturation: 85, brightness: 70, speed: 50, swirl: 50, colorCount: 3 }, // 极光·绿紫
+  ember: { hue: 22, saturation: 90, brightness: 55, speed: 55, swirl: 60, colorCount: 3 }, // 火焰·橙红
+  neon: { hue: 300, saturation: 88, brightness: 70, speed: 65, swirl: 65, colorCount: 3 }, // 霓虹·品红
+  moon: { hue: 220, saturation: 40, brightness: 80, speed: 20, swirl: 20, colorCount: 1 }, // 月光·银白
+};
+
 const DEFAULT_SKIN = 'system';        // 无自定义皮肤 → 跟随系统/内置
 const DEFAULT_BLUR = 0;
 const DEFAULT_SIDEBAR_OPACITY = 0.95;  // 侧栏
@@ -499,7 +508,16 @@ export const skinEngine = {
       notify();
     },
     setPreset(name) {
+      const p = FLUID_PRESETS[name];
+      if (!p) return;
+      // 预设 = 一组滑块值：把 6 个滑块一次性设成预设组合（所见即所得）
       writeStorage(STORAGE_FLUID_PRESET, name);
+      writeStorage(STORAGE_FLUID_HUE, String(p.hue));
+      writeStorage(STORAGE_FLUID_SPEED, String(p.speed));
+      writeStorage(STORAGE_FLUID_SWIRL, String(p.swirl));
+      writeStorage(STORAGE_FLUID_SAT, String(p.saturation));
+      writeStorage(STORAGE_FLUID_BRIGHT, String(p.brightness));
+      writeStorage(STORAGE_FLUID_COLORS, String(p.colorCount));
       notify();
     },
     /** 流动速度（0~100，默认 50）。 */

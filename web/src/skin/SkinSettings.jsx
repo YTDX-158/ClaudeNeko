@@ -17,6 +17,13 @@ const GRADIENTS = [
   { label: '琥珀', css: 'linear-gradient(135deg, #78350f 0%, #d97706 55%, #fbbf24 100%)' },
   { label: '雾灰', css: 'linear-gradient(135deg, #1f2937 0%, #374151 55%, #6b7280 100%)' },
 ];
+const FLUID_PRESET_LIST = [
+  { id: 'ocean', label: '海洋' },
+  { id: 'aurora', label: '极光' },
+  { id: 'ember', label: '火焰' },
+  { id: 'neon', label: '霓虹' },
+  { id: 'moon', label: '月光' },
+];
 const TABS = [
   { id: 'theme', label: '🎨 主题' },
   { id: 'background', label: '🖼 背景' },
@@ -223,9 +230,15 @@ export default function SkinSettings({ open, onClose }) {
                 <>
                   <div className="skin-section-title" style={{ marginTop: 12 }}>流体样式</div>
                   <div className="skin-row">
-                    <button className={`skin-btn${skinEngine.fluid.preset === 'ocean' ? ' active' : ''}`} onClick={() => skinEngine.fluid.setPreset('ocean')}>海洋</button>
-                    <button className={`skin-btn${skinEngine.fluid.preset === 'aurora' ? ' active' : ''}`} onClick={() => skinEngine.fluid.setPreset('aurora')}>极光</button>
-                    <button className={`skin-btn${skinEngine.fluid.preset === 'ember' ? ' active' : ''}`} onClick={() => skinEngine.fluid.setPreset('ember')}>火焰</button>
+                    {FLUID_PRESET_LIST.map((p) => (
+                      <button
+                        key={p.id}
+                        className={`skin-btn${skinEngine.fluid.preset === p.id ? ' active' : ''}`}
+                        onClick={() => skinEngine.fluid.setPreset(p.id)}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
                   </div>
                   <SliderRow label="色相" value={skinEngine.fluid.hue} min={0} max={360} step={1} onChange={(v) => skinEngine.fluid.setHue(v)} />
                   <SliderRow label="速度" value={skinEngine.fluid.speed} min={0} max={100} step={1} onChange={(v) => skinEngine.fluid.setSpeed(v)} />
