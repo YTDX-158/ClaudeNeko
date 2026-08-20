@@ -54,6 +54,40 @@
 
 > 想换模型/端点？修改 `ANTHROPIC_BASE_URL` 与 `ANTHROPIC_AUTH_TOKEN` 即可，支持任意 Anthropic 兼容服务。模型由 Claude Code CLI 系统默认决定，界面内不另作选择。
 
+### 视觉模型配置（可选 · 让 AI 看图）
+发图片给 AI，AI 会先让**视觉模型**把图转成文字描述再理解。需配一个 **OpenAI 兼容的视觉 API**（豆包 / 智谱 GLM / 阿里 Qwen / OpenAI / Gemini 任一，看你手上有什么 Key）：
+
+```json
+{
+  "env": {
+    "VISION_API_KEY": "你的视觉模型 Key",
+    "VISION_MODEL": "doubao-seed-2-0-mini-260428 或任意视觉模型 ID",
+    "VISION_BASE_URL": "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+  }
+}
+```
+
+支持**多后端回退**：可再配 `VISION_2_API_KEY` / `VISION_2_MODEL`、`VISION_3_API_KEY` / `VISION_3_MODEL`…第一个失败自动换下一个。
+
+> 没配视觉模型 → 发图片 AI 会礼貌说明"看不了图"，不影响其他功能。
+
+### 媒体理解依赖（可选 · 视频/音频理解）
+视频/音频理解靠**本地转换**（视频抽帧 + 音频转写），需 Python 环境：
+
+```bash
+pip install opencv-python faster-whisper
+```
+
+- 没装 → 发视频/音频 AI 会**提示安装命令**
+- 装了 → 视频抽关键帧转描述、音频转文字，AI 都能理解
+
+### 功能依赖速查
+| 功能 | 需要 |
+|------|------|
+| 文字对话 / 文档读取 | 只需 Claude Code + 主模型 Key |
+| 图片给 AI 看 | + 视觉模型 Key（可选） |
+| 视频/音频给 AI 理解 | + python + opencv + faster-whisper（可选） |
+
 ### 启动
 ```bash
 npm install
