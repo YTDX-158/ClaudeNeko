@@ -9,7 +9,11 @@ export function messagesToText(messages) {
     .map((m) => {
       const role = m.role === 'user' ? '🙋 你' : '🤖 AI';
       const time = m.ts ? new Date(m.ts).toLocaleString() : '';
-      return `${role}${time ? `（${time}）` : ''}：\n${m.text ?? ''}`;
+      // 纯附件消息导出附件名，避免内容为空
+      const atts = m.attachments?.length
+        ? `\n[附件: ${m.attachments.map((a) => a.name || a.id).join(', ')}]`
+        : '';
+      return `${role}${time ? `（${time}）` : ''}：\n${m.text ?? ''}${atts}`;
     })
     .join('\n\n');
 }

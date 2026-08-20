@@ -80,8 +80,14 @@ export default function MessageBubble({ message, onQuote }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
+    // 纯附件消息复制附件名，避免复制到空内容
+    const attText = message.attachments?.length
+      ? `[附件: ${message.attachments.map((a) => a.name || a.id).join(', ')}]`
+      : '';
+    const toCopy = text && attText ? `${text}\n${attText}` : text || attText;
+    if (!toCopy) return;
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(toCopy);
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
