@@ -140,14 +140,21 @@ export default function MessageBubble({ message, onQuote }) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
-              a: ({ href, children }) =>
-                /\.(mp4|webm|mov|ogg)$/i.test(href || '') ? (
-                  <video src={href} controls className="md-video" />
-                ) : (
-                  <a href={href} target="_blank" rel="noopener noreferrer">
+              a: ({ href, children }) => {
+                const raw = href || '';
+                // 协议白名单：只放行 http/https/mailto/锚点/本地相对路径，javascript:/data: 一律当纯文本
+                const safe = /^(https?:|mailto:|#|\/|\.\/|\.\.\/)/i.test(raw);
+                if (/\.(mp4|webm|mov|ogg)$/i.test(raw)) {
+                  return safe ? <video src={raw} controls className="md-video" /> : <span>{children}</span>;
+                }
+                return safe ? (
+                  <a href={raw} target="_blank" rel="noopener noreferrer">
                     {children}
                   </a>
-                ),
+                ) : (
+                  <span>{children}</span>
+                );
+              },
               pre: ({ children }) => <pre className="msg-code">{children}</pre>,
             }}
           >

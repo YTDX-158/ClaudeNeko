@@ -87,14 +87,19 @@ export class SessionStore {
     }
   }
 
-  /** 读取会话消息。 */
+  /** 读取会话消息（逐行容错：损坏行跳过，不让一行坏导致整个会话读不了）。 */
   readMessages(id) {
     const file = path.join(this.messagesDir, `${id}.jsonl`);
     if (!fs.existsSync(file)) return [];
-    return fs
-      .readFileSync(file, 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
+    const out = [];
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        out.push(JSON.parse(line));
+      } catch {
+        // 跳过损坏行（崩溃中途写入等），其余消息照常可用
+      }
+    }
+    return out;
   }
 }

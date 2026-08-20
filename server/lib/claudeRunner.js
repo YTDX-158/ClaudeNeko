@@ -62,12 +62,26 @@ export function createClaudeRunner({ claudeBin, prompt, model, claudeSessionId, 
     }
   });
 
+  // 整体超时兜底：claude 卡死（API 挂起/进程僵死）时 5 分钟强制结束，
+  // 否则 runner.done 永不 resolve → 该会话 busy 锁被永久占着、再也发不了消息
+  const MAX_RUN_MS = 5 * 60 * 1000;
   const done = new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      try {
+        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F']);
+      } catch {
+        // 进程可能已退出
+      }
+      onError?.(new Error('claude 处理超时（>5 分钟），已终止本次生成'));
+      resolve();
+    }, MAX_RUN_MS);
     child.on('error', (err) => {
+      clearTimeout(timer);
       onError?.(err);
       resolve();
     });
     child.on('close', (code) => {
+      clearTimeout(timer);
       onExit?.(code);
       resolve();
     });

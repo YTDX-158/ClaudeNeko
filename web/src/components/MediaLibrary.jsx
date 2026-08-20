@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { uploadToMedia } from '../utils/upload.js';
 
 const KINDS = [
   { id: 'all', label: '全部' },
@@ -18,6 +19,7 @@ export default function MediaLibrary({ open, onClose }) {
   const [kind, setKind] = useState('all');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
   const fileRef = useRef(null);
 
   const refresh = () => {
@@ -35,25 +37,16 @@ export default function MediaLibrary({ open, onClose }) {
 
   if (!open) return null;
 
-  const handleUpload = (e) => {
+  const handleUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
     if (!files.length) return;
     setUploading(true);
-    Promise.all(
-      files.map((f) =>
-        fetch(`/api/media?name=${encodeURIComponent(f.name)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: f,
-        })
-          .then((r) => r.json())
-          .catch(() => null),
-      ),
-    )
-      .then(() => refresh())
-      .catch(() => {})
-      .finally(() => setUploading(false));
+    setUploadError(null);
+    const results = await Promise.all(files.map((f) => uploadToMedia(f).catch(() => null)));
+    if (results.some((r) => !r)) setUploadError('部分文件上传失败（类型不支持或超过 50MB）');
+    refresh();
+    setUploading(false);
   };
 
   const handleDelete = async (id) => {
@@ -86,6 +79,8 @@ export default function MediaLibrary({ open, onClose }) {
             <button className="skin-close" onClick={onClose} title="关闭">✕</button>
           </div>
         </div>
+
+        {uploadError && <div className="composer-upload-error">{uploadError}</div>}
 
         <div className="media-tabs">
           {KINDS.map((k) => (

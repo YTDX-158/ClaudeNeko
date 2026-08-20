@@ -1,21 +1,15 @@
-import fs from 'node:fs';
 import zlib from 'node:zlib';
 
 /**
  * docText.js — 文档抽文字（零依赖，供纯文本主模型读取文档内容）
  * 支持：txt/md 直接读；pdf 抽文本流；docx 解 zip 抽 <w:t>。
+ * 注意：入参为 buffer（调用方异步读入），本模块不做同步文件 I/O。
  */
 
 const MAX_TEXT = 6000; // 单文档最多进 prompt 的字符数
 
 /** 抽文档文字；失败/不支持返回 null。 */
-export function extractDocumentText(filePath, ext) {
-  let buf;
-  try {
-    buf = fs.readFileSync(filePath);
-  } catch {
-    return null;
-  }
+export function extractDocumentText(buf, ext) {
   try {
     if (ext === 'txt' || ext === 'md') return buf.toString('utf8').slice(0, MAX_TEXT);
     if (ext === 'pdf') return extractPdfText(buf);

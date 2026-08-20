@@ -21,6 +21,7 @@ const activeRunners = new Map(); // id -> runner（取消用）
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(SERVER_DIR, '..', 'web', 'dist');
+const APP_VERSION = JSON.parse(fs.readFileSync(path.join(SERVER_DIR, '..', 'package.json'), 'utf8')).version || '1.3.0';
 
 /* ---------- 工具 ---------- */
 
@@ -233,28 +234,33 @@ function serveMediaFile(req, res, rec, asDownload) {
 
 /** 附件上下文：文档抽字 + 图片视觉转描述 → 拼成给主模型的文本块。 */
 async function buildAttachmentContext(attachments) {
-  const lines = [];
-  for (const a of attachments) {
-    const rec = getMedia(a.id);
-    if (!rec) continue;
-    const filePath = getMediaPath(rec);
-    try {
-      if (rec.kind === 'image') {
-        const r = await describeImage(fs.readFileSync(filePath), rec.mime);
-        lines.push(`[图片附件 ${a.name}] ${r.ok ? r.text : `（${r.error}）`}`);
-      } else if (rec.kind === 'document' || rec.kind === 'file') {
-        const text = extractDocumentText(filePath, rec.ext);
-        lines.push(`[文档附件 ${a.name} 内容]${text ? `\n${text}` : '（无法抽取文字）'}`);
-      } else if (rec.kind === 'video' || rec.kind === 'audio') {
-        const r = await describeMedia(rec.kind, fs.readFileSync(filePath), rec.mime, rec.originalName);
-        lines.push(`[${rec.kind === 'video' ? '视频' : '音频'}附件 ${a.name}] ${r.ok ? r.text : `（${r.error}）`}`);
-      } else {
-        lines.push(`[附件 ${a.name}]（该类型暂不支持 AI 读取）`);
+  // 并行处理 + 异步读文件（不阻塞事件循环），单个失败不影响其他
+  const results = await Promise.all(
+    attachments.map(async (a) => {
+      const rec = getMedia(a.id);
+      if (!rec) return '';
+      const filePath = getMediaPath(rec);
+      try {
+        if (rec.kind === 'image') {
+          const buf = await fs.promises.readFile(filePath);
+          const r = await describeImage(buf, rec.mime);
+          return `[图片附件 ${a.name}] ${r.ok ? r.text : `（${r.error}）`}`;
+        } else if (rec.kind === 'document' || rec.kind === 'file') {
+          const buf = await fs.promises.readFile(filePath);
+          const text = extractDocumentText(buf, rec.ext);
+          return `[文档附件 ${a.name} 内容]${text ? `\n${text}` : '（无法抽取文字）'}`;
+        } else if (rec.kind === 'video' || rec.kind === 'audio') {
+          const buf = await fs.promises.readFile(filePath);
+          const r = await describeMedia(rec.kind, buf, rec.mime, rec.originalName);
+          return `[${rec.kind === 'video' ? '视频' : '音频'}附件 ${a.name}] ${r.ok ? r.text : `（${r.error}）`}`;
+        }
+        return `[附件 ${a.name}]（该类型暂不支持 AI 读取）`;
+      } catch {
+        return `[附件 ${a.name}]（读取失败）`;
       }
-    } catch {
-      lines.push(`[附件 ${a.name}]（读取失败）`);
-    }
-  }
+    }),
+  );
+  const lines = results.filter(Boolean);
   // 附件上下文总长上限，防多文档/多附件撑爆 prompt
   const MAX_CTX = 12000;
   const joined = lines.join('\n\n');
@@ -280,9 +286,11 @@ async function handleMessage(req, res, url) {
   const session = store.get(id);
   if (!session) return sendJson(res, 404, { error: '会话不存在' });
   if (busy.has(id)) return sendJson(res, 409, { error: '该会话正在生成中' });
+  busy.add(id); // 同步加锁（紧跟检查，防多开/并发双跑）
+  const unlockBusy = () => busy.delete(id);
 
   const body = await readBody(req);
-  if (body && body.__tooLarge) return sendJson(res, 413, { error: '内容超过 1MB 上限，请缩短后重试' });
+  if (body && body.__tooLarge) { unlockBusy(); return sendJson(res, 413, { error: '内容超过 1MB 上限，请缩短后重试' }); }
   const prompt = String(body.prompt ?? '').trim();
   // 附件（媒体库 id + 展示快照）：仅消息展示用，不传给 claude prompt（模型暂不看图）
   const attachments = Array.isArray(body.attachments)
@@ -291,13 +299,19 @@ async function handleMessage(req, res, url) {
         .map((a) => ({ id: a.id, name: a.name || a.id, kind: a.kind || 'file' }))
     : [];
   if (!prompt && attachments.length === 0) {
+    unlockBusy();
     return sendJson(res, 400, { error: '消息内容不能为空（请输入文字或附加文件）' });
   }
   // 附件上下文：文档抽字 + 图片视觉转描述（在 claude 调用前同步完成，让主模型"读到"附件）
-  const attachCtx = await buildAttachmentContext(attachments);
+  let attachCtx = '';
+  try {
+    attachCtx = await buildAttachmentContext(attachments);
+  } catch {
+    unlockBusy();
+    throw new Error('附件处理失败');
+  }
   const claudePrompt = [prompt, attachCtx].filter(Boolean).join('\n\n') || '（附件消息，无文字内容）';
 
-  busy.add(id);
   sseHeaders(res);
 
   const send = (event, data) => {
@@ -414,7 +428,7 @@ async function routeApi(req, res, url) {
   const method = req.method;
 
   if (method === 'GET' && pathname === '/api/health') {
-    return sendJson(res, 200, { ok: true, version: '1.3.0' });
+    return sendJson(res, 200, { ok: true, version: APP_VERSION });
   }
 
   if (method === 'GET' && pathname === '/api/balance') {
@@ -520,12 +534,28 @@ async function routeApi(req, res, url) {
   sendJson(res, 404, { error: '接口不存在' });
 }
 
+/* ---------- 来源校验（防 DNS rebinding / 跨域 CSRF） ---------- */
+/** 非 GET 请求校验来源必须来自本机：同源/无来源（curl/本地程序）放行，陌生来源 403。 */
+function isLocalRequest(req) {
+  const origin = req.headers.origin;
+  const referer = req.headers.referer;
+  if (!origin && !referer) return true; // 无来源头 = 同源或命令行/本地程序
+  const isLocal = (v) =>
+    v === 'null' || /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i.test(v);
+  return isLocal(origin || '') || isLocal(referer || '');
+}
+
 /* ---------- 服务 ---------- */
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host ?? '127.0.0.1'}`);
   try {
     if (url.pathname.startsWith('/api/')) {
+      // 写操作拦截陌生来源；读操作（GET）放行
+      if (req.method !== 'GET' && !isLocalRequest(req)) {
+        sendJson(res, 403, { error: '来源校验失败' });
+        return;
+      }
       await routeApi(req, res, url);
     } else {
       serveStatic(req, res, url);
