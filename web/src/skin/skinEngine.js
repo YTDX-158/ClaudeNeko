@@ -46,6 +46,29 @@ const FLUID_PRESETS = {
   moon: { hue: 220, saturation: 40, brightness: 80, speed: 20, swirl: 20, colorCount: 1 }, // 月光·银白
 };
 
+/** 出厂默认（2026-08-20 由用户当前外观参数固化）：首次运行 / 一键恢复默认后回落这套。 */
+const FACTORY_DEFAULTS = {
+  'dsw-dream-skin:skin': 'mist',
+  'dsw-dream-skin:accent': '#4f83f2',
+  'dsw-dream-skin:text-color': '#000000',
+  'dsw-dream-skin:wallpaper-kind': 'url',
+  'dsw-dream-skin:wallpaper-url': 'https://picsum.photos/1920/1080',
+  'dsw-dream-skin:sidebar-opacity': '0.5',
+  'dsw-dream-skin:composer-opacity': '0.35',
+  'dsw-dream-skin:chat-opacity': '0',
+  'dsw-dream-skin:assistant-opacity': '0.6',
+  'dsw-dream-skin:user-opacity': '0.6',
+  'dsw-dream-skin:code-opacity': '0.6',
+  'dsw-dream-skin:fluid-preset': 'ocean',
+  'dsw-dream-skin:fluid-hue': '205',
+  'dsw-dream-skin:fluid-speed': '35',
+  'dsw-dream-skin:fluid-swirl': '25',
+  'dsw-dream-skin:fluid-saturation': '75',
+  'dsw-dream-skin:fluid-brightness': '60',
+  'dsw-dream-skin:fluid-colors': '3',
+  'dsw-dream-skin:cat-pos': '{"x":169.00009155273438,"y":342.848388671875}',
+};
+
 const DEFAULT_SKIN = 'system';        // 无自定义皮肤 → 跟随系统/内置
 const DEFAULT_BLUR = 0;
 const DEFAULT_SIDEBAR_OPACITY = 0.95;  // 侧栏
@@ -589,12 +612,28 @@ export const skinEngine = {
 
   /** 初始化：恢复已保存的皮肤 + 壁纸 + 字体颜色。 */
   init() {
+    // 出厂默认：localStorage 完全没有皮肤设置时（首次运行 / 一键恢复默认后），
+    // 注入当前固化的默认参数，让"默认" = 这一套
+    let hasSkinPref = false;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        if ((localStorage.key(i) || '').startsWith('dsw-dream-skin:')) { hasSkinPref = true; break; }
+      }
+    } catch {
+      hasSkinPref = true;
+    }
+    if (!hasSkinPref) {
+      for (const [k, v] of Object.entries(FACTORY_DEFAULTS)) writeStorage(k, v);
+    }
     const saved = readStorage(STORAGE_SKIN);
     if (saved && SKINS.some((s) => s.id === saved)) currentSkinId = saved;
     applyTheme();
     applyWallpaper();
     const savedText = readStorage(STORAGE_TEXT_COLOR);
     if (savedText) applyTextColor(savedText);
+    // 强调色也要刷新后恢复（否则只在设置页显示，实际不应用）
+    const savedAccent = readStorage('dsw-dream-skin:accent');
+    if (savedAccent) applyAccent(savedAccent);
     // 跟随系统深色模式变化
     try {
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
