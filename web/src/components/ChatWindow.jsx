@@ -3,6 +3,7 @@ import MessageList from './MessageList.jsx';
 import Composer from './Composer.jsx';
 import CatMascot from './CatMascot.jsx';
 import ClaudeNiang from './ClaudeNiang.jsx';
+import { downloadText, exportSessionText } from '../utils/export.js';
 
 /**
  * 右侧聊天窗口：标题栏 + 消息流 + 输入区。
@@ -31,6 +32,13 @@ export default function ChatWindow({ session, chat }) {
     chat.send(full);
   };
 
+  // 导出当前对话为 .txt 聊天记录
+  const handleExport = () => {
+    if (!chat.messages.length) return;
+    const safe = (session?.title ?? '新会话').replace(/[\\/:*?"<>|]/g, '_');
+    downloadText(`ClaudeNeko-${safe}.txt`, exportSessionText(session, chat.messages));
+  };
+
   // claude娘 心情：生成中按阶段（思考中 → 回答中），否则看输入框是否在打字
   const typing = composerText.trim().length > 0;
   const mascotStatus = chat.streaming
@@ -46,6 +54,7 @@ export default function ChatWindow({ session, chat }) {
       <header className="chat-header">
         <h1 className="chat-title">{session?.title ?? '新会话'}</h1>
         <div className="chat-tools">
+          <button className="chat-export" onClick={handleExport} title="导出当前对话为 .txt">导出</button>
           {session?.model && <span className="chat-model">{session.model}</span>}
         </div>
       </header>

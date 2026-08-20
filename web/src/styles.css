@@ -295,6 +295,23 @@ body {
   background: var(--panel-2);
   border: 1px solid var(--border);
 }
+.chat-export {
+  font-size: 12px;
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  transition: all 0.15s var(--ease);
+}
+.chat-export:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--panel-3);
+}
 
 /* 消息列表 */
 .message-list {

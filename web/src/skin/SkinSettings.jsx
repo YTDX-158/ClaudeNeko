@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { skinEngine } from './skinEngine.js';
 import { api } from '../api.js';
+import { downloadText, exportSessionText } from '../utils/export.js';
 
 const ACCENTS = ['#74c0fc', '#34d399', '#4f83f2', '#f472b6', '#f59e0b', '#a78bfa', '#22d3ee', '#f87171'];
 const GRADIENTS = [
@@ -70,6 +71,23 @@ export default function SkinSettings({ open, onClose }) {
       if (r.enabled !== next) setAutostart(r.enabled);
     } catch {
       setAutostart(!next); // 失败回滚
+    }
+  };
+
+  // 导出全部会话为一个大 .txt（按会话分段）
+  const handleExportAll = async () => {
+    try {
+      const { sessions } = await api.listSessions();
+      const parts = [];
+      for (const s of sessions) {
+        const { messages } = await api.listMessages(s.id);
+        parts.push(exportSessionText(s, messages));
+      }
+      const d = new Date();
+      const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      downloadText(`ClaudeNeko-全部会话-${date}.txt`, parts.join('\n\n'));
+    } catch {
+      // 导出失败静默
     }
   };
 
@@ -356,6 +374,10 @@ export default function SkinSettings({ open, onClose }) {
                 <div className="skin-hint">
                   点击 claude娘 可查询 DeepSeek 官网 api 余额{' '}
                   <a href="https://platform.deepseek.com" target="_blank" rel="noopener noreferrer">🔗</a>
+                </div>
+                <div className="skin-row">
+                  <span>导出全部会话（txt 聊天记录）</span>
+                  <button className="skin-btn" onClick={handleExportAll}>导出</button>
                 </div>
                 <div className="skin-hint">更多功能开关会陆续加到这里</div>
               </div>
