@@ -1,29 +1,45 @@
 # ClaudeNeko 🐱
 
-在浏览器里驱动 **Claude Code CLI** 的本地 Web 界面——带整套皮肤系统、WebGL 流体背景、**双吉祥物**（可拖动的小猫 + 会说话、能查余额的 claude娘）。
+> 在浏览器中驱动 Claude Code CLI 的本地智能对话界面——整合深度可定制皮肤、WebGL 流体背景与双吉祥物互动，带来沉浸式的 AI 聊天体验。
 
-由 **仰天大笑 × 孑孓羽然** 共同开发。
+**ClaudeNeko** 是一款完全本地运行、隐私安全的 AI 聊天应用。它直接驱动你本机的 **Claude Code CLI**（可接入 DeepSeek 等任意 Anthropic 兼容模型），将命令行能力带入浏览器，并完整保留技能（Skills）、MCP、记忆系统等进阶能力。
 
-## ✨ 功能
+由 **仰天大笑** 与 **孑孓羽然** 共同开发。
 
-- 💬 多会话聊天，历史本地存储，续聊自动 resume；每条会话显示最近对话时间
-- 🎨 **皮肤系统**：8 套主题 / 渐变 8 套 / WebGL 流体（6 滑块 + 5 预设）/ 字体颜色 / 强调色 / 一键恢复默认；设置分「外观/功能」两区
-- 🐱 **小猫**：可拖动（位置记住），点击冒气泡（20 种猫咪颜文字）
-- 🎎 **claude娘**：拟人挂件，点击查 DeepSeek 余额；思考中/回答中/打字时状态气泡；拖拽吸附 / 滚轮缩放 / 右键镜像（功能页开关，默认关）
-- 💰 **余额查询**：DeepSeek API Key 只留后端，点 claude娘 显示实时余额
-- ⌨️ **生成中可预打字**：AI 回答时输入框不禁用，可提前输入
-- 📋 会话管理：双击改名 / 自动命名（首句前 15 字）/ 空会话清理 / 右上角实时模型
-- ⚡ 流式输出（SSE 打字机效果）
-- 🔌 保留 Claude Code 全部能力：技能、MCP、记忆系统
+---
 
-## 环境要求
+## ✨ 功能亮点
 
+### 🎎 双吉祥物互动
+- **小猫**：可拖拽至任意位置（位置自动记忆），点击冒气泡
+- **claude娘**：拟人学者挂件——点击即可**实时查询 DeepSeek 账户余额**；在 AI 思考、回答、你输入时分别显示对应状态气泡；支持**拖拽吸附边缘、滚轮缩放、右键镜像、松手弹性动画**
+
+### 🎨 深度可定制外观
+- 8 套主题 + 壁纸（本地上传 / URL / 8 套渐变）+ WebGL 流体背景（6 项参数调节 + 5 套预设）
+- 各区域独立透明度、强调色、字体颜色、一键恢复默认
+- 设置分「外观 / 功能」双分区，逻辑清晰
+
+### 💬 高效对话体验
+- 多会话管理：改名 / 自动命名 / 空会话清理 / 最近对话时间
+- **生成中可预打字**：AI 回答时输入框保持可用，提前输入不浪费等待
+- Markdown 完整渲染、消息复制、微信/QQ 式引用、流式打字机输出
+- 多开页面自动同步，消息永不丢失
+
+### 🔒 隐私与安全
+- **100% 本地运行**：会话记录仅存本地，无任何云端上传
+- **API Key 只留后端**：DeepSeek 密钥绝不下发前端
+- 仅监听 `127.0.0.1`，不暴露公网
+
+---
+
+## 🚀 快速开始
+
+### 环境要求
 - **Node.js 18+**
-- **Claude Code CLI 已安装**
-- 配置好 DeepSeek（或其他 Anthropic 兼容端点，见下）
+- **Claude Code CLI**（已安装）
+- 一个 Anthropic 兼容 API Key（如 DeepSeek）
 
-## DeepSeek 配置（必须，一步）
-
+### 配置 DeepSeek（一步）
 在 `~/.claude/settings.json` 写入：
 
 ```json
@@ -36,37 +52,49 @@
 }
 ```
 
-> 想用别的模型/端点？改 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN` 即可（Anthropic 官方或其他兼容服务都能接）。模型由 Claude Code CLI 的系统默认决定，本界面不在会话里选模型。
+> 想换模型/端点？修改 `ANTHROPIC_BASE_URL` 与 `ANTHROPIC_AUTH_TOKEN` 即可，支持任意 Anthropic 兼容服务。模型由 Claude Code CLI 系统默认决定，界面内不另作选择。
 
-## 安装 & 启动
-
+### 启动
 ```bash
 npm install
 npm run prod      # 构建前端 + 启动服务
 # 浏览器打开 http://127.0.0.1:4000
 ```
 
-开发模式：`npm run dev`（前端热更新在 5173，后端 4000）。
+Windows 用户可直接双击包内 `start-web.bat`（自动构建 + 打开浏览器）。
 
-## 使用
+---
 
-1. 打开 `http://127.0.0.1:4000`
-2. 左侧「＋ 新建会话」开聊
-3. 右下角 ⚙ 进设置：换主题/背景/流体/透明度/颜色（外观 / 功能两区）
-4. 点右下角那只猫 → 冒气泡 🐱💭；功能页打开 claude娘 → 点它查余额 🎎
+## 📖 使用指南
 
-## 数据与隐私
+1. 打开 `http://127.0.0.1:4000`，新建会话开始聊天
+2. 点右下角 ⚙ 进入设置，自由定制外观与功能开关
+3. 点小猫冒气泡；在功能页开启 claude娘，点击即可查看实时余额
 
-- 会话记录存本地 `server/data/`（不上传任何云端）
-- 只在本机运行，**不要**把 4000 端口暴露到公网/局域网
+---
 
-## ⚠️ 安全警告
+## ❓ 常见问题
 
-本服务**无鉴权**——任何能访问你 4000 端口的人都能操作你的 Claude。**仅供 localhost 本机使用**，请勿端口映射/内网穿透。
+**Q: 可以用其他模型吗？**
+A: 可以。修改 `ANTHROPIC_BASE_URL` 与 `ANTHROPIC_AUTH_TOKEN` 即可接入任意 Anthropic 兼容服务。
+
+**Q: 聊天记录会被上传吗？**
+A: 不会。所有数据仅存本地 `server/data/`，无任何云端上传。
+
+**Q: 为什么不能让别人访问？**
+A: 本服务无鉴权，仅限本机 localhost 使用，请勿端口映射或内网穿透。
+
+---
+
+## 🧱 技术栈
+
+- **前端**：React 18 + Vite 5
+- **后端**：Node.js（零依赖，直接驱动本机 Claude Code CLI）
+- 完整保留 Claude Code 能力：Skills、MCP、记忆系统
 
 ## 致谢
 
-外观设计令牌移植自 [dsh-dream-skin](https://www.npmjs.com/package/dsh-dream-skin)（MIT），WebGL 流体引擎与玻璃质感移植自 [dsh-client-ui-aqua](https://www.npmjs.com/package/dsh-client-ui-aqua)（MIT）。DeepSeek Harness 的界面风格提供了灵感。
+外观设计令牌移植自 [dsh-dream-skin](https://www.npmjs.com/package/dsh-dream-skin)（MIT），WebGL 流体引擎移植自 [dsh-client-ui-aqua](https://www.npmjs.com/package/dsh-client-ui-aqua)（MIT）。
 
 ## License
 
