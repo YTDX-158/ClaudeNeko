@@ -859,14 +859,17 @@ body {
   50% { transform: translate(12px, -22px); opacity: 0.35; }
 }
 .cat-mascot {
-  position: absolute;
-  right: 26px;
-  bottom: 96px;
-  z-index: 1;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 999;
   color: var(--text);
   opacity: 0.45;
   pointer-events: auto;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   animation: cat-breathe 4s ease-in-out infinite;
   transition: opacity 0.15s var(--ease), transform 0.15s var(--ease);
 }
