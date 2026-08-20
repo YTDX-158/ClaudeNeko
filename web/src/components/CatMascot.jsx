@@ -3,10 +3,9 @@
  *  - 一只坐姿猫（SVG 剪影，跟随主题色），**可拖拽**（位置 localStorage 记住，限制在窗口内）
  *  - 背景淡粒子：光点漂浮，纯 CSS 动画（背景装饰，不随猫移动）
  *  - 点击猫（拖动位移 <6px）→ 猫头正上方冒气泡（2 秒），随机猫咪颜文字，气泡消失前不可再点
- *  - 气泡透明度同步"用户气泡"，字符颜色同步正文
+ *  - 气泡固定清晰（0.95 不透明），字符颜色同步正文
  */
 import { useEffect, useRef, useState } from 'react';
-import { skinEngine } from '../skin/skinEngine.js';
 
 const CAT_KAOMOJI = [
   '(=^･ω･^=)', 'ฅ^•ﻌ•^ฅ', '(=^‥^=)', '(=｀ω´=)', '(=^-ω-^=)',
@@ -138,7 +137,7 @@ export default function CatMascot() {
         onPointerUp={handlePointerUp}
       >
         {bubble && (
-          <div className="cat-bubble" style={{ opacity: skinEngine.wallpaper.userOpacity }}>
+          <div className="cat-bubble" style={{ opacity: 0.95 }}>
             <span className="cat-bubble-text">{bubble}</span>
             <span className="cat-bubble-tail" />
           </div>
