@@ -246,13 +246,17 @@ async function handleMessage(req, res, url) {
   const body = await readBody(req);
   if (body && body.__tooLarge) return sendJson(res, 413, { error: '内容超过 1MB 上限，请缩短后重试' });
   const prompt = String(body.prompt ?? '').trim();
-  if (!prompt) return sendJson(res, 400, { error: 'prompt 不能为空' });
   // 附件（媒体库 id + 展示快照）：仅消息展示用，不传给 claude prompt（模型暂不看图）
   const attachments = Array.isArray(body.attachments)
     ? body.attachments
         .filter((a) => a && typeof a.id === 'string')
         .map((a) => ({ id: a.id, name: a.name || a.id, kind: a.kind || 'file' }))
     : [];
+  if (!prompt && attachments.length === 0) {
+    return sendJson(res, 400, { error: '消息内容不能为空（请输入文字或附加文件）' });
+  }
+  // 纯附件消息给 claude 一个占位 prompt，避免空 prompt 报错
+  const claudePrompt = prompt || '（消息含附件，无文字内容）';
 
   busy.add(id);
   sseHeaders(res);
@@ -288,7 +292,7 @@ async function handleMessage(req, res, url) {
 
   const runner = createClaudeRunner({
     claudeBin: config.claudeBin,
-    prompt,
+    prompt: claudePrompt,
     model: session.model,
     claudeSessionId: session.claudeSessionId || undefined,
     cwd: session.cwd || config.defaultCwd,
