@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { skinEngine } from './skinEngine.js';
 import { api } from '../api.js';
 import { downloadText, exportSessionText } from '../utils/export.js';
+import SkillsPanel from '../components/SkillsPanel.jsx';
 
 const ACCENTS = ['#74c0fc', '#34d399', '#4f83f2', '#f472b6', '#f59e0b', '#a78bfa', '#22d3ee', '#f87171'];
 const GRADIENTS = [
@@ -53,6 +54,7 @@ export default function SkinSettings({ open, onClose }) {
   const [accent, setAccent] = useState(() => localStorage.getItem('dsw-dream-skin:accent') || '');
   const [confirmReset, setConfirmReset] = useState(false);
   const [autostart, setAutostart] = useState(null); // null=加载中 / true|false=开关状态
+  const [skillsOpen, setSkillsOpen] = useState(false); // 已装 Skills 查看面板
   const fileRef = useRef(null);
 
   // 打开设置时读取开机自启当前状态
@@ -379,6 +381,10 @@ export default function SkinSettings({ open, onClose }) {
                   <span>导出全部会话（txt 聊天记录）</span>
                   <button className="skin-btn" onClick={handleExportAll}>导出</button>
                 </div>
+                <div className="skin-row">
+                  <span>已装 Skills（查看全部技能）</span>
+                  <button className="skin-btn" onClick={() => setSkillsOpen(true)}>查看</button>
+                </div>
                 <div className="skin-hint">更多功能开关会陆续加到这里</div>
               </div>
             </div>
@@ -402,6 +408,7 @@ export default function SkinSettings({ open, onClose }) {
           </button>
           <span>仰天大笑 × 孑孓羽然 共同开发 · 外观灵感源自 dsh-dream-skin / Aqua（MIT）</span>
         </div>
+        <SkillsPanel open={skillsOpen} onClose={() => setSkillsOpen(false)} />
       </div>
     </div>
   );

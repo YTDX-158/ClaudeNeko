@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig } from './lib/settings.js';
@@ -116,6 +117,53 @@ async function setAutoStart(enabled) {
       `Remove-ItemProperty -Path '${RUN_KEY}' -Name '${AUTOSTART_NAME}' -ErrorAction SilentlyContinue`,
     );
   }
+}
+
+/* ---------- 已装 Skills（查看用，不管理） ---------- */
+function parseFrontmatter(md) {
+  const m = md.match(/^---\n([\s\S]*?)\n---/);
+  const meta = {};
+  if (m) {
+    for (const line of m[1].split('\n')) {
+      const kv = line.match(/^(\w+):\s*(.*)$/);
+      if (kv) meta[kv[1]] = kv[2].replace(/^['"]|['"]$/g, '');
+    }
+  }
+  return meta;
+}
+
+function listSkills() {
+  // 用户级 skills + 项目级 .claude/skills（CLAUDE_CONFIG_DIR 可换配置目录，兜底 os.homedir()）
+  const base = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  const dirs = [path.join(base, 'skills'), path.join(process.cwd(), '.claude', 'skills')];
+  const out = [];
+  for (const dir of dirs) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue; // 目录不存在/无权限
+    }
+    for (const entry of entries) {
+      // symlink（如指向 ~/.agents/skills 的共享 skill）也算，跟随读取
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const sk = path.join(dir, entry.name, 'SKILL.md');
+      if (!fs.existsSync(sk)) continue;
+      try {
+        const md = fs.readFileSync(sk, 'utf8');
+        const meta = parseFrontmatter(md);
+        out.push({
+          name: meta.name || entry.name,
+          description: meta.description || '',
+          path: path.join(dir, entry.name),
+          body: md.length > 6000 ? md.slice(0, 6000) + '\n…（内容较长已截断）' : md,
+        });
+      } catch {
+        // 单个 skill 读取失败不影响其他
+      }
+    }
+  }
+  return out;
 }
 
 /* ---------- API ---------- */
@@ -255,6 +303,10 @@ async function routeApi(req, res, url) {
 
   if (method === 'GET' && pathname === '/api/balance') {
     return sendJson(res, 200, await fetchBalance());
+  }
+
+  if (method === 'GET' && pathname === '/api/skills') {
+    return sendJson(res, 200, { skills: listSkills() });
   }
 
   if (method === 'GET' && pathname === '/api/models') {
