@@ -313,7 +313,9 @@ async function handleMessage(req, res, url) {
     ...(attachments.length ? { attachments } : {}),
   });
   if (session.title === '新会话') {
-    const title = prompt.slice(0, 15);
+    // 命名源：文字 或 第一个附件名（纯附件首条也能正常命名）
+    const nameSource = prompt || attachments[0]?.name || '附件';
+    const title = nameSource.slice(0, 15);
     store.update(id, { title });
     send('title_update', { sessionId: id, title });
   }
