@@ -403,13 +403,13 @@ body {
   border: none;
   padding: 2px 6px;
   border-radius: 4px;
-  color: var(--muted-2);
+  color: var(--muted);
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   cursor: pointer;
-  opacity: 0.75;
-  transition: color 0.15s var(--ease), background 0.15s var(--ease), opacity 0.15s var(--ease);
+  opacity: 1;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
 }
 .msg-action:hover {
   color: var(--accent);
