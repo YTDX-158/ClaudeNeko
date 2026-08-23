@@ -33,7 +33,8 @@ export default function ChatWindow({ session, chat, onBranch }) {
     return () => {
       live = false;
     };
-  }, [session?.id, chat.messages.length]);
+    // streaming 依赖：聊天发消息完成（true→false）重拉 → 分支/新建会话首次回复后 id 自动显示（不再要刷新）
+  }, [session?.id, chat.messages.length, chat.streaming]);
 
   // 技能包发送：生图/生视频（异步轮询）/下载视频（可选转录）
   // 生成中 → genCards 临时气泡；完成后 → 落盘 + 转成 AI 消息气泡进消息流
