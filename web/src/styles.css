@@ -1241,3 +1241,11 @@ body {
 .msg-assistant .msg-attach-card .thumb { width: 70%; max-width: 70%; height: auto; object-fit: contain; }
 .msg-assistant .msg-attach-card video { width: 70%; max-width: 70%; height: auto; }
 
+
+/* 附件下载按钮（卡片右上角，一直显示） */
+.msg-attach-card { position: relative; }
+.msg-attach-name { display: block; }
+.msg-attach-link { text-decoration: none; color: var(--text, #333); }
+.msg-attach-download { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; text-decoration: none; opacity: .85; z-index: 1; }
+.msg-attach-download:hover { opacity: 1; background: rgba(0,0,0,.75); }
+

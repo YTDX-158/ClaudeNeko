@@ -12,15 +12,27 @@ import remarkGfm from 'remark-gfm';
  *   - 引用：以 Markdown 引用块形式插入输入框
  */
 
-/** 消息附件卡片（图片/视频/文档/音频）；文件被删除时显示占位。 */
+/** 消息附件卡片（图片/视频/文档/音频）；文件被删除时显示占位。右上角下载按钮直接存本地。 */
 function AttachmentCard({ att }) {
   const [broken, setBroken] = useState(false);
   if (broken) return <span className="msg-attach-broken">📎 {att.name}（文件已删除）</span>;
+  const dl = (
+    <a
+      className="msg-attach-download"
+      href={`/api/media/${att.id}/download`}
+      title="下载到本地"
+      download
+      onClick={(e) => e.stopPropagation()}
+    >
+      ⬇
+    </a>
+  );
   if (att.kind === 'image') {
     return (
       <span className="msg-attach-card">
         <img className="thumb" src={`/api/media/${att.id}`} alt={att.name} onError={() => setBroken(true)} />
-        <span>{att.name}</span>
+        <span className="msg-attach-name">{att.name}</span>
+        {dl}
       </span>
     );
   }
@@ -28,14 +40,18 @@ function AttachmentCard({ att }) {
     return (
       <span className="msg-attach-card">
         <video src={`/api/media/${att.id}`} controls preload="metadata" onError={() => setBroken(true)} />
-        <span>{att.name}</span>
+        <span className="msg-attach-name">{att.name}</span>
+        {dl}
       </span>
     );
   }
   return (
-    <a className="msg-attach-card" href={`/api/media/${att.id}`} target="_blank" rel="noopener noreferrer">
-      {att.kind === 'audio' ? '🎵' : '📄'} {att.name}
-    </a>
+    <span className="msg-attach-card">
+      <a href={`/api/media/${att.id}`} target="_blank" rel="noopener noreferrer" className="msg-attach-link">
+        {att.kind === 'audio' ? '🎵' : '📄'} {att.name}
+      </a>
+      {dl}
+    </span>
   );
 }
 
