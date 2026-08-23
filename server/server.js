@@ -16,6 +16,7 @@ import { describeMedia } from './lib/mediaUnderstand.js';
 import { createMediaService, ApiError } from './lib/mediaGen.js';
 import { sendJson, readBody, serveStatic, parseFrontmatter, listSkills, readRawBody, serveMediaFile } from './lib/util.js';
 import { systemHandler } from './routes/system.js';
+import { mediaHandler } from './routes/media.js';
 
 const config = resolveConfig();
 const media = createMediaService(config.media);
@@ -27,6 +28,7 @@ const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(SERVER_DIR, '..', 'web', 'dist');
 const APP_VERSION = JSON.parse(fs.readFileSync(path.join(SERVER_DIR, '..', 'package.json'), 'utf8')).version || '1.3.0';
 const systemRouter = systemHandler({ config, appVersion: APP_VERSION, getAutoStartEnabled, setAutoStart, readBody });
+const mediaRouter = mediaHandler({ media, store, maybeStartMediaClaude });
 
 /* ---------- 工具 ---------- */
 
@@ -386,69 +388,8 @@ async function routeApi(req, res, url) {
   const sys = await systemRouter(req, res, url);
   if (sys !== null) return;
 
-  if (method === 'POST' && pathname === '/api/media') {
-    const name = url.searchParams.get('name') || '';
-    const buf = await readRawBody(req);
-    if (!buf) return sendJson(res, 413, { error: '文件过大（>50MB）或上传失败' });
-    const r = saveMedia(buf, decodeURIComponent(name));
-    if (!r.ok) return sendJson(res, 400, { error: r.error });
-    return sendJson(res, 201, r.media);
-  }
-
-  if (method === 'GET' && pathname === '/api/media') {
-    return sendJson(res, 200, { media: listMedia() });
-  }
-
-  /* ---------- 技能包：生成媒体 / 下载视频（mediaGen） ---------- */
-  const genErr = (e) =>
-    e instanceof ApiError
-      ? sendJson(res, 400, { error: e.code, message: e.message })
-      : sendJson(res, 500, { error: 'INTERNAL', message: e.message });
-
-  if (method === 'GET' && pathname === '/api/media/config') {
-    return sendJson(res, 200, media.getConfig());
-  }
-
-  if (method === 'POST' && pathname === '/api/media/generate') {
-    const body = await readBody(req);
-    if (body && body.__tooLarge) return sendJson(res, 413, { error: '内容超过 1MB 上限，请缩短后重试' });
-    const prompt = String(body.prompt ?? '').trim();
-    if (!prompt) return sendJson(res, 400, { error: 'EMPTY_PROMPT', message: '提示词不能为空' });
-    const gsess = body.sessionId ? store.get(String(body.sessionId)) : null;
-    try {
-      if (body.kind === 'image') {
-        if (gsess) maybeStartMediaClaude(gsess, 'image', prompt);
-        return sendJson(res, 200, await media.generateImage({ prompt, model: body.model, ratio: body.ratio, resolution: body.resolution }));
-      }
-      if (body.kind === 'video') {
-        if (gsess) maybeStartMediaClaude(gsess, 'video', prompt);
-        return sendJson(res, 200, await media.generateVideo({ prompt, model: body.model, ratio: body.ratio, duration: body.duration, resolution: body.resolution }));
-      }
-      return sendJson(res, 400, { error: 'BAD_KIND', message: 'kind 需为 image 或 video' });
-    } catch (e) {
-      return genErr(e);
-    }
-  }
-
-  const mtask = pathname.match(/^\/api\/media\/task\/([^/]+)$/);
-  if (mtask && method === 'GET') {
-    try {
-      return sendJson(res, 200, await media.queryTask(mtask[1]));
-    } catch (e) {
-      return genErr(e);
-    }
-  }
-
-  if (method === 'POST' && pathname === '/api/media/download') {
-    const body = await readBody(req);
-    if (body && body.__tooLarge) return sendJson(res, 413, { error: '内容超过 1MB 上限，请缩短后重试' });
-    if (!body.url) return sendJson(res, 400, { error: 'NO_URL', message: '请粘贴视频链接' });
-    try {
-      return sendJson(res, 200, await media.download({ url: String(body.url), transcribe: !!body.transcribe }));
-    } catch (e) {
-      return genErr(e);
-    }
-  }
+  const mediaRes = await mediaRouter(req, res, url);
+  if (mediaRes !== null) return;
 
   const mm = pathname.match(/^\/api\/media\/([^/]+)(\/download)?$/);
   if (mm) {
