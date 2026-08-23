@@ -14,6 +14,7 @@ import { describeImage } from './lib/vision.js';
 import { extractDocumentText } from './lib/docText.js';
 import { describeMedia } from './lib/mediaUnderstand.js';
 import { createMediaService, ApiError } from './lib/mediaGen.js';
+import { sendJson, readBody, serveStatic, parseFrontmatter, listSkills, readRawBody, serveMediaFile } from './lib/util.js';
 
 const config = resolveConfig();
 const media = createMediaService(config.media);
@@ -27,85 +28,6 @@ const APP_VERSION = JSON.parse(fs.readFileSync(path.join(SERVER_DIR, '..', 'pack
 
 /* ---------- 工具 ---------- */
 
-function sendJson(res, status, body) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(body));
-}
-
-function readBody(req) {
-  return new Promise((resolve) => {
-    let data = '';
-    let tooLarge = false;
-    let settled = false;
-    const finish = (v) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(v);
-    };
-    // 30s 超时：客户端连上但不发请求体（或挂起）时释放，防挂起请求占着 busy 锁
-    const timer = setTimeout(() => {
-      try {
-        req.destroy();
-      } catch {
-        // 已关闭
-      }
-      finish({});
-    }, 30000);
-    req.on('data', (chunk) => {
-      if (tooLarge) return;
-      data += chunk;
-      if (data.length > 1e6) {
-        tooLarge = true;
-        finish({ __tooLarge: true }); // 标记超限，由调用方返回 413
-        req.pause(); // 暂停接收，等 413 响应发出后连接自然关闭（destroy 会抢先断连）
-      }
-    });
-    req.on('end', () => {
-      try {
-        finish(data ? JSON.parse(data) : {});
-      } catch {
-        finish({});
-      }
-    });
-    req.on('error', () => finish({}));
-  });
-}
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2',
-};
-
-function serveStatic(req, res, url) {
-  let filePath = path.join(DIST_DIR, url.pathname === '/' ? 'index.html' : url.pathname);
-  if (!filePath.startsWith(DIST_DIR)) filePath = path.join(DIST_DIR, 'index.html');
-
-  const fallback = () => {
-    fs.readFile(path.join(DIST_DIR, 'index.html'), (err, indexHtml) => {
-      if (err) {
-        sendJson(res, 503, { error: '前端未构建，请先运行 npm run build' });
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': MIME['.html'] });
-      res.end(indexHtml);
-    });
-  };
-
-  fs.stat(filePath, (err, stat) => {
-    if (err || !stat.isFile()) return fallback();
-    const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream' });
-    fs.createReadStream(filePath).pipe(res);
-  });
-}
 
 /* ---------- 开机自启（HKCU Run，登录时后台启动后端，无需管理员） ---------- */
 const RUN_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
@@ -143,112 +65,7 @@ async function setAutoStart(enabled) {
 }
 
 /* ---------- 已装 Skills（查看用，不管理） ---------- */
-function parseFrontmatter(md) {
-  const m = md.match(/^---\n([\s\S]*?)\n---/);
-  const meta = {};
-  if (m) {
-    for (const line of m[1].split('\n')) {
-      const kv = line.match(/^(\w+):\s*(.*)$/);
-      if (kv) meta[kv[1]] = kv[2].replace(/^['"]|['"]$/g, '');
-    }
-  }
-  return meta;
-}
-
-function listSkills() {
-  // 用户级 skills + 项目级 .claude/skills（CLAUDE_CONFIG_DIR 可换配置目录，兜底 os.homedir()）
-  const base = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-  const dirs = [path.join(base, 'skills'), path.join(process.cwd(), '.claude', 'skills')];
-  const out = [];
-  for (const dir of dirs) {
-    let entries = [];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue; // 目录不存在/无权限
-    }
-    for (const entry of entries) {
-      // symlink（如指向 ~/.agents/skills 的共享 skill）也算，跟随读取
-      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-      const sk = path.join(dir, entry.name, 'SKILL.md');
-      if (!fs.existsSync(sk)) continue;
-      try {
-        const md = fs.readFileSync(sk, 'utf8');
-        const meta = parseFrontmatter(md);
-        out.push({
-          name: meta.name || entry.name,
-          description: meta.description || '',
-          path: path.join(dir, entry.name),
-          body: md.length > 6000 ? md.slice(0, 6000) + '\n…（内容较长已截断）' : md,
-        });
-      } catch {
-        // 单个 skill 读取失败不影响其他
-      }
-    }
-  }
-  return out;
-}
-
 /* ---------- 媒体库（上传/列表/预览下载/删除） ---------- */
-const MAX_MEDIA_SIZE = 50 * 1024 * 1024; // 50MB 上传上限
-
-function readRawBody(req) {
-  return new Promise((resolve) => {
-    const chunks = [];
-    let size = 0;
-    const timer = setTimeout(() => { req.destroy(); resolve(null); }, 30000); // 上传 30s 超时
-    req.on('data', (c) => {
-      size += c.length;
-      if (size > MAX_MEDIA_SIZE) {
-        clearTimeout(timer);
-        req.destroy();
-        resolve(null);
-        return;
-      }
-      chunks.push(c);
-    });
-    req.on('end', () => { clearTimeout(timer); resolve(Buffer.concat(chunks)); });
-    req.on('error', () => { clearTimeout(timer); resolve(null); });
-  });
-}
-
-function serveMediaFile(req, res, rec, asDownload) {
-  const filePath = getMediaPath(rec);
-  let stat;
-  try {
-    stat = fs.statSync(filePath);
-  } catch {
-    sendJson(res, 404, { error: '文件不存在' });
-    return;
-  }
-  const base = {
-    'Accept-Ranges': 'bytes',
-    'X-Content-Type-Options': 'nosniff',
-    'Content-Type': rec.mime,
-  };
-  if (asDownload) base['Content-Disposition'] = `attachment; filename="${encodeURIComponent(rec.originalName)}"`;
-  const range = req.headers.range;
-  if (range && !asDownload) {
-    // 视频拖动需要 Range（HTTP 206）
-    const m = range.match(/bytes=(\d*)-(\d*)/);
-    const start = m && m[1] ? parseInt(m[1], 10) : 0;
-    const end = m && m[2] ? parseInt(m[2], 10) : stat.size - 1;
-    if (start >= stat.size || end >= stat.size || start > end) {
-      res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
-      res.end();
-      return;
-    }
-    res.writeHead(206, {
-      ...base,
-      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-      'Content-Length': end - start + 1,
-    });
-    fs.createReadStream(filePath, { start, end }).pipe(res);
-  } else {
-    res.writeHead(200, { ...base, 'Content-Length': stat.size });
-    fs.createReadStream(filePath).pipe(res);
-  }
-}
 
 /** 附件上下文：文档抽字 + 图片视觉转描述 → 拼成给主模型的文本块。 */
 async function buildAttachmentContext(attachments) {
