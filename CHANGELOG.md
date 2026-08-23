@@ -1,5 +1,24 @@
 # 更新日志
 
+## v1.4.22（2026-08-24）—— 常驻自愈（任务计划）🔄
+
+### 🆕 新增
+- **开机自启升级为「常驻自愈」**：设置 → 功能 → 开机自启开关从注册表（HKCU）改为**任务计划**（登录触发 + 每 5 分钟重复）
+- 新增 `start-server.bat`（幂等启动：server 在跑就跳过，没跑就拉起）→ server 崩溃后**最多 5 分钟内自动恢复**
+- `start-server.vbs` 隐藏窗口启动（直接 Run bat 完整路径，绕开中文路径经 cmd 解析的乱码坑）
+- 市场友好：**默认关**（不打扰），需要自启/自愈的用户在设置里打开即可
+
+### 🔧 修复（实测踩坑）
+- **vbs 中文路径乱码**：vbs 拼 `cmd /c cd /d 中文路径 && bat` 时中文坏成 `??` → 改为 ShellExecuteW 直接 Run bat 完整路径
+- **快速 toggle 失败**：setAutoStart 关→立即开时任务注册静默失败（Unregister 异步）→ 注册前清残留任务 + 短延迟
+
+### 📝 说明
+- schtasks 命令行不支持 ONLOGON + 重复间隔，用 PowerShell `Register-ScheduledTask` 的 Repetition 实现
+- 自愈延迟 ≤ 5 分钟（任务计划重复间隔，可改）
+- 旧开机触发任务（ClaudeNekoServerBoot）与旧 HKCU 自启项已自动清理
+
+---
+
 ## v1.4.21（2026-08-24）—— 思考档位 🎚️
 
 ### 🆕 新增

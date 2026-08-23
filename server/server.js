@@ -28,9 +28,11 @@ const sessionsRouter = sessionsHandler({ store, config, busy, activeRunners, med
 /* ---------- 工具 ---------- */
 
 
-/* ---------- 开机自启（HKCU Run，登录时后台启动后端，无需管理员） ---------- */
+/* ---------- 常驻自愈（任务计划）：登录触发 + 管理员可选开机触发，替换旧 HKCU 自启 ---------- */
 const RUN_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-const AUTOSTART_NAME = 'ClaudeNekoWeb';
+const AUTOSTART_NAME = 'ClaudeNekoWeb'; // 旧 HKCU 自启项名（切换时清理）
+const TASK_LOGON = 'ClaudeNekoServer'; // 登录触发任务（守护 start-server.bat）
+const TASK_BOOT = 'ClaudeNekoServerBoot'; // 开机触发任务（需管理员，尽力而为）
 
 function runPowerShell(script) {
   return new Promise((resolve) => {
@@ -44,21 +46,33 @@ function runPowerShell(script) {
 
 async function getAutoStartEnabled() {
   const out = await runPowerShell(
-    `(Get-ItemProperty -Path '${RUN_KEY}' -Name '${AUTOSTART_NAME}' -ErrorAction SilentlyContinue).'${AUTOSTART_NAME}'`,
+    `try { Get-ScheduledTask -TaskName '${TASK_LOGON}' -ErrorAction Stop | Out-Null; 'yes' } catch { 'no' }`,
   );
-  return !!out;
+  return out === 'yes';
 }
 
 async function setAutoStart(enabled) {
   if (enabled) {
-    // 登录时隐藏启动后端（run-node.vbs 动态定位，不硬编码路径）
-    const vbs = path.join(SERVER_DIR, '..', 'run-node.vbs');
-    await runPowerShell(
-      `Set-ItemProperty -Path '${RUN_KEY}' -Name '${AUTOSTART_NAME}' -Value 'wscript "${vbs}"'`,
-    );
+    const vbs = path.join(SERVER_DIR, '..', 'start-server.vbs').replace(/'/g, "''");
+    // 登录触发 + 每 5 分钟重复（自愈）。schtasks 命令行不支持 ONLOGON 重复间隔，
+    // 故用 PowerShell Repetition 实现。同时清理旧开机触发任务 + 旧 HKCU（防双机制重复拉起）。
+    const script = [
+      `$vbs = '${vbs}'`,
+      // 先清残留任务 + 短延迟（Unregister 是异步的，立即 Register 会静默失败）
+      `Unregister-ScheduledTask -TaskName '${TASK_LOGON}' -Confirm:$false -ErrorAction SilentlyContinue`,
+      `Start-Sleep -Milliseconds 300`,
+      `$trigger = New-ScheduledTaskTrigger -AtLogOn`,
+      `$rep = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)`,
+      `$trigger.Repetition = $rep.Repetition`,
+      `$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $vbs + '"')`,
+      `Register-ScheduledTask -TaskName '${TASK_LOGON}' -Action $action -Trigger $trigger -Force | Out-Null`,
+      `Unregister-ScheduledTask -TaskName '${TASK_BOOT}' -Confirm:$false -ErrorAction SilentlyContinue`,
+      `Remove-ItemProperty -Path '${RUN_KEY}' -Name '${AUTOSTART_NAME}' -ErrorAction SilentlyContinue`,
+    ].join('; ');
+    await runPowerShell(script);
   } else {
     await runPowerShell(
-      `Remove-ItemProperty -Path '${RUN_KEY}' -Name '${AUTOSTART_NAME}' -ErrorAction SilentlyContinue`,
+      `Unregister-ScheduledTask -TaskName '${TASK_LOGON}' -Confirm:$false -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName '${TASK_BOOT}' -Confirm:$false -ErrorAction SilentlyContinue`,
     );
   }
 }
