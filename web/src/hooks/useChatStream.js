@@ -31,6 +31,11 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
     setMessages([]);
     setError(null);
     setRecovering(false);
+    // 切会话必须重置 streaming：否则旧会话的流式态吞掉新会话发送 + 停止按钮取消错对象
+    setStreaming(false);
+    setResponding(false);
+    abortRef.current?.abort();
+    abortRef.current = null;
     lastUpdatedAtRef.current = null;
     if (!sessionId) return;
     api
@@ -69,7 +74,13 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
         if (session.updatedAt !== lastUpdatedAtRef.current) {
           lastUpdatedAtRef.current = session.updatedAt;
           const { messages: msgs } = await api.listMessages(sessionId);
-          if (!cancelled) setMessages(msgs);
+          if (!cancelled) {
+            setMessages((prev) => {
+              // 保留前端 streaming 占位（技能生成中），防 3s 轮询把"正在生成中"抹掉
+              const placeholders = prev.filter((m) => m.streaming);
+              return placeholders.length ? [...msgs, ...placeholders] : msgs;
+            });
+          }
         }
       } catch {
         // 会话可能已被删除或后端瞬时不可用，忽略

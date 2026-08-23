@@ -54,6 +54,7 @@ export default function Composer({
   const submit = () => {
     // 技能模式：走生成/下载 API，不触发 claude 回复
     if (skill && onGenSend) {
+      if (streaming) return; // 聊天流式中不能技能生成：占位 streaming:true 会被流式增量污染
       if (skill === 'download') {
         const url = (genOpts.url || '').trim();
         if (!url) return;

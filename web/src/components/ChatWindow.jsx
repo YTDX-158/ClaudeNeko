@@ -27,7 +27,9 @@ export default function ChatWindow({ session, chat, onBranch }) {
       .then((d) => {
         if (live) setSid(d.session?.claudeSessionId || null);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (live) setSid(null); // 失败重置，防显示上一会话的旧 id
+      });
     return () => {
       live = false;
     };
@@ -62,12 +64,12 @@ export default function ChatWindow({ session, chat, onBranch }) {
       if (session?.id && attachments.length) {
         api.appendMediaMessage(session.id, { text: resultText, attachments }).catch(() => {});
       }
-      const resultMsg = { id: `gen-${Date.now()}`, role: 'assistant', text: resultText, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
+      const resultMsg = { id: `gen-${Date.now()}`, role: 'assistant', text: resultText, ts: Date.now(), streaming: false, ...(attachments.length ? { attachments } : {}) };
       if (chat.replaceMessage) chat.replaceMessage(pid, resultMsg);
     };
-    // 失败：占位替换为错误
+    // 失败：占位替换为错误（streaming:false 必须显式，否则 replaceMessage 合并保留占位的流式态）
     const fail = (error) => {
-      const errMsg = { id: `gen-e-${Date.now()}`, role: 'assistant', text: `❌ ${label} 失败：${error}`, ts: Date.now() };
+      const errMsg = { id: `gen-e-${Date.now()}`, role: 'assistant', text: `❌ ${label} 失败：${error}`, ts: Date.now(), streaming: false };
       if (chat.replaceMessage) chat.replaceMessage(pid, errMsg);
     };
 
@@ -93,7 +95,10 @@ export default function ChatWindow({ session, chat, onBranch }) {
           resolution: req.resolution,
           sessionId: session?.id,
         });
+        let polling = false; // 防并发轮询：服务端 succeeded 分支下载 mp4 可能 >4s，两轮询并发会重复 finish
         const poll = setInterval(async () => {
+          if (polling) return;
+          polling = true;
           try {
             const t = await api.mediaTask(r.taskId);
             if (t.status === 'done') {
@@ -109,6 +114,8 @@ export default function ChatWindow({ session, chat, onBranch }) {
             clearInterval(poll);
             clearInterval(tick);
             fail(e.message);
+          } finally {
+            polling = false;
           }
         }, 4000);
       } else if (req.skill === 'download') {

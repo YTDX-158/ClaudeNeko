@@ -171,6 +171,7 @@ export function createMediaService(cfg) {
       const j = await arkFetch(`/contents/generations/tasks/${taskId}`, { headers: headers() });
       const st = j?.status || '';
       if (st === 'succeeded') {
+        t.status = 'downloading'; // 先标记，防并发轮询重复下载（下次轮询 status!==running 直接返回）
         const url = extractVideoUrl(j);
         let mediaId = null;
         try {
@@ -203,20 +204,21 @@ export function createMediaService(cfg) {
   async function download({ url, transcribe }) {
     let host = '';
     try {
+      if (!/^https?:\/\//i.test(url)) throw new Error('scheme');
       host = new URL(url).hostname;
     } catch {
-      throw new ApiError('INVALID_URL', '链接格式不对，请粘贴完整视频链接');
+      throw new ApiError('INVALID_URL', '链接需为 http/https 开头的完整视频链接');
     }
     if (downloadBlacklist.some((d) => host === d || host.endsWith(`.${d}`))) {
       throw new ApiError('BLOCKED', `域名被限制下载：${host}`);
+    }
+    if (transcribe && !transcribeEnabled) {
+      throw new ApiError('TRANSCRIBE_DISABLED', '转录未开启'); // 提前检查，防下载孤儿文件
     }
     const mediaId = await downloadToMedia(url, 'mp4');
     let transcript;
     let transcribeError;
     if (transcribe) {
-      if (!transcribeEnabled) {
-        throw new ApiError('TRANSCRIBE_DISABLED', '转录未开启');
-      }
       const rec = getMedia(mediaId);
       const buf = fs.readFileSync(getMediaPath(rec));
       const r = await transcribeAudio(buf); // faster-whisper 直接解码音轨（PyAV 读内容不依赖扩展名）

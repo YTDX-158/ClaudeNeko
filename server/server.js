@@ -233,7 +233,7 @@ function serveMediaFile(req, res, rec, asDownload) {
     const m = range.match(/bytes=(\d*)-(\d*)/);
     const start = m && m[1] ? parseInt(m[1], 10) : 0;
     const end = m && m[2] ? parseInt(m[2], 10) : stat.size - 1;
-    if (start >= stat.size || end >= stat.size) {
+    if (start >= stat.size || end >= stat.size || start > end) {
       res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
       res.end();
       return;
@@ -458,9 +458,6 @@ async function handleMessage(req, res, url) {
   // 让 claude 在后台继续跑完并落盘，刷新回来后能取到完整回复（不再"不了了之"）。
   // busy 锁保留到 runner.done 完成（finally 里 release），防止刷新期间重复发消息双跑；
   // 若 claude 真卡死，claudeRunner 的空闲超时兜底会终止并释放。
-  res.on('close', () => {
-    // 仅断开 SSE 输出，不杀进程、不释放锁
-  });
 
   try {
     await runner.done;
@@ -479,7 +476,7 @@ async function handleMessage(req, res, url) {
  *  并行不阻塞生成；失败静默降级（仍标记，不反复拉）。 */
 function maybeStartMediaClaude(session, skill, prompt) {
   if (!session || session.mediaClaudeInited) return;
-  session.mediaClaudeInited = true;
+  // 只落盘（store.update 会替换对象引用，直接改内存引用是冗余/无效）
   store.update(session.id, { mediaClaudeInited: true });
   const cPrompt = `用户在生成媒体：${skill === 'image' ? '生图' : '生视频'}「${prompt}」。你只需回复一句简短的确认（例如"好的，正在生成"）。不要展开、不要记录、不要执行任何操作、不要写记忆。`;
   const runner = createClaudeRunner({
@@ -545,6 +542,7 @@ async function routeApi(req, res, url) {
 
   if (method === 'POST' && pathname === '/api/media/generate') {
     const body = await readBody(req);
+    if (body && body.__tooLarge) return sendJson(res, 413, { error: '内容超过 1MB 上限，请缩短后重试' });
     const prompt = String(body.prompt ?? '').trim();
     if (!prompt) return sendJson(res, 400, { error: 'EMPTY_PROMPT', message: '提示词不能为空' });
     const gsess = body.sessionId ? store.get(String(body.sessionId)) : null;
@@ -574,6 +572,7 @@ async function routeApi(req, res, url) {
 
   if (method === 'POST' && pathname === '/api/media/download') {
     const body = await readBody(req);
+    if (body && body.__tooLarge) return sendJson(res, 413, { error: '内容超过 1MB 上限，请缩短后重试' });
     if (!body.url) return sendJson(res, 400, { error: 'NO_URL', message: '请粘贴视频链接' });
     try {
       return sendJson(res, 200, await media.download({ url: String(body.url), transcribe: !!body.transcribe }));
