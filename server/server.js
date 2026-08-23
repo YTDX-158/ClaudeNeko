@@ -345,8 +345,14 @@ async function handleMessage(req, res, url) {
   // 把新会话里已复制的历史拼成说明块注入 claudePrompt；说明块只喂给 claude，不落盘。
   let branchHistoryCtx = '';
   if (session.parentId && !session.claudeSessionId && store.readMessages(id).length > 0) {
-    const historyMsgs = store.readMessages(id).filter((m) => (m.text ?? '').trim());
-    const historyText = renderHistoryText(historyMsgs);
+    const all = store.readMessages(id).filter((m) => (m.text ?? '').trim());
+    let historyText;
+    if (session.earlySummary) {
+      // 早期已压缩成摘要：摘要 + 近期全量（防长会话把 claude 拖慢）
+      historyText = `[早期对话摘要]\n${session.earlySummary}\n\n[近期对话]\n${renderHistoryText(all.slice(-BRANCH_RECENT))}`;
+    } else {
+      historyText = renderHistoryText(all); // 摘要未生成好（分支后立刻发消息）→ 全量注入保正确
+    }
     if (historyText) {
       branchHistoryCtx = `[这是你之前与该用户的对话历史，请记住并在此基础上继续（用户看不到这段说明）：\n\n${historyText}\n\n]`;
     }
@@ -501,6 +507,59 @@ function maybeStartMediaClaude(session, skill, prompt) {
   // 不 await，后台跑；结果由 onEvent 落盘
 }
 
+/** 分支历史注入阈值：早期压缩成摘要，近期保留全量（防长会话分支后 claude 被全量历史拖慢） */
+const BRANCH_RECENT = 15;
+
+/** 调 claude 把早期对话压缩成摘要（2-4 句中文要点），供分支会话引用；失败返回空串（调用方 fallback 全量）。 */
+function summarizeHistory(msgs, cwd) {
+  return new Promise((resolve) => {
+    const text = msgs
+      .map((m) => `${m.role === 'user' ? '用户' : 'AI'}: ${(m.text ?? '').trim()}`)
+      .join('\n');
+    let out = '';
+    const runner = createClaudeRunner({
+      claudeBin: config.claudeBin,
+      prompt: `请用 2-4 句中文总结下面这段用户与 AI 的早期对话要点（主题 / 关键结论 / 用户需求），供后续继续对话参考。不要展开，不要提问。\n\n对话：\n${text}`,
+      model: config.defaultModel,
+      cwd: cwd || config.defaultCwd,
+      onEvent: (evt) => {
+        if (evt.type === 'assistant') {
+          const t = (evt.message?.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+          if (t) out = t;
+        }
+      },
+      onError: () => resolve(''),
+    });
+    const timer = setTimeout(() => {
+      try {
+        runner.cancel?.();
+      } catch {
+        /* 已结束 */
+      }
+      resolve(out.trim());
+    }, 30000);
+    runner.done.then(() => {
+      clearTimeout(timer);
+      resolve(out.trim());
+    }).catch(() => {
+      clearTimeout(timer);
+      resolve(out.trim());
+    });
+  });
+}
+
+/** 分支会话创建后：后台生成早期历史摘要（fire-and-forget，不阻塞分支创建），完成存 session.earlySummary。 */
+function maybeSummarizeEarlyHistory(session, slice) {
+  if (!slice || slice.length <= BRANCH_RECENT) return;
+  const early = slice.slice(0, slice.length - BRANCH_RECENT).filter((m) => (m.text ?? '').trim());
+  if (!early.length) return;
+  summarizeHistory(early, session.cwd || config.defaultCwd)
+    .then((summary) => {
+      if (summary) store.update(session.id, { earlySummary: summary });
+    })
+    .catch(() => {});
+}
+
 async function routeApi(req, res, url) {
   const { pathname } = url;
   const method = req.method;
@@ -636,6 +695,8 @@ async function routeApi(req, res, url) {
     });
     // 把复制出的历史逐条落盘到新会话 jsonl（前端切过来直接能看到完整历史）
     for (const m of slice) store.appendMessage(session.id, { ...m });
+    // 后台生成早期历史摘要（长会话分支提速：首次/后续发消息用「摘要+近期全量」而非全量历史）
+    maybeSummarizeEarlyHistory(session, slice);
     return sendJson(res, 201, { session });
   }
 
