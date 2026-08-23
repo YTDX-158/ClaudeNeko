@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { uploadToMedia } from '../utils/upload.js';
+import Lightbox from './Lightbox.jsx';
 
 const KINDS = [
   { id: 'all', label: '全部' },
@@ -20,6 +21,7 @@ export default function MediaLibrary({ open, onClose }) {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
+  const [view, setView] = useState(null); // Lightbox 大图查看
   const fileRef = useRef(null);
 
   const refresh = () => {
@@ -101,7 +103,11 @@ export default function MediaLibrary({ open, onClose }) {
           {!loading &&
             filtered.map((m) => (
               <div key={m.id} className="media-card">
-                <div className="media-preview">
+                <div
+                  className="media-preview"
+                  onClick={() => (m.kind === 'image' || m.kind === 'video') && setView(m)}
+                  style={{ cursor: m.kind === 'image' || m.kind === 'video' ? 'zoom-in' : 'default' }}
+                >
                   {m.kind === 'image' && <img src={`/api/media/${m.id}`} alt={m.originalName} loading="lazy" />}
                   {m.kind === 'video' && <video src={`/api/media/${m.id}`} controls preload="metadata" />}
                   {m.kind === 'document' && <div className="media-doc-icon">📄</div>}
@@ -121,6 +127,7 @@ export default function MediaLibrary({ open, onClose }) {
               </div>
             ))}
         </div>
+        {view && <Lightbox media={view} onClose={() => setView(null)} />}
       </div>
     </div>
   );

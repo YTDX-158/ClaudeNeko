@@ -1250,3 +1250,17 @@ body {
 .msg-attach-download { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; text-decoration: none; opacity: .85; z-index: 1; }
 .msg-attach-download:hover { opacity: 1; background: rgba(0,0,0,.75); }
 
+
+/* Lightbox 大图查看 */
+.lightbox { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,.88); display: flex; align-items: center; justify-content: center; }
+.lightbox-box { position: relative; max-width: 92vw; max-height: 92vh; }
+.lightbox-media { max-width: 92vw; max-height: 88vh; object-fit: contain; border-radius: 8px; display: block; }
+.lightbox-loading { color: #fff; padding: 40px; font-size: 14px; }
+.lightbox-toolbar { position: absolute; top: -38px; right: 0; display: flex; gap: 8px; }
+.lightbox-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: #fff; padding: 4px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; text-decoration: none; }
+.lightbox-btn:hover { background: rgba(255,255,255,.3); }
+/* 媒体库选择器查看大图按钮 */
+.media-preview { position: relative; }
+.media-view-btn { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border: none; border-radius: 6px; background: rgba(0,0,0,.5); color: #fff; font-size: 12px; cursor: pointer; opacity: .9; }
+.media-view-btn:hover { opacity: 1; background: rgba(0,0,0,.7); }
+

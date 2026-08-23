@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import Lightbox from './Lightbox.jsx';
 
 /**
  * MediaPicker.jsx — 媒体库选择器（从媒体库多选文件附加到消息）
@@ -7,6 +8,7 @@ import { useEffect, useState } from 'react';
 export default function MediaPicker({ open, onClose, onSelect }) {
   const [media, setMedia] = useState([]);
   const [selected, setSelected] = useState([]);
+  const [view, setView] = useState(null); // Lightbox 大图查看（不冲突点选选中）
 
   useEffect(() => {
     if (!open) return;
@@ -49,6 +51,18 @@ export default function MediaPicker({ open, onClose, onSelect }) {
                 {m.kind === 'video' && <div className="media-doc-icon">🎬</div>}
                 {(m.kind === 'document' || m.kind === 'file') && <div className="media-doc-icon">📄</div>}
                 {m.kind === 'audio' && <div className="media-doc-icon">🎵</div>}
+                {(m.kind === 'image' || m.kind === 'video') && (
+                  <button
+                    className="media-view-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setView(m);
+                    }}
+                    title="查看大图"
+                  >
+                    🔍
+                  </button>
+                )}
               </div>
               <div className="media-card-info">
                 <span className="media-name" title={m.originalName}>{m.originalName}</span>
@@ -56,6 +70,8 @@ export default function MediaPicker({ open, onClose, onSelect }) {
             </div>
           ))}
         </div>
+
+        {view && <Lightbox media={view} onClose={() => setView(null)} />}
 
         <div className="media-picker-actions">
           <button

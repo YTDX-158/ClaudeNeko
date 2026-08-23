@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import Lightbox from './Lightbox.jsx';
 
 /**
  * 单条消息气泡。
@@ -12,9 +13,10 @@ import remarkGfm from 'remark-gfm';
  *   - 引用：以 Markdown 引用块形式插入输入框
  */
 
-/** 消息附件卡片（图片/视频/文档/音频）；文件被删除时显示占位。右上角下载按钮直接存本地。 */
+/** 消息附件卡片（图片/视频/文档/音频）；文件被删除时显示占位。右上角下载按钮直接存本地；点图片/视频开大图。 */
 function AttachmentCard({ att }) {
   const [broken, setBroken] = useState(false);
+  const [view, setView] = useState(null);
   if (broken) return <span className="msg-attach-broken">📎 {att.name}（文件已删除）</span>;
   const dl = (
     <a
@@ -27,21 +29,34 @@ function AttachmentCard({ att }) {
       ⬇
     </a>
   );
+  const openView = (e) => {
+    e.stopPropagation();
+    setView(att);
+  };
   if (att.kind === 'image') {
     return (
       <span className="msg-attach-card">
-        <img className="thumb" src={`/api/media/${att.id}`} alt={att.name} onError={() => setBroken(true)} />
+        <img
+          className="thumb"
+          src={`/api/media/${att.id}`}
+          alt={att.name}
+          onError={() => setBroken(true)}
+          onClick={openView}
+          style={{ cursor: 'zoom-in' }}
+        />
         <span className="msg-attach-name">{att.name}</span>
         {dl}
+        {view && <Lightbox media={view} onClose={() => setView(null)} />}
       </span>
     );
   }
   if (att.kind === 'video') {
     return (
       <span className="msg-attach-card">
-        <video src={`/api/media/${att.id}`} controls preload="metadata" onError={() => setBroken(true)} />
+        <video src={`/api/media/${att.id}`} controls preload="metadata" onError={() => setBroken(true)} onClick={openView} style={{ cursor: 'pointer' }} />
         <span className="msg-attach-name">{att.name}</span>
         {dl}
+        {view && <Lightbox media={view} onClose={() => setView(null)} />}
       </span>
     );
   }
