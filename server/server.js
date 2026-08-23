@@ -15,6 +15,7 @@ import { extractDocumentText } from './lib/docText.js';
 import { describeMedia } from './lib/mediaUnderstand.js';
 import { createMediaService, ApiError } from './lib/mediaGen.js';
 import { sendJson, readBody, serveStatic, parseFrontmatter, listSkills, readRawBody, serveMediaFile } from './lib/util.js';
+import { systemHandler } from './routes/system.js';
 
 const config = resolveConfig();
 const media = createMediaService(config.media);
@@ -25,6 +26,7 @@ const activeRunners = new Map(); // id -> runner（取消用）
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(SERVER_DIR, '..', 'web', 'dist');
 const APP_VERSION = JSON.parse(fs.readFileSync(path.join(SERVER_DIR, '..', 'package.json'), 'utf8')).version || '1.3.0';
+const systemRouter = systemHandler({ config, appVersion: APP_VERSION, getAutoStartEnabled, setAutoStart, readBody });
 
 /* ---------- 工具 ---------- */
 
@@ -381,17 +383,8 @@ async function routeApi(req, res, url) {
   const { pathname } = url;
   const method = req.method;
 
-  if (method === 'GET' && pathname === '/api/health') {
-    return sendJson(res, 200, { ok: true, version: APP_VERSION });
-  }
-
-  if (method === 'GET' && pathname === '/api/balance') {
-    return sendJson(res, 200, await fetchBalance());
-  }
-
-  if (method === 'GET' && pathname === '/api/skills') {
-    return sendJson(res, 200, { skills: listSkills() });
-  }
+  const sys = await systemRouter(req, res, url);
+  if (sys !== null) return;
 
   if (method === 'POST' && pathname === '/api/media') {
     const name = url.searchParams.get('name') || '';
@@ -469,19 +462,6 @@ async function routeApi(req, res, url) {
       deleteMedia(rec.id);
       return sendJson(res, 200, { ok: true });
     }
-  }
-
-  if (method === 'GET' && pathname === '/api/models') {
-    return sendJson(res, 200, { models: config.models, default: config.defaultModel });
-  }
-
-  if (method === 'GET' && pathname === '/api/autostart') {
-    return sendJson(res, 200, { enabled: await getAutoStartEnabled() });
-  }
-  if (method === 'POST' && pathname === '/api/autostart') {
-    const body = await readBody(req);
-    await setAutoStart(Boolean(body.enabled));
-    return sendJson(res, 200, { enabled: Boolean(body.enabled) });
   }
 
   if (method === 'GET' && pathname === '/api/sessions') {
