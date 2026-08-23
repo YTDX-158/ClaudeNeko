@@ -11,7 +11,7 @@ import { api } from '../api.js';
  * 输入框文本与「引用条」状态都提升到这里：
  * - 引用：点击后输入框上方浮出引用条，输入框保持干净；发送时引用 + 文字拼成 markdown 引用块一起发出
  */
-export default function ChatWindow({ session, chat, onBranch }) {
+export default function ChatWindow({ session, chat, onBranch, onEffortChange }) {
   const [composerText, setComposerText] = useState('');
   const [quote, setQuote] = useState(null); // { text, role } | null
   const [attachments, setAttachments] = useState([]); // 待发送附件（媒体库快照）
@@ -182,6 +182,18 @@ export default function ChatWindow({ session, chat, onBranch }) {
           <button className="chat-export" onClick={handleExport} title="导出当前对话为 .txt">导出</button>
           <button className="chat-export" onClick={handleForceStop} title="强制结束当前对话任务（杀 claude + 取消生成，聊天卡住或生视频太久时用）">⛔ 结束</button>
           {session?.model && <span className="chat-model">{session.model}</span>}
+          {session?.id && (
+            <select
+              className="chat-effort"
+              value={session.effort || ''}
+              onChange={(e) => onEffortChange?.(e.target.value === '' ? null : e.target.value)}
+              title="思考档位（对下一条消息生效）：🪙省=省token · ⭐标准=DeepSeek默认 · 💪强力=深度思考"
+            >
+              <option value="">⭐ 标准</option>
+              <option value="low">🪙 省</option>
+              <option value="max">💪 强力</option>
+            </select>
+          )}
           {sid && (
             <button
               className="chat-model"

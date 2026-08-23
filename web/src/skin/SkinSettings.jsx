@@ -7,6 +7,7 @@ import { skinEngine } from './skinEngine.js';
 import { api } from '../api.js';
 import { downloadText, exportSessionText } from '../utils/export.js';
 import SkillsPanel from '../components/SkillsPanel.jsx';
+import { EFFORT_LEVELS, readDefaultEffort, setDefaultEffort } from '../utils/effort.js';
 
 const ACCENTS = ['#74c0fc', '#34d399', '#4f83f2', '#f472b6', '#f59e0b', '#a78bfa', '#22d3ee', '#f87171'];
 const GRADIENTS = [
@@ -55,6 +56,7 @@ export default function SkinSettings({ open, onClose }) {
   const [confirmReset, setConfirmReset] = useState(false);
   const [autostart, setAutostart] = useState(null); // null=加载中 / true|false=开关状态
   const [skillsOpen, setSkillsOpen] = useState(false); // 已装 Skills 查看面板
+  const [defaultEffort, setDefEffort] = useState(readDefaultEffort); // 全局默认思考档位（省/标准/强力）
   const fileRef = useRef(null);
 
   // 打开设置时读取开机自启当前状态
@@ -345,6 +347,24 @@ export default function SkinSettings({ open, onClose }) {
             <div className="skin-tab-body">
               <div className="skin-section">
                 <div className="skin-section-title">功能</div>
+                <div className="skin-row">
+                  <span>默认思考档位（新建会话使用；对话中右上角可随时改）</span>
+                </div>
+                <div className="skin-row">
+                  {EFFORT_LEVELS.map((lvl) => (
+                    <button
+                      key={String(lvl.id)}
+                      className={`skin-btn${(defaultEffort ?? null) === (lvl.id ?? null) ? ' active' : ''}`}
+                      title={lvl.tip}
+                      onClick={() => {
+                        setDefEffort(lvl.id);
+                        setDefaultEffort(lvl.id);
+                      }}
+                    >
+                      {lvl.label}
+                    </button>
+                  ))}
+                </div>
                 <div className="skin-row">
                   <span>开机自启（登录时后台启动服务，不用再点 neko://）</span>
                   <button

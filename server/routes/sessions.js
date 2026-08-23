@@ -185,6 +185,7 @@ async function handleMessage(ctx, req, res, url) {
     claudeBin: config.claudeBin,
     prompt: claudePrompt,
     model: session.model,
+    effort: session.effort || undefined,
     claudeSessionId: session.claudeSessionId || undefined,
     cwd: session.cwd || config.defaultCwd,
     onEvent: (evt) => {
@@ -268,6 +269,7 @@ export function sessionsHandler(ctx) {
         title: title || '新会话',
         parentId,
         branchFromMsg: fromMsgId,
+        effort: parent.effort || undefined, // 分支继承父会话思考档位
       });
       for (const m of slice) store.appendMessage(session.id, { ...m });
       maybeSummarizeEarlyHistory(session, slice, store, config);
@@ -283,7 +285,7 @@ export function sessionsHandler(ctx) {
           store.remove(s.id);
         }
       }
-      const session = store.create({ model: body.model || undefined, cwd: body.cwd || config.defaultCwd });
+      const session = store.create({ model: body.model || undefined, cwd: body.cwd || config.defaultCwd, effort: body.effort || undefined });
       return sendJson(res, 201, { session, cleanedIds });
     }
 
@@ -354,6 +356,8 @@ export function sessionsHandler(ctx) {
           const patch = {};
           if (body.model) patch.model = body.model;
           if (body.title) patch.title = body.title;
+          // effort 允许 null（标准档 = 不传），所以用 !== undefined 判断
+          if (body.effort !== undefined) patch.effort = body.effort;
           return sendJson(res, 200, { session: store.update(id, patch) });
         }
         if (method === 'DELETE') {

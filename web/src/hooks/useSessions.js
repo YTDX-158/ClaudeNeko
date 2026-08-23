@@ -59,8 +59,8 @@ export function useSessions() {
     };
   }, []);
 
-  const create = useCallback(async (model) => {
-    const { session, cleanedIds } = await api.createSession(model);
+  const create = useCallback(async (model, effort) => {
+    const { session, cleanedIds } = await api.createSession(model, effort);
     // 方案C：后端新建时清理了空会话，同步移除前端列表里的残留条目
     if (cleanedIds?.length) {
       setSessions((prev) => prev.filter((s) => !cleanedIds.includes(s.id)));

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
  * 组装 claude 非交互参数。
  * 注意：-p + stream-json 必须带 --verbose，否则 claude 直接报错。
  */
-export function buildArgs({ prompt, model, claudeSessionId }) {
+export function buildArgs({ prompt, model, effort, claudeSessionId }) {
   const args = [
     '-p',
     prompt,
@@ -20,6 +20,8 @@ export function buildArgs({ prompt, model, claudeSessionId }) {
     'bypassPermissions',
   ];
   if (model) args.push('--model', model);
+  // 思考档位（effort）：DeepSeek V4 原生支持 low/high/max，透传给 claude.exe
+  if (effort) args.push('--effort', effort);
   if (claudeSessionId) args.push('--resume', claudeSessionId);
   return args;
 }
@@ -30,6 +32,7 @@ export function buildArgs({ prompt, model, claudeSessionId }) {
  *   claudeBin: string,
  *   prompt: string,
  *   model?: string,
+ *   effort?: string,
  *   claudeSessionId?: string,
  *   cwd: string,
  *   onEvent: (evt: object) => void,
@@ -38,8 +41,8 @@ export function buildArgs({ prompt, model, claudeSessionId }) {
  * }} opts
  * @returns {{ child: import('node:child_process').ChildProcess, done: Promise<void>, cancel: () => void }}
  */
-export function createClaudeRunner({ claudeBin, prompt, model, claudeSessionId, cwd, onEvent, onExit, onError }) {
-  const args = buildArgs({ prompt, model, claudeSessionId });
+export function createClaudeRunner({ claudeBin, prompt, model, effort, claudeSessionId, cwd, onEvent, onExit, onError }) {
+  const args = buildArgs({ prompt, model, effort, claudeSessionId });
   const child = spawn(claudeBin, args, { cwd, shell: false, windowsHide: true });
 
   // 空闲超时兜底：claude 卡死（API 挂起/进程僵死）时强制结束，

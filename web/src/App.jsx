@@ -7,6 +7,7 @@ import ChatWindow from './components/ChatWindow.jsx';
 import SkinSettings from './skin/SkinSettings.jsx';
 import FluidCanvas from './skin/FluidCanvas.jsx';
 import MediaLibrary from './components/MediaLibrary.jsx';
+import { readDefaultEffort } from './utils/effort.js';
 
 export default function App() {
   const sessions = useSessions();
@@ -41,7 +42,8 @@ export default function App() {
   const handleCreate = () => {
     // 方案C：新建时后端自动清理所有空会话，前端直接创建即可
     // 模型不传：由 CC Switch 在系统层切换，claude CLI 用系统默认模型
-    create();
+    // 思考档位：带全局默认档（localStorage 设置，省/标准/强力）
+    create(undefined, readDefaultEffort());
   };
 
   // 分支：从某条 AI 回复新建会话（后端复制其之前历史），成功后切到新会话
@@ -69,6 +71,7 @@ export default function App() {
         chat={chat}
         onRename={(title) => activeId && patch(activeId, { title })}
         onBranch={handleBranch}
+        onEffortChange={(effort) => activeId && patch(activeId, { effort })}
       />
       {serverOk === false && (
         <div className="banner" role="alert">

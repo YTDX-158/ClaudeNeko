@@ -25,8 +25,8 @@ async function request(path, options = {}) {
 export const api = {
   health: () => request('/health'),
   listSessions: () => request('/sessions'),
-  createSession: (model) =>
-    request('/sessions', { method: 'POST', body: JSON.stringify({ model }) }),
+  createSession: (model, effort) =>
+    request('/sessions', { method: 'POST', body: JSON.stringify({ model, effort }) }),
   getSession: (id) => request(`/sessions/${id}`),
   // 取消该会话正在进行的生成（停止按钮；后端杀 claude 进程并释放锁）
   cancelGeneration: (id) => request(`/sessions/${id}/cancel`, { method: 'POST' }),
