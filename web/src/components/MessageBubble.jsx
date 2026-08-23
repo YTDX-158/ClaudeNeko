@@ -183,6 +183,13 @@ export default function MessageBubble({ message, onQuote, onBranch }) {
             {text}
           </ReactMarkdown>
         </div>
+        {message.attachments?.length > 0 && (
+          <div className="msg-attach-row">
+            {message.attachments.map((a) => (
+              <AttachmentCard key={a.id} att={a} />
+            ))}
+          </div>
+        )}
         {message.streaming && <span className="cursor" aria-hidden="true" />}
         {actions}
       </div>
