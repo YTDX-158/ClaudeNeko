@@ -48,6 +48,7 @@ export default function ChatWindow({ session, chat, onBranch }) {
     const label = { image: '[🎨 生图]', video: '[🎬 生视频]', download: '[⬇️ 下载]' }[req.skill] || '';
     const placeholder = { id: pid, role: 'assistant', text: `正在生成中（${userText}）`, streaming: true, ts: Date.now() };
     if (chat.addMessage) chat.addMessage(placeholder);
+    let tick = null; // 生视频计时器（外层持有，所有失败路径都清理，防泄漏）
 
     // 完成：后端落盘 + 占位升级为结果（提示词保留 + 附件）
     const finish = (extra) => {
@@ -74,7 +75,7 @@ export default function ChatWindow({ session, chat, onBranch }) {
       } else if (req.skill === 'video') {
         // 生视频计时：每秒更新占位"已等 N 秒"
         let sec = 0;
-        const tick = setInterval(() => {
+        tick = setInterval(() => {
           sec += 1;
           if (chat.replaceMessage) {
             chat.replaceMessage(pid, { id: pid, role: 'assistant', text: `正在生成中（${userText}）已等 ${sec}s`, streaming: true, ts: Date.now() });
@@ -112,6 +113,7 @@ export default function ChatWindow({ session, chat, onBranch }) {
         finish({ mediaId: r.mediaId, transcript: r.transcript });
       }
     } catch (e) {
+      if (tick) clearInterval(tick); // 提交失败也清理计时器（原来只清理轮询，漏了 tick）
       fail(e.message);
     }
   };

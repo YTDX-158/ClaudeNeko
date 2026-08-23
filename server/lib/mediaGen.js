@@ -62,7 +62,10 @@ export function createMediaService(cfg) {
   const headers = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${doubaoKey}` });
 
   async function arkFetch(path, opts) {
-    const res = await fetch(`${ARK_BASE}${path}`, opts);
+    const res = await fetch(`${ARK_BASE}${path}`, {
+      ...opts,
+      signal: opts.signal || AbortSignal.timeout(60000), // 防火山 API 挂起永久占资源
+    });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
       const e = j?.error || {};
@@ -235,7 +238,11 @@ export function createMediaService(cfg) {
     for (const [id, t] of tasks) {
       // 4K 生成独享并发 + RPM 低，给更长 TTL 防误杀；其他 10 分钟
       const ttl = t.resolution === '4K' ? 30 * 60 * 1000 : TASK_TTL;
-      if (now - t.ts > ttl) tasks.delete(id);
+      if (now - t.ts > ttl) {
+        // 释放并发锁：防前端不轮询（刷新/关页）导致 active 永久占用 → 后续生成全 BUSY
+        if (t.status === 'running') active = Math.max(0, active - 1);
+        tasks.delete(id);
+      }
     }
   }, 5 * 60 * 1000);
   if (timer.unref) timer.unref();

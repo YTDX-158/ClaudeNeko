@@ -1,5 +1,3 @@
-import { useState } from 'react';
-
 /**
  * SkillBar.jsx — 输入框下方技能包（生图 / 生视频 / 下载视频）
  * 选中技能 → 显示对应选项条；未配 key 显示引导；时长选项跟随所选模型。

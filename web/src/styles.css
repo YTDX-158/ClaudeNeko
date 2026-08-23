@@ -1221,22 +1221,6 @@ body {
 .skillbar-opts select, .skillbar-url { font-size: 12px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border, #ddd); background: var(--bg, #fff); color: var(--text, #333); }
 .skillbar-url { flex: 1; min-width: 160px; }
 .skillbar-check { font-size: 12px; display: flex; align-items: center; gap: 4px; color: var(--text, #333); cursor: pointer; }
-/* 生成结果（生成中气泡，进消息流；完成即转成 AI 消息） */
-.gen-results { display: flex; flex-direction: column; gap: 6px; padding: 0 16px 8px; max-height: 30vh; overflow-y: auto; align-items: flex-start; }
-.gen-card { max-width: 72%; border: 1px solid var(--border, #ddd); border-radius: 12px; padding: 8px 12px; background: var(--card-bg, rgba(0,0,0,.04)); }
-.gen-card-head { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 6px; }
-.gen-card-skill { font-weight: 600; }
-.gen-card-model { color: #888; }
-.gen-card-status { color: #b8860b; }
-.gen-card-prompt { font-size: 12px; color: #666; margin-bottom: 6px; word-break: break-all; }
-.gen-card-media { max-width: 100%; max-height: 320px; border-radius: 8px; display: block; }
-.gen-card-transcript { font-size: 12px; white-space: pre-wrap; background: rgba(0,0,0,.05); border-radius: 6px; padding: 8px; max-height: 200px; overflow-y: auto; margin: 6px 0 0; }
-.gen-card-error { font-size: 12px; color: #c0392b; }
-
-
-/* 生成中 spinner */
-.gen-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(0,0,0,.15); border-top-color: var(--accent, #4a7cff); border-radius: 50%; animation: gen-spin .8s linear infinite; margin-right: 5px; vertical-align: -2px; }
-@keyframes gen-spin { to { transform: rotate(360deg); } }
 /* AI 生成作品附件：自适应比例完整显示（竖/横/超宽/正方都完整，不裁切不变形；用户参考附件保持缩略） */
 .msg-assistant .msg-attach-card { max-width: min(80%, 520px); flex-direction: column; align-items: flex-start; }
 .msg-assistant .msg-attach-card .thumb,
