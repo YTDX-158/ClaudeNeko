@@ -103,8 +103,8 @@ print('|'.join(outs))
   });
 }
 
-/** faster-whisper 转写音频为文字（本地，无云端）。 */
-function transcribeAudio(audioBuf) {
+/** faster-whisper 转写音频为文字（本地，无云端）。供媒体生成复用（下载视频转录）。 */
+export function transcribeAudio(audioBuf) {
   return new Promise((resolve) => {
     const tmpDir = asciiTmpDir();
     const inPath = path.join(tmpDir, `cn-aud-${Date.now()}.mp3`);
@@ -116,7 +116,10 @@ function transcribeAudio(audioBuf) {
     }
     const script = `
 from faster_whisper import WhisperModel
-model = WhisperModel('small', device='cpu', compute_type='int8')
+try:
+    model = WhisperModel('small', device='cpu', compute_type='int8', local_files_only=True)
+except Exception:
+    model = WhisperModel('small', device='cpu', compute_type='int8')
 segments, _ = model.transcribe(r'${inPath}')
 print(''.join(s.text for s in segments))
 `;

@@ -15,6 +15,42 @@ const MODELS = [
 
 const DEFAULT_PORT = 4000;
 
+/* ---------- 媒体生成配置（BYOK：豆包 key 从 env / ~/.claude/settings.json 读，不硬编码） ---------- */
+// 豆包账号级 key：优先 DOUBAO_API_KEY，VISION_API_KEY 兜底（同账号视觉 key 可调 Seedream/Seedance，零额外配置）
+function readDoubaoKey() {
+  const keys = ['DOUBAO_API_KEY', 'VISION_API_KEY'];
+  for (const k of keys) if (process.env[k]) return process.env[k];
+  try {
+    const env = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf8')).env || {};
+    for (const k of keys) if (env[k]) return env[k];
+  } catch {
+    // 忽略，返回空
+  }
+  return '';
+}
+
+/** 生成媒体模型/参数（可用性由运行时动态判定，不写死；未开通模型点了给明确提示） */
+const MEDIA = {
+  imageModels: [
+    { id: 'doubao-seedream-5-0-260128', label: 'Seedream 5.0 Lite' },
+    { id: 'doubao-seedream-5-0-pro-260628', label: 'Seedream 5.0 Pro' },
+  ],
+  videoModels: [
+    { id: 'doubao-seedance-2-5-260628', label: 'Seedance 2.5', durations: [30] },
+    { id: 'doubao-seedance-2-0-mini-260615', label: 'Seedance 2.0 Mini', durations: [4, 5, 10, 15] },
+    { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0', durations: [4, 5, 10, 15] },
+    { id: 'doubao-seedance-2-0-fast-260128', label: 'Seedance Fast', durations: [4, 5, 10, 15] },
+  ],
+  ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+  imageSizes: {
+    // Seedream 5.0 要求 ≥3686400 像素（1920×1920），各比例按最小达标换算
+    '9:16': '1440x2560', '16:9': '2560x1440', '1:1': '1920x1920',
+    '4:3': '2560x1920', '3:4': '1920x2560', '21:9': '2944x1260',
+  },
+  downloadBlacklist: [],
+  transcribeEnabled: true,
+};
+
 /** 探测 claude.exe：先查已知安装路径，失败则用 npm prefix -g 拼路径。 */
 function findClaudeBin() {
   const knownPaths = [
@@ -60,5 +96,6 @@ export function resolveConfig() {
     defaultCwd: os.homedir(),
     dataDir,
     port: Number(process.env.PORT) || DEFAULT_PORT,
+    media: { ...MEDIA, doubaoKey: readDoubaoKey() },
   };
 }

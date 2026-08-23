@@ -43,4 +43,28 @@ export const api = {
     }),
   getAutostart: () => request('/autostart'),
   setAutostart: (enabled) => request('/autostart', { method: 'POST', body: JSON.stringify({ enabled }) }),
+
+  // ---- 技能包：生成媒体 / 下载视频（POST 用自定义提取友好 message） ----
+  mediaConfig: () => request('/media/config'),
+  mediaGenerate: async (body) => {
+    const res = await fetch(BASE + '/media/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j?.message || `HTTP ${res.status}`);
+    return j;
+  },
+  mediaTask: (id) => request(`/media/task/${id}`),
+  mediaDownload: async (body) => {
+    const res = await fetch(BASE + '/media/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j?.message || `HTTP ${res.status}`);
+    return j;
+  },
 };

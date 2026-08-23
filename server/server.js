@@ -13,8 +13,10 @@ import { saveMedia, listMedia, getMedia, getMediaPath, deleteMedia } from './lib
 import { describeImage } from './lib/vision.js';
 import { extractDocumentText } from './lib/docText.js';
 import { describeMedia } from './lib/mediaUnderstand.js';
+import { createMediaService, ApiError } from './lib/mediaGen.js';
 
 const config = resolveConfig();
+const media = createMediaService(config.media);
 const store = new SessionStore(config.dataDir);
 const busy = new Set(); // per-session 在途锁
 const activeRunners = new Map(); // id -> runner（取消用）
@@ -500,6 +502,52 @@ async function routeApi(req, res, url) {
 
   if (method === 'GET' && pathname === '/api/media') {
     return sendJson(res, 200, { media: listMedia() });
+  }
+
+  /* ---------- 技能包：生成媒体 / 下载视频（mediaGen） ---------- */
+  const genErr = (e) =>
+    e instanceof ApiError
+      ? sendJson(res, 400, { error: e.code, message: e.message })
+      : sendJson(res, 500, { error: 'INTERNAL', message: e.message });
+
+  if (method === 'GET' && pathname === '/api/media/config') {
+    return sendJson(res, 200, media.getConfig());
+  }
+
+  if (method === 'POST' && pathname === '/api/media/generate') {
+    const body = await readBody(req);
+    const prompt = String(body.prompt ?? '').trim();
+    if (!prompt) return sendJson(res, 400, { error: 'EMPTY_PROMPT', message: '提示词不能为空' });
+    try {
+      if (body.kind === 'image') {
+        return sendJson(res, 200, await media.generateImage({ prompt, model: body.model, ratio: body.ratio }));
+      }
+      if (body.kind === 'video') {
+        return sendJson(res, 200, await media.generateVideo({ prompt, model: body.model, ratio: body.ratio, duration: body.duration }));
+      }
+      return sendJson(res, 400, { error: 'BAD_KIND', message: 'kind 需为 image 或 video' });
+    } catch (e) {
+      return genErr(e);
+    }
+  }
+
+  const mtask = pathname.match(/^\/api\/media\/task\/([^/]+)$/);
+  if (mtask && method === 'GET') {
+    try {
+      return sendJson(res, 200, await media.queryTask(mtask[1]));
+    } catch (e) {
+      return genErr(e);
+    }
+  }
+
+  if (method === 'POST' && pathname === '/api/media/download') {
+    const body = await readBody(req);
+    if (!body.url) return sendJson(res, 400, { error: 'NO_URL', message: '请粘贴视频链接' });
+    try {
+      return sendJson(res, 200, await media.download({ url: String(body.url), transcribe: !!body.transcribe }));
+    } catch (e) {
+      return genErr(e);
+    }
   }
 
   const mm = pathname.match(/^\/api\/media\/([^/]+)(\/download)?$/);

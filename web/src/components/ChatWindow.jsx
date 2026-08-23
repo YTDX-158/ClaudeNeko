@@ -4,6 +4,32 @@ import Composer from './Composer.jsx';
 import CatMascot from './CatMascot.jsx';
 import ClaudeNiang from './ClaudeNiang.jsx';
 import { downloadText, exportSessionText } from '../utils/export.js';
+import { api } from '../api.js';
+
+/** 生成结果卡片：生成中 / 图片 / 视频 / 转录文案 / 错误（不进会话 jsonl，独立展示） */
+function GenCard({ card }) {
+  return (
+    <div className={`gen-card gen-${card.status}`}>
+      <div className="gen-card-head">
+        <span className="gen-card-skill">
+          {card.skill === 'image' ? '🎨 生图' : card.skill === 'video' ? '🎬 生视频' : '⬇️ 下载'}
+        </span>
+        {card.model && <span className="gen-card-model">{card.model}</span>}
+        {card.status === 'running' && <span className="gen-card-status">⏳ 生成中…</span>}
+      </div>
+      {card.prompt && <div className="gen-card-prompt">{card.prompt}</div>}
+      {card.status === 'done' && card.mediaId && (
+        card.skill === 'image' ? (
+          <img className="gen-card-media" src={`/api/media/${card.mediaId}`} alt="生成结果" />
+        ) : (
+          <video className="gen-card-media" src={`/api/media/${card.mediaId}`} controls />
+        )
+      )}
+      {card.transcript && <pre className="gen-card-transcript">{card.transcript}</pre>}
+      {card.status === 'error' && <div className="gen-card-error">❌ {card.error}</div>}
+    </div>
+  );
+}
 
 /**
  * 右侧聊天窗口：标题栏 + 消息流 + 输入区。
@@ -14,7 +40,53 @@ export default function ChatWindow({ session, chat, onBranch }) {
   const [composerText, setComposerText] = useState('');
   const [quote, setQuote] = useState(null); // { text, role } | null
   const [attachments, setAttachments] = useState([]); // 待发送附件（媒体库快照）
+  const [genCards, setGenCards] = useState([]); // 技能包生成结果（独立展示，不进会话）
   const taRef = useRef(null);
+
+  // 技能包发送：生图/生视频（异步轮询）/下载视频（可选转录）
+  const handleGenSend = async (req) => {
+    const id = `gen_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setGenCards((cs) => [
+      { id, skill: req.skill, prompt: req.prompt || req.url || '', model: req.model, status: 'running' },
+      ...cs,
+    ]);
+    try {
+      if (req.skill === 'image') {
+        const r = await api.mediaGenerate({ kind: 'image', prompt: req.prompt, model: req.model, ratio: req.ratio });
+        setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'done', mediaId: r.mediaId } : c)));
+      } else if (req.skill === 'video') {
+        const r = await api.mediaGenerate({
+          kind: 'video',
+          prompt: req.prompt,
+          model: req.model,
+          ratio: req.ratio,
+          duration: req.duration,
+        });
+        const poll = setInterval(async () => {
+          try {
+            const t = await api.mediaTask(r.taskId);
+            if (t.status === 'done') {
+              clearInterval(poll);
+              setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'done', mediaId: t.mediaId } : c)));
+            } else if (t.status === 'error' || t.status === 'not_found') {
+              clearInterval(poll);
+              setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'error', error: t.error || '生成失败' } : c)));
+            }
+          } catch (e) {
+            clearInterval(poll);
+            setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'error', error: e.message } : c)));
+          }
+        }, 4000);
+      } else if (req.skill === 'download') {
+        const r = await api.mediaDownload({ url: req.url, transcribe: req.transcribe });
+        setGenCards((cs) =>
+          cs.map((c) => (c.id === id ? { ...c, status: 'done', mediaId: r.mediaId, transcript: r.transcript } : c)),
+        );
+      }
+    } catch (e) {
+      setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'error', error: e.message } : c)));
+    }
+  };
 
   // 引用：在输入框上方挂一条引用栏（不污染输入框内容）
   const handleQuote = (text, role) => {
@@ -73,6 +145,15 @@ export default function ChatWindow({ session, chat, onBranch }) {
         onBranch={onBranch}
       />
 
+      {/* 技能包生成结果（独立区，不进会话消息流） */}
+      {genCards.length > 0 && (
+        <div className="gen-results">
+          {genCards.map((c) => (
+            <GenCard key={c.id} card={c} />
+          ))}
+        </div>
+      )}
+
       {/* 小猫（可拖动）+ claude娘（状态气泡/余额/挂件交互）平级共存 */}
       <CatMascot />
       <ClaudeNiang status={mascotStatus} />
@@ -81,6 +162,7 @@ export default function ChatWindow({ session, chat, onBranch }) {
         value={composerText}
         onChange={setComposerText}
         onSend={handleSend}
+        onGenSend={handleGenSend}
         streaming={chat.streaming}
         onStop={chat.stop}
         disabled={!session}

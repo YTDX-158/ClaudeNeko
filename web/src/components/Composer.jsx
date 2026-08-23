@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import MediaPicker from './MediaPicker.jsx';
+import SkillBar from './SkillBar.jsx';
 import { uploadToMedia } from '../utils/upload.js';
+import { api } from '../api.js';
 
 /**
  * 输入区：Enter 发送 / Shift+Enter 换行；生成中可预打字。
@@ -19,15 +21,55 @@ export default function Composer({
   onCancelQuote,
   attachments,
   onAttachmentsChange,
+  onGenSend,
 }) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
+
+  // 技能包：生图 / 生视频 / 下载视频
+  const [skill, setSkill] = useState(null);
+  const [genOpts, setGenOpts] = useState({ model: '', ratio: '9:16', duration: undefined, url: '', transcribe: false });
+  const [mediaCfg, setMediaCfg] = useState(null);
+
+  useEffect(() => {
+    api
+      .mediaConfig()
+      .then((cfg) => setMediaCfg(cfg))
+      .catch(() => setMediaCfg(null));
+  }, []);
+
+  // 切换技能 → 默认选中该技能第一个模型
+  const handleSkillChange = (sk) => {
+    setSkill(sk);
+    if (sk) {
+      const list = sk === 'image' ? mediaCfg?.imageModels || [] : mediaCfg?.videoModels || [];
+      setGenOpts((o) => ({ ...o, model: list[0]?.id || o.model }));
+    }
+  };
   const fileRef = useRef(null);
   const dragCounter = useRef(0);
 
   const submit = () => {
+    // 技能模式：走生成/下载 API，不触发 claude 回复
+    if (skill && onGenSend) {
+      if (skill === 'download') {
+        const url = (genOpts.url || '').trim();
+        if (!url) return;
+        onGenSend({ skill, url, transcribe: !!genOpts.transcribe });
+        setGenOpts((o) => ({ ...o, url: '' }));
+      } else {
+        const t = value.trim();
+        if (!t) return;
+        const opts = { skill, prompt: t, model: genOpts.model, ratio: genOpts.ratio };
+        if (skill === 'video') opts.duration = genOpts.duration;
+        onGenSend(opts);
+        onChange('');
+        if (taRef.current) taRef.current.style.height = 'auto';
+      }
+      return;
+    }
     const t = value.trim();
     if ((!t && !attachments.length) || streaming || disabled || uploading) return;
     onChange('');
@@ -163,7 +205,19 @@ export default function Composer({
         <textarea
           ref={taRef}
           className="composer-input"
-          placeholder={disabled ? '先新建一个会话' : streaming ? '生成中，可预打字…（结束后发送）' : '输入消息，Enter 发送，Shift+Enter 换行'}
+          placeholder={
+            disabled
+              ? '先新建一个会话'
+              : skill === 'image'
+                ? '描述要生成的画面，Enter 生成…'
+                : skill === 'video'
+                  ? '描述镜头，Enter 生成视频…'
+                  : skill === 'download'
+                    ? '在上方粘贴视频链接…'
+                    : streaming
+                      ? '生成中，可预打字…（结束后发送）'
+                      : '输入消息，Enter 发送，Shift+Enter 换行'
+          }
           value={value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
@@ -171,14 +225,30 @@ export default function Composer({
           rows={1}
           disabled={disabled}
         />
-        {streaming ? (
+        {streaming && !skill ? (
           <button className="stop-btn" onClick={onStop}>■ 停止</button>
         ) : (
-          <button className="send-btn" onClick={submit} disabled={disabled || (!value.trim() && !attachments.length) || uploading}>
-            {uploading ? '上传中…' : '发送'}
+          <button
+            className="send-btn"
+            onClick={submit}
+            disabled={
+              disabled ||
+              uploading ||
+              (skill === 'download' ? !(genOpts.url || '').trim() : skill ? !value.trim() : !value.trim() && !attachments.length)
+            }
+          >
+            {uploading ? '上传中…' : skill ? (skill === 'download' ? '下载' : skill === 'video' ? '生成视频' : '生成') : '发送'}
           </button>
         )}
       </div>
+
+      <SkillBar
+        skill={skill}
+        onSkillChange={handleSkillChange}
+        opts={genOpts}
+        onOptsChange={setGenOpts}
+        mediaCfg={mediaCfg}
+      />
 
       {uploadError && <div className="composer-upload-error">{uploadError}</div>}
 

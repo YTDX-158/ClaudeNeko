@@ -1209,3 +1209,27 @@ body {
   color: var(--accent); font-size: 14px; z-index: 5; pointer-events: none;
 }
 .composer-upload-error { color: var(--danger); font-size: 12px; padding: 2px 4px; }
+
+/* 技能包（输入框下方） */
+.skillbar { padding: 0 12px 8px; display: flex; flex-direction: column; gap: 6px; }
+.skillbar-row { display: flex; gap: 6px; }
+.skill-btn { border: 1px solid var(--border, #ddd); background: transparent; border-radius: 14px; padding: 4px 12px; font-size: 12px; cursor: pointer; color: var(--text, #333); }
+.skill-btn:hover { border-color: var(--accent, #4a7cff); color: var(--accent, #4a7cff); }
+.skill-btn.active { background: var(--accent, #4a7cff); color: #fff; border-color: var(--accent, #4a7cff); }
+.skillbar-hint { font-size: 12px; color: #b8860b; }
+.skillbar-opts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.skillbar-opts select, .skillbar-url { font-size: 12px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border, #ddd); background: var(--bg, #fff); color: var(--text, #333); }
+.skillbar-url { flex: 1; min-width: 160px; }
+.skillbar-check { font-size: 12px; display: flex; align-items: center; gap: 4px; color: var(--text, #333); cursor: pointer; }
+/* 生成结果卡片（独立展示，不进会话） */
+.gen-results { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 8px; max-height: 40vh; overflow-y: auto; }
+.gen-card { border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 10px; background: var(--card-bg, rgba(0,0,0,.03)); }
+.gen-card-head { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 6px; }
+.gen-card-skill { font-weight: 600; }
+.gen-card-model { color: #888; }
+.gen-card-status { color: #b8860b; }
+.gen-card-prompt { font-size: 12px; color: #666; margin-bottom: 6px; word-break: break-all; }
+.gen-card-media { max-width: 100%; max-height: 320px; border-radius: 8px; display: block; }
+.gen-card-transcript { font-size: 12px; white-space: pre-wrap; background: rgba(0,0,0,.05); border-radius: 6px; padding: 8px; max-height: 200px; overflow-y: auto; margin: 6px 0 0; }
+.gen-card-error { font-size: 12px; color: #c0392b; }
+
