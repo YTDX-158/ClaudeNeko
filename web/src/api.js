@@ -29,10 +29,18 @@ export const api = {
   createSession: (model) =>
     request('/sessions', { method: 'POST', body: JSON.stringify({ model }) }),
   getSession: (id) => request(`/sessions/${id}`),
+  // 取消该会话正在进行的生成（停止按钮；后端杀 claude 进程并释放锁）
+  cancelGeneration: (id) => request(`/sessions/${id}/cancel`, { method: 'POST' }),
   patchSession: (id, patch) =>
     request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteSession: (id) => request(`/sessions/${id}`, { method: 'DELETE' }),
   listMessages: (id) => request(`/sessions/${id}/messages`),
+  // 分支：从某个会话的指定消息处新建会话，返回新会话（含已复制历史）
+  createBranch: (parentId, fromMsgId) =>
+    request('/sessions/branch', {
+      method: 'POST',
+      body: JSON.stringify({ parentId, fromMsgId }),
+    }),
   getAutostart: () => request('/autostart'),
   setAutostart: (enabled) => request('/autostart', { method: 'POST', body: JSON.stringify({ enabled }) }),
 };

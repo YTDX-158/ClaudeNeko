@@ -74,10 +74,23 @@ function renderUserText(text) {
   return html;
 }
 
-export default function MessageBubble({ message, onQuote }) {
+export default function MessageBubble({ message, onQuote, onBranch }) {
   const isUser = message.role === 'user';
   const text = message.text ?? '';
   const [copied, setCopied] = useState(false);
+  const [branched, setBranched] = useState(false);
+
+  // 分支按钮点击：防抖（连点不重复建）；成功后短暂反馈
+  const handleBranch = async () => {
+    if (branched || !onBranch) return;
+    setBranched(true);
+    try {
+      await onBranch(message);
+      setTimeout(() => setBranched(false), 1600);
+    } catch {
+      setBranched(false);
+    }
+  };
 
   const handleCopy = async () => {
     // 纯附件消息复制附件名，避免复制到空内容
@@ -95,7 +108,7 @@ export default function MessageBubble({ message, onQuote }) {
     }
   };
 
-  // 生成中不显示操作按钮（等流式结束）
+  // 生成中不显示操作按钮（等流式结束）；分支按钮只出现在 AI 回复上
   const actions = message.streaming ? null : (
     <div className="msg-actions">
       <button className={`msg-action${copied ? ' copied' : ''}`} onClick={handleCopy}>
@@ -104,6 +117,15 @@ export default function MessageBubble({ message, onQuote }) {
       <button className="msg-action" onClick={() => onQuote?.(text, message.role)}>
         引用
       </button>
+      {!isUser && onBranch && message.claudeMessageId && (
+        <button
+          className={`msg-action${branched ? ' branched' : ''}`}
+          onClick={handleBranch}
+          title="从这条 AI 回复分叉出新会话，保留此前全部上下文"
+        >
+          {branched ? '已分支 ✓' : '⤴ 从这条分支'}
+        </button>
+      )}
     </div>
   );
 

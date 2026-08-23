@@ -21,6 +21,12 @@ const CAT_POS_KEY = 'dsw-dream-skin:cat-pos';
 const CAT_W = 116; // 可点区域约 116px 宽（含内边距）
 const CAT_H = 100;
 
+// 初始组合位：猫在 claude娘 正上方（claude娘 初始右下角，见 ClaudeNiang.jsx / styles.css）
+const NIANG_W = 150; // claude娘 初始宽（正方形，高=宽）
+const NIANG_RIGHT = 26; // claude娘 距视口右边距
+const NIANG_BOTTOM = 96; // claude娘 距视口底边距
+const MASCOT_GAP = 12; // 猫与 claude娘 的垂直间距（"稍微高一点别重叠"）
+
 function loadPos() {
   try {
     const raw = localStorage.getItem(CAT_POS_KEY);
@@ -31,10 +37,12 @@ function loadPos() {
   } catch {
     // 忽略，用默认
   }
-  // 默认：右下角（原输入框上方附近）
+  // 默认：claude娘 正上方、水平居中（组合位，右下角）
+  const niangX = Math.max(0, window.innerWidth - NIANG_W - NIANG_RIGHT);
+  const niangY = Math.max(0, window.innerHeight - NIANG_W - NIANG_BOTTOM);
   return {
-    x: Math.max(0, window.innerWidth - CAT_W - 26),
-    y: Math.max(0, window.innerHeight - CAT_H - 96),
+    x: Math.max(0, niangX + (NIANG_W - CAT_W) / 2),
+    y: Math.max(0, niangY - CAT_H - MASCOT_GAP),
   };
 }
 
@@ -58,6 +66,13 @@ export default function CatMascot() {
     const unsub = skinEngine.subscribe(() => setVisible(skinEngine.catVisible));
     return unsub;
   }, []);
+
+  // 重新打开（visible false→true）时重新读位置：关闭时记录已被 skinEngine 清掉 →
+  // loadPos 回落初始组合位；若是首次挂载有记录则仍是记录位（刷新保留）
+  useEffect(() => {
+    if (visible) setPos(loadPos());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   // 窗口变化时把猫 clamp 回可视区（避免缩小窗口后猫跑出界）
   useEffect(() => {
@@ -159,11 +174,11 @@ export default function CatMascot() {
             <span className="cat-bubble-tail" />
           </div>
         )}
-        <svg viewBox="0 0 120 100" width="88" height="74" fill="currentColor">
+        <svg viewBox="0 0 120 100" width="88" height="74" fill="#000000">
           {/* 尾巴绕到身前 */}
           <path
             d="M84 60 Q102 52 99 40 Q98 33 90 34"
-            stroke="currentColor"
+            stroke="#000000"
             strokeWidth="5"
             fill="none"
             strokeLinecap="round"
@@ -178,18 +193,18 @@ export default function CatMascot() {
           {/* 耳朵 */}
           <path d="M42 24 L45 7 L58 20 Z" />
           <path d="M78 24 L75 7 L62 20 Z" />
-          {/* 眼睛（背景色镂空） */}
-          <circle cx="53" cy="38" r="2.6" fill="var(--bg)" />
-          <circle cx="67" cy="38" r="2.6" fill="var(--bg)" />
+          {/* 眼睛（纯白） */}
+          <circle cx="53" cy="38" r="2.6" fill="#ffffff" />
+          <circle cx="67" cy="38" r="2.6" fill="#ffffff" />
           {/* 胡须 */}
           <path
             d="M38 42 L23 40 M38 46 L24 48 M82 42 L97 40 M82 46 L96 48"
-            stroke="currentColor"
+            stroke="#000000"
             strokeWidth="1.2"
             strokeLinecap="round"
           />
           {/* 嘴 */}
-          <path d="M58 46 Q60 49 62 46" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+          <path d="M58 46 Q60 49 62 46" stroke="#000000" strokeWidth="1.2" fill="none" strokeLinecap="round" />
         </svg>
       </div>
     </>

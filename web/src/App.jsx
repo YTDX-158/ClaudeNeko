@@ -44,6 +44,15 @@ export default function App() {
     create();
   };
 
+  // 分支：从某条 AI 回复新建会话（后端复制其之前历史），成功后切到新会话
+  const handleBranch = async (message) => {
+    if (!activeId || !message?.claudeMessageId) return;
+    const { session } = await api.createBranch(activeId, message.claudeMessageId);
+    // 新会话插到列表头部并激活
+    sessions.setActiveId(session.id);
+    await sessions.refresh();
+  };
+
   return (
     <div className="app">
       {/* WebGL 流体背景（设为「流体」壁纸时生效） */}
@@ -59,6 +68,7 @@ export default function App() {
         session={activeSession}
         chat={chat}
         onRename={(title) => activeId && patch(activeId, { title })}
+        onBranch={handleBranch}
       />
       {serverOk === false && (
         <div className="banner" role="alert">

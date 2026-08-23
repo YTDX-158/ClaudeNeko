@@ -286,6 +286,19 @@ async function buildAttachmentContext(attachments) {
     : '';
 }
 
+/* ---------- 分支：构造历史说明块（喂给 claude 的首条 prompt 前缀） ---------- */
+/** 把消息数组渲染成"用户/AI 交替"的对话历史文本，供分支会话首条注入。 */
+function renderHistoryText(msgs) {
+  const lines = [];
+  for (const m of msgs) {
+    const role = m.role === 'user' ? '用户' : 'AI';
+    const text = (m.text ?? '').trim();
+    if (!text) continue;
+    lines.push(`${role}: ${text}`);
+  }
+  return lines.join('\n\n');
+}
+
 /* ---------- API ---------- */
 
 function sendErrorTo(res, message) {
@@ -326,7 +339,17 @@ async function handleMessage(req, res, url) {
     unlockBusy();
     throw new Error('附件处理失败');
   }
-  const claudePrompt = [prompt, attachCtx].filter(Boolean).join('\n\n') || '（附件消息，无文字内容）';
+  // 分支首条：分支会话尚未发过真消息（claudeSessionId 仍空）时，
+  // 把新会话里已复制的历史拼成说明块注入 claudePrompt；说明块只喂给 claude，不落盘。
+  let branchHistoryCtx = '';
+  if (session.parentId && !session.claudeSessionId && store.readMessages(id).length > 0) {
+    const historyMsgs = store.readMessages(id).filter((m) => (m.text ?? '').trim());
+    const historyText = renderHistoryText(historyMsgs);
+    if (historyText) {
+      branchHistoryCtx = `[这是你之前与该用户的对话历史，请记住并在此基础上继续（用户看不到这段说明）：\n\n${historyText}\n\n]`;
+    }
+  }
+  const claudePrompt = [branchHistoryCtx, prompt, attachCtx].filter(Boolean).join('\n\n') || '（附件消息，无文字内容）';
 
   sseHeaders(res);
 
@@ -361,6 +384,8 @@ async function handleMessage(req, res, url) {
   }
   send('start', { sessionId: id });
 
+  let lastAssistantMsgId = null; // 记录本轮最后一次完整 assistant 的 claudeMessageId，result 落盘用
+
   const runner = createClaudeRunner({
     claudeBin: config.claudeBin,
     prompt: claudePrompt,
@@ -390,6 +415,7 @@ async function handleMessage(req, res, url) {
       // 全量 assistant（含 resume 重放），按 message.id 去重
       if (evt.type === 'assistant' && evt.message?.id && !knownClaudeIds.has(evt.message.id)) {
         knownClaudeIds.add(evt.message.id);
+        lastAssistantMsgId = evt.message.id; // 记录最后一次完整 assistant 的 id，供 result 落盘用
         const text = (evt.message.content ?? [])
           .filter((b) => b.type === 'text')
           .map((b) => b.text)
@@ -400,17 +426,24 @@ async function handleMessage(req, res, url) {
       if (evt.type === 'result') {
         const text = typeof evt.result === 'string' ? evt.result : '';
         if (text) {
-          store.appendMessage(id, { role: 'assistant', text, ts: Date.now(), claudeMessageId: null });
+          store.appendMessage(id, { role: 'assistant', text, ts: Date.now(), claudeMessageId: lastAssistantMsgId ?? null });
         }
         send('done', { text });
       }
     },
-    onError: (err) => sendErrorTo(res, `claude 启动失败：${err.message}`),
+    onError: (err) => {
+      // 空闲超时不是"启动失败"——用独立文案提示；其余（二进制缺失/参数错误等）才报启动失败
+      const msg =
+        err.code === 'IDLE_TIMEOUT'
+          ? `claude 长时间无响应，已中止本次生成`
+          : `claude 启动失败：${err.message}`;
+      sendErrorTo(res, msg);
+    },
   });
 
   activeRunners.set(id, runner);
 
-  // 释放锁/runner（防重复执行：客户端断开、正常结束都只生效一次）
+  // 释放锁/runner（防重复执行：正常结束只生效一次）
   let settled = false;
   const release = () => {
     if (settled) return;
@@ -419,11 +452,12 @@ async function handleMessage(req, res, url) {
     busy.delete(id);
   };
 
-  // 客户端断开（刷新/关页面）：立即取消 claude 进程并释放锁，
-  // 不等 runner.done —— 否则 claude 进程若卡住，busy 会永久占着，该会话再也发不了消息。
+  // 客户端断开（刷新/关页面）：不再取消 claude 进程——
+  // 让 claude 在后台继续跑完并落盘，刷新回来后能取到完整回复（不再"不了了之"）。
+  // busy 锁保留到 runner.done 完成（finally 里 release），防止刷新期间重复发消息双跑；
+  // 若 claude 真卡死，claudeRunner 的空闲超时兜底会终止并释放。
   res.on('close', () => {
-    runner.cancel();
-    release();
+    // 仅断开 SSE 输出，不杀进程、不释放锁
   });
 
   try {
@@ -499,6 +533,33 @@ async function routeApi(req, res, url) {
     return sendJson(res, 200, { sessions: store.list() });
   }
 
+  // 分支：从某个会话的指定消息处新建会话，复制其之前的历史作为上下文
+  if (method === 'POST' && pathname === '/api/sessions/branch') {
+    const body = await readBody(req);
+    const parentId = String(body.parentId ?? '');
+    const fromMsgId = String(body.fromMsgId ?? '');
+    const parent = store.get(parentId);
+    if (!parent) return sendJson(res, 404, { error: '源会话不存在' });
+    const msgs = store.readMessages(parentId);
+    const idx = msgs.findIndex((m) => m.claudeMessageId === fromMsgId || (fromMsgId && m.id === fromMsgId));
+    if (idx < 0) return sendJson(res, 400, { error: '分支点消息不存在' });
+    const slice = msgs.slice(0, idx + 1); // 分支点及之前的历史（含分支点这条 AI 回复）
+
+    // 创建分支会话：继承父会话模型；标题取分支点消息前 15 字（避免首条消息触发自动命名）
+    const branchPoint = msgs[idx];
+    const title = (branchPoint.text ?? '').trim().slice(0, 15) || `从「${(parent.title ?? '源会话').slice(0, 8)}」分支`;
+    const session = store.create({
+      model: parent.model || undefined,
+      cwd: parent.cwd || config.defaultCwd,
+      title: title || '新会话',
+      parentId,
+      branchFromMsg: fromMsgId,
+    });
+    // 把复制出的历史逐条落盘到新会话 jsonl（前端切过来直接能看到完整历史）
+    for (const m of slice) store.appendMessage(session.id, { ...m });
+    return sendJson(res, 201, { session });
+  }
+
   if (method === 'POST' && pathname === '/api/sessions') {
     const body = await readBody(req);
     // 方案C：先清理所有无消息的空会话（避免侧栏堆积空白会话）
@@ -512,6 +573,18 @@ async function routeApi(req, res, url) {
     // 模型不在此存：由 CC Switch 在系统层切换，claude CLI 用系统默认模型
     const session = store.create({ model: body.model || undefined, cwd: body.cwd || config.defaultCwd });
     return sendJson(res, 201, { session, cleanedIds });
+  }
+
+  // 取消该会话正在进行的生成（前端「停止」按钮走这里，真正杀 claude 进程并释放锁）
+  if (method === 'POST' && pathname.endsWith('/cancel')) {
+    const id = pathname.split('/').slice(-2)[0];
+    const runner = activeRunners.get(id);
+    if (runner) {
+      runner.cancel(); // 杀 claude 进程树 → runner.done 会 resolve → finally 释放锁
+      activeRunners.delete(id);
+      busy.delete(id); // 立即释放，让用户能立刻重新发消息（而非等进程退出）
+    }
+    return sendJson(res, 200, { ok: true });
   }
 
   const m = pathname.match(/^\/api\/sessions\/([^/]+)(\/messages)?$/);
@@ -529,7 +602,10 @@ async function routeApi(req, res, url) {
     if (suffix === undefined) {
       if (method === 'GET') {
         const session = store.get(id);
-        return session ? sendJson(res, 200, { session }) : sendJson(res, 404, { error: '会话不存在' });
+        // 附带 busy 状态，前端刷新后能判断"上一条是否还在后台生成"
+        return session
+          ? sendJson(res, 200, { session: { ...session, busy: busy.has(id) } })
+          : sendJson(res, 404, { error: '会话不存在' });
       }
       if (method === 'PATCH') {
         const session = store.get(id);
@@ -584,6 +660,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(config.port, '127.0.0.1', () => {
-  console.log(`[server] Claude Web 后端已启动: http://127.0.0.1:${config.port}`);
+  console.log(`[server] ClaudeNeko 后端已启动: http://127.0.0.1:${config.port}`);
   console.log(`[server] claude.exe: ${config.claudeBin}`);
 });

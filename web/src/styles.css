@@ -214,6 +214,18 @@ body {
   text-overflow: ellipsis;
   cursor: text;
 }
+.session-item-branch {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1.6;
+  border-radius: 3px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  vertical-align: 1px;
+  white-space: nowrap;
+}
 .session-item-rename {
   width: 100%;
   padding: 2px 4px;
@@ -420,6 +432,10 @@ body {
   color: #4ade80;
   opacity: 1;
 }
+.msg-action.branched {
+  color: #4ade80;
+  opacity: 1;
+}
 
 .msg-code {
   margin: 8px 0 2px;
@@ -530,6 +546,16 @@ body {
   padding: 8px 14px;
   border-radius: var(--radius-sm);
   font-size: 13px;
+}
+.recovering-banner {
+  align-self: center;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  margin: 8px 0;
 }
 
 /* ============ 输入区 ============ */
@@ -909,8 +935,8 @@ body {
   bottom: 86px;
   z-index: 2;
   transform: translateX(-50%);
-  background: var(--panel);
-  color: var(--text);
+  background: #fff; /* 固定白底 */
+  color: #000; /* 固定纯黑文字 */
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   padding: 6px 10px;
@@ -956,9 +982,9 @@ body {
 
 /* ============ claude娘 挂件（v1.3 移植，与小猫平级共存） ============ */
 .claude-niang {
-  position: absolute;
-  left: 30px;   /* 默认左下，错开小猫（小猫默认右下） */
-  bottom: 110px;
+  position: fixed; /* 跟小猫同参照系（视口），初始右下角组合位 */
+  right: 26px;
+  bottom: 96px;
   z-index: 998;
   opacity: 0.78;
   pointer-events: auto;
@@ -992,7 +1018,7 @@ body {
   top: 26.9%;
   transform: translate(-50%, -50%);
   z-index: 2;
-  color: var(--text); /* 跟主题文字色（与小猫气泡一致） */
+  color: #000; /* 固定纯黑文字（浮在素材自带思考气泡上） */
   display: flex;
   align-items: center;
   justify-content: center;

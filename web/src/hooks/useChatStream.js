@@ -10,27 +10,36 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
   const [messages, setMessages] = useState([]);
   const [streaming, setStreaming] = useState(false);
   const [responding, setResponding] = useState(false); // 是否已开始输出文本（区分「思考中」与「回答中」）
+  const [recovering, setRecovering] = useState(false); // 刷新回来时上一条还在后台生成
   const [error, setError] = useState(null);
   const abortRef = useRef(null);
   // 供轮询闭包读取的最新值（避免在 effect 依赖里塞入 streaming/sessionId 导致重建定时器）
   const streamingRef = useRef(false);
+  const recoveringRef = useRef(false);
   const lastUpdatedAtRef = useRef(null);
 
   useEffect(() => {
     streamingRef.current = streaming;
   }, [streaming]);
+  useEffect(() => {
+    recoveringRef.current = recovering;
+  }, [recovering]);
 
   // 切换会话：重新加载历史，并记录后端 updatedAt 供同步比对
   useEffect(() => {
     let cancelled = false;
     setMessages([]);
     setError(null);
+    setRecovering(false);
     lastUpdatedAtRef.current = null;
     if (!sessionId) return;
     api
       .getSession(sessionId)
       .then(({ session }) => {
-        if (!cancelled) lastUpdatedAtRef.current = session.updatedAt;
+        if (cancelled) return;
+        lastUpdatedAtRef.current = session.updatedAt;
+        // 刷新回来后若该会话仍在后台生成：提示恢复中，轮询会自动拉到落盘结果
+        if (session.busy) setRecovering(true);
       })
       .catch(() => {});
     api
@@ -55,6 +64,8 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
       try {
         const { session } = await api.getSession(sessionId);
         if (cancelled) return;
+        // 后台生成结束（busy false）→ 清除"恢复中"提示
+        if (!session.busy && recoveringRef.current) setRecovering(false);
         if (session.updatedAt !== lastUpdatedAtRef.current) {
           lastUpdatedAtRef.current = session.updatedAt;
           const { messages: msgs } = await api.listMessages(sessionId);
@@ -155,8 +166,11 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
   );
 
   const stop = useCallback(() => {
+    // 先让后端杀 claude 进程并释放锁（不再依赖断 SSE 来触发取消，刷新页面已不会杀进程）
+    if (sessionId) api.cancelGeneration(sessionId).catch(() => {});
+    // 再断开本页 SSE 接收
     abortRef.current?.abort();
-  }, []);
+  }, [sessionId]);
 
-  return { messages, streaming, responding, error, send, stop };
+  return { messages, streaming, responding, recovering, error, send, stop };
 }

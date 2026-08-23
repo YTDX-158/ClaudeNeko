@@ -42,46 +42,68 @@ export function createClaudeRunner({ claudeBin, prompt, model, claudeSessionId, 
   const args = buildArgs({ prompt, model, claudeSessionId });
   const child = spawn(claudeBin, args, { cwd, shell: false, windowsHide: true });
 
-  const rl = readline.createInterface({ input: child.stdout });
-  rl.on('line', (line) => {
-    if (!line.trim()) return;
-    try {
-      onEvent(JSON.parse(line));
-    } catch {
-      // 非 JSON 行（如进度输出）直接忽略
-    }
-  });
-
-  // stderr 是 claude 的日志/进度，不外发；但落盘到 server/log.txt 便于排查启动/运行错误
-  const logPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'log.txt');
-  child.stderr.on('data', (d) => {
-    try {
-      fs.appendFileSync(logPath, `[claude] ${String(d).trim()}\n`);
-    } catch {
-      // 日志写不了不影响主流程
-    }
-  });
-
-  // 整体超时兜底：claude 卡死（API 挂起/进程僵死）时 5 分钟强制结束，
-  // 否则 runner.done 永不 resolve → 该会话 busy 锁被永久占着、再也发不了消息
-  const MAX_RUN_MS = 5 * 60 * 1000;
+  // 空闲超时兜底：claude 卡死（API 挂起/进程僵死）时强制结束，
+  // 否则 runner.done 永不 resolve → 该会话 busy 锁被永久占着、再也发不了消息。
+  // 注意是"空闲"超时而非"总时长"——只要 claude 还在持续输出（stdout 事件 / stderr 日志），
+  // 就说明它活着在干活，绝不超时；只有长时间毫无动静才判定卡死。
+  const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
   const done = new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      try {
-        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F']);
-      } catch {
-        // 进程可能已退出
+    let idleTimer = null;
+    const clearIdleTimer = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
       }
-      onError?.(new Error('claude 处理超时（>5 分钟），已终止本次生成'));
-      resolve();
-    }, MAX_RUN_MS);
+    };
+    const armIdleTimer = () => {
+      clearIdleTimer();
+      idleTimer = setTimeout(() => {
+        try {
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F']);
+        } catch {
+          // 进程可能已退出
+        }
+        const err = new Error('claude 长时间无响应（空闲超时，已终止本次生成）');
+        err.code = 'IDLE_TIMEOUT'; // 供调用方区分：这是超时中止，不是启动失败
+        onError?.(err);
+        resolve();
+      }, IDLE_TIMEOUT_MS);
+    };
+
+    // 任何一条 stream-json 事件都是"活着"的心跳 → 重置空闲计时器
+    const rl = readline.createInterface({ input: child.stdout });
+    rl.on('line', (line) => {
+      if (!line.trim()) return;
+      try {
+        const evt = JSON.parse(line);
+        armIdleTimer();
+        onEvent(evt);
+      } catch {
+        // 非 JSON 行（如进度输出）直接忽略
+      }
+    });
+
+    // stderr 是 claude 的日志/进度，不外发；但落盘到 server/log.txt 便于排查启动/运行错误。
+    // stderr 有输出也算"活着"（启动慢/加载长会话时 stdout 可能暂未出事件）
+    const logPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'log.txt');
+    child.stderr.on('data', (d) => {
+      try {
+        fs.appendFileSync(logPath, `[claude] ${String(d).trim()}\n`);
+      } catch {
+        // 日志写不了不影响主流程
+      }
+      armIdleTimer();
+    });
+
+    armIdleTimer(); // 启动计时
+
     child.on('error', (err) => {
-      clearTimeout(timer);
+      clearIdleTimer();
       onError?.(err);
       resolve();
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
+      clearIdleTimer();
       onExit?.(code);
       resolve();
     });

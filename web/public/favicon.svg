@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- ClaudeNeko 黑猫 favicon：黑猫脸 + 白眼睛，与页面小猫吉祥物一致 -->
+  <!-- 耳朵 -->
+  <path d="M8 13 L5 2 L14 8 Z" fill="#000000"/>
+  <path d="M24 13 L27 2 L18 8 Z" fill="#000000"/>
+  <!-- 头 -->
+  <circle cx="16" cy="18" r="12" fill="#000000"/>
+  <!-- 眼睛（纯白） -->
+  <circle cx="12.5" cy="17" r="1.7" fill="#ffffff"/>
+  <circle cx="19.5" cy="17" r="1.7" fill="#ffffff"/>
+  <!-- 嘴 -->
+  <path d="M14 22 Q16 24.5 18 22" stroke="#ffffff" strokeWidth="1.1" fill="none" strokeLinecap="round"/>
+</svg>

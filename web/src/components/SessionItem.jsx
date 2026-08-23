@@ -82,6 +82,7 @@ export default function SessionItem({ session, active, onSelect, onRemove, onRen
         ) : (
           <span className="session-item-title" onDoubleClick={startEdit} title="双击重命名">
             {session.title || '新会话'}
+            {session.parentId && <span className="session-item-branch" title="分支会话（从另一会话分叉）">⇥ 分支</span>}
           </span>
         )}
         <div className="session-item-sub">

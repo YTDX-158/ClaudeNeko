@@ -39,14 +39,16 @@ export class SessionStore {
   }
 
   /** 创建会话，claudeSessionId 初始为 null。 */
-  create({ model, cwd }) {
+  create({ model, cwd, title, parentId, branchFromMsg }) {
     const now = Date.now();
     const session = {
       id: crypto.randomUUID(),
-      title: '新会话',
+      title: title ?? '新会话',
       model,
       cwd,
       claudeSessionId: null,
+      parentId: parentId ?? null, // 分支来源会话 id（普通会话 null）
+      branchFromMsg: branchFromMsg ?? null, // 分支点消息的 claudeMessageId
       createdAt: now,
       updatedAt: now,
     };

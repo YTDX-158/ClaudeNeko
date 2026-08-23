@@ -1,7 +1,7 @@
 /**
  * skinEngine.js — 移植自 dsh-dream-skin 的核心能力
  * =================================================
- * 在 claude-web 里复刻 dream-skin 的完整功能：
+ * 在 claude-neko 里复刻 dream-skin 的完整功能：
  *   1. 8 套主题（SKINS 数据来自 dream-skin，MIT）
  *   2. 自设背景图片 / URL / 渐变 + 透明度 + 模糊
  *   3. 强调色 override
@@ -9,7 +9,7 @@
  *   5. 主题切换订阅通知（供 React UI 实时刷新）
  *
  * 实现原理：把主题的 --dsw-alias-* / --dsw-specific-* 设计令牌
- * 写入 <html> 的 CSS 变量，claude-web 的样式通过 var() 映射消费。
+ * 写入 <html> 的 CSS 变量，claude-neko 的样式通过 var() 映射消费。
  */
 
 import { SKINS } from './SKINS.js';
@@ -37,6 +37,10 @@ const STORAGE_FLUID_COLORS = 'dsw-dream-skin:fluid-colors';
 const STORAGE_TEXT_COLOR = 'dsw-dream-skin:text-color';
 const STORAGE_CAT_VISIBLE = 'dsw-dream-skin:cat-visible';
 const STORAGE_NIANG_VISIBLE = 'dsw-dream-skin:niang-visible';
+const STORAGE_CAT_POS = 'dsw-dream-skin:cat-pos'; // 小猫位置（关闭开关时清掉 → 重开回初始组合位）
+const STORAGE_NIANG_POS = 'dsw-dream-skin:niang-pos';
+const STORAGE_NIANG_SIZE = 'dsw-dream-skin:niang-size';
+const STORAGE_NIANG_FLIP = 'dsw-dream-skin:niang-flip';
 
 /** 流体预设：一组「滑块值」组合。点预设 = 把 6 个滑块一次性设成这套值（所见即所得）。 */
 const FLUID_PRESETS = {
@@ -67,7 +71,6 @@ const FACTORY_DEFAULTS = {
   'dsw-dream-skin:fluid-saturation': '75',
   'dsw-dream-skin:fluid-brightness': '60',
   'dsw-dream-skin:fluid-colors': '3',
-  'dsw-dream-skin:cat-pos': '{"x":169.00009155273438,"y":342.848388671875}',
 };
 
 const DEFAULT_SKIN = 'system';        // 无自定义皮肤 → 跟随系统/内置
@@ -486,6 +489,8 @@ export const skinEngine = {
   },
   setCatVisible(v) {
     writeStorage(STORAGE_CAT_VISIBLE, v ? 'true' : 'false');
+    // 关闭时清掉位置记录 → 重新打开时回到初始组合位（且下次刷新也在初始位）
+    if (!v) writeStorage(STORAGE_CAT_POS, null);
     notify();
   },
 
@@ -496,6 +501,12 @@ export const skinEngine = {
   },
   setNiangVisible(v) {
     writeStorage(STORAGE_NIANG_VISIBLE, v ? 'true' : 'false');
+    // 关闭时清掉位置/大小/镜像记录 → 重新打开时回到初始组合位（且下次刷新也在初始位）
+    if (!v) {
+      writeStorage(STORAGE_NIANG_POS, null);
+      writeStorage(STORAGE_NIANG_SIZE, null);
+      writeStorage(STORAGE_NIANG_FLIP, null);
+    }
     notify();
   },
 

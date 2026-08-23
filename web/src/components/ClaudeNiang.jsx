@@ -32,6 +32,31 @@ const MAX_W = 320;
 const SNAP = 48; // 距边缘小于此值触发吸附
 const EDGE = 20; // 吸附后的贴边间距
 
+// 持久化键（沿用 dsw-dream-skin: 前缀，一键恢复默认会一并清掉）
+const NIANG_POS_KEY = 'dsw-dream-skin:niang-pos';
+const NIANG_SIZE_KEY = 'dsw-dream-skin:niang-size';
+const NIANG_FLIP_KEY = 'dsw-dream-skin:niang-flip';
+
+// 初始组合位：右下角（跟原小猫的位置一致，底部留出输入框区域）
+const EDGE_RIGHT = 26; // 距视口右边距
+const EDGE_BOTTOM = 96; // 距视口底边距（原小猫底边位置）
+
+function readStore(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writeStore(key, value) {
+  try {
+    if (value === null || value === undefined) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* localStorage 满/禁用时静默 */
+  }
+}
+
 export default function ClaudeNiang({ status = 'idle' }) {
   const [bubble, setBubble] = useState(null);
   const [size, setSize] = useState(BASE_W);
@@ -49,6 +74,42 @@ export default function ClaudeNiang({ status = 'idle' }) {
     const unsub = skinEngine.subscribe(() => setVisible(skinEngine.niangVisible));
     return unsub;
   }, []);
+
+  // 打开/挂载时还原位置、大小、镜像：有记录用记录，无记录回落初始组合位（右下角）。
+  // 关闭开关时 skinEngine 已清掉记录 → 重新打开 = 回到初始组合位，且下次刷新也回初始。
+  useEffect(() => {
+    if (!visible) return;
+    const el = wrapRef.current;
+    if (!el) return;
+    const savedPos = readStore(NIANG_POS_KEY);
+    let x, y;
+    if (savedPos) {
+      try {
+        const p = JSON.parse(savedPos);
+        if (typeof p.x === 'number' && typeof p.y === 'number') {
+          x = p.x;
+          y = p.y;
+        }
+      } catch {
+        /* 解析失败回落默认 */
+      }
+    }
+    if (typeof x !== 'number') {
+      // 初始组合位：右下角（跟小猫初始同一块区域，底部留出输入框）
+      x = Math.max(0, window.innerWidth - BASE_W - EDGE_RIGHT);
+      y = Math.max(0, window.innerHeight - BASE_W - EDGE_BOTTOM);
+    }
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    el.style.right = 'auto';
+    el.style.bottom = 'auto';
+    el.dataset.dragged = '1'; // 已固化为 left/top 定位，之后拖动直接走 left/top
+
+    const savedSize = Number(readStore(NIANG_SIZE_KEY));
+    if (savedSize >= MIN_W && savedSize <= MAX_W) setSize(savedSize);
+    if (readStore(NIANG_FLIP_KEY) === 'true') setFlip(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   // 点击流程收尾：颜文字 → 余额 两段播完后，让位给当前状态气泡（若存在）
   const finishClick = () => {
@@ -137,6 +198,8 @@ export default function ClaudeNiang({ status = 'idle' }) {
     else if (vh - (top + rect.height) < SNAP) top = vh - rect.height - EDGE;
     el.style.left = `${left - pRect.left}px`;
     el.style.top = `${top - pRect.top}px`;
+    // 记住位置（相对父容器，加载时原样还原）
+    writeStore(NIANG_POS_KEY, JSON.stringify({ x: left - pRect.left, y: top - pRect.top }));
     const body = el.querySelector('.claude-niang-body');
     if (body) {
       body.classList.remove('claude-q-pop');
@@ -165,7 +228,11 @@ export default function ClaudeNiang({ status = 'idle' }) {
     if (!el) return;
     const onWheel = (e) => {
       e.preventDefault();
-      setSize((s) => Math.min(MAX_W, Math.max(MIN_W, s + (e.deltaY < 0 ? 10 : -10))));
+      setSize((s) => {
+        const next = Math.min(MAX_W, Math.max(MIN_W, s + (e.deltaY < 0 ? 10 : -10)));
+        writeStore(NIANG_SIZE_KEY, String(next)); // 记住缩放
+        return next;
+      });
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
@@ -173,7 +240,10 @@ export default function ClaudeNiang({ status = 'idle' }) {
 
   const handleContextMenu = (e) => {
     e.preventDefault();
-    setFlip((f) => !f);
+    setFlip((f) => {
+      writeStore(NIANG_FLIP_KEY, f ? 'false' : 'true'); // 记住镜像
+      return !f;
+    });
   };
 
   const handleClick = () => {

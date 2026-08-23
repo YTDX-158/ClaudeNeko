@@ -10,7 +10,7 @@ import { downloadText, exportSessionText } from '../utils/export.js';
  * 输入框文本与「引用条」状态都提升到这里：
  * - 引用：点击后输入框上方浮出引用条，输入框保持干净；发送时引用 + 文字拼成 markdown 引用块一起发出
  */
-export default function ChatWindow({ session, chat }) {
+export default function ChatWindow({ session, chat, onBranch }) {
   const [composerText, setComposerText] = useState('');
   const [quote, setQuote] = useState(null); // { text, role } | null
   const [attachments, setAttachments] = useState([]); // 待发送附件（媒体库快照）
@@ -60,10 +60,17 @@ export default function ChatWindow({ session, chat }) {
         </div>
       </header>
 
+      {chat.recovering && (
+        <div className="recovering-banner">
+          ⏳ 上一条回复仍在后台生成中，完成后会自动显示……
+        </div>
+      )}
+
       <MessageList
         messages={chat.messages}
         error={chat.error}
         onQuote={handleQuote}
+        onBranch={onBranch}
       />
 
       {/* 小猫（可拖动）+ claude娘（状态气泡/余额/挂件交互）平级共存 */}
