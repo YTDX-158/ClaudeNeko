@@ -727,6 +727,19 @@ async function routeApi(req, res, url) {
     return sendJson(res, 200, { ok: true });
   }
 
+  // 强制结束当前对话任务：杀 claude runner + 释放锁 + 清全部生成任务（生视频也能取消）
+  if (method === 'POST' && pathname.endsWith('/force-stop')) {
+    const id = pathname.split('/').slice(-2)[0];
+    const runner = activeRunners.get(id);
+    if (runner) {
+      runner.cancel(); // 杀 claude 进程树
+      activeRunners.delete(id);
+    }
+    busy.delete(id); // 释放该会话锁
+    media.cancelAll(); // 清生成任务（并发 1，清全部 = 清当前）
+    return sendJson(res, 200, { ok: true });
+  }
+
   // 技能包消息：生成前用户提示词（role=user，触发命名）+ 生成结果 AI 消息（role=assistant 默认）
   const mmsg = pathname.match(/^\/api\/sessions\/([^/]+)\/media-message$/);
   if (mmsg && method === 'POST') {

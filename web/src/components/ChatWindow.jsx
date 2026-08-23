@@ -146,6 +146,17 @@ export default function ChatWindow({ session, chat, onBranch }) {
     chat.send(full, msgAttachments);
   };
 
+  // 强制结束当前对话任务：杀 claude 进程 + 清生成任务（聊天卡住/生视频太久都能打断）
+  const handleForceStop = async () => {
+    if (!session?.id) return;
+    try {
+      await api.forceStop(session.id);
+    } catch {
+      // 后端不可达也继续前端清理
+    }
+    chat.stop(); // 断开 SSE + 释放前端流式态
+  };
+
   // 导出当前对话为 .txt 聊天记录
   const handleExport = () => {
     if (!chat.messages.length) return;
@@ -169,6 +180,7 @@ export default function ChatWindow({ session, chat, onBranch }) {
         <h1 className="chat-title">{session?.title ?? '新会话'}</h1>
         <div className="chat-tools">
           <button className="chat-export" onClick={handleExport} title="导出当前对话为 .txt">导出</button>
+          <button className="chat-export" onClick={handleForceStop} title="强制结束当前对话任务（杀 claude + 取消生成，聊天卡住或生视频太久时用）">⛔ 结束</button>
           {session?.model && <span className="chat-model">{session.model}</span>}
           {sid && (
             <button

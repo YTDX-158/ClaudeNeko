@@ -258,5 +258,11 @@ export function createMediaService(cfg) {
   }, 5 * 60 * 1000);
   if (timer.unref) timer.unref();
 
-  return { generateImage, generateVideo, queryTask, download, getConfig };
+  /** 强制结束：清空全部生成任务并释放并发锁（并发 1，一次一个任务，清全部 = 清当前）。 */
+  function cancelAll() {
+    tasks.clear();
+    active = 0;
+  }
+
+  return { generateImage, generateVideo, queryTask, download, getConfig, cancelAll };
 }

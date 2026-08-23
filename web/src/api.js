@@ -59,6 +59,8 @@ export const api = {
     return j;
   },
   mediaTask: (id) => request(`/media/task/${id}`),
+  // 强制结束当前对话任务（杀 claude + 清生成任务）
+  forceStop: (id) => request(`/sessions/${id}/force-stop`, { method: 'POST' }),
   mediaDownload: async (body) => {
     const res = await fetch(BASE + '/media/download', {
       method: 'POST',
