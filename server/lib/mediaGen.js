@@ -152,7 +152,7 @@ export function createMediaService(cfg) {
       });
       const taskId = j?.id;
       if (!taskId) throw new ApiError('NO_TASK', '任务提交无返回 id');
-      tasks.set(taskId, { status: 'running', ts: Date.now() });
+      tasks.set(taskId, { status: 'running', ts: Date.now(), resolution });
       return { taskId };
     } catch (e) {
       active = Math.max(0, active - 1);
@@ -232,7 +232,11 @@ export function createMediaService(cfg) {
   // 任务 TTL 清理（后台定时，防 tasks Map 无限膨胀）
   const timer = setInterval(() => {
     const now = Date.now();
-    for (const [id, t] of tasks) if (now - t.ts > TASK_TTL) tasks.delete(id);
+    for (const [id, t] of tasks) {
+      // 4K 生成独享并发 + RPM 低，给更长 TTL 防误杀；其他 10 分钟
+      const ttl = t.resolution === '4K' ? 30 * 60 * 1000 : TASK_TTL;
+      if (now - t.ts > ttl) tasks.delete(id);
+    }
   }, 5 * 60 * 1000);
   if (timer.unref) timer.unref();
 

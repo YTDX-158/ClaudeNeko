@@ -71,7 +71,7 @@ export default function SkillBar({ skill, onSkillChange, opts, onOptsChange, med
         <div className="skillbar-opts">
           <select
             value={opts.model}
-            onChange={(e) => set({ model: e.target.value, duration: undefined })}
+            onChange={(e) => set({ model: e.target.value, duration: undefined, resolution: undefined })}
           >
             {modelList.map((m) => (
               <option key={m.id} value={m.id}>
