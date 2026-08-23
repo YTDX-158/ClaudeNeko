@@ -21,7 +21,12 @@ export function systemHandler(ctx) {
     if (method === 'POST' && pathname === '/api/autostart') {
       const body = await ctx.readBody(req);
       await ctx.setAutoStart(Boolean(body.enabled));
-      return sendJson(res, 200, { enabled: Boolean(body.enabled) });
+      // 验证是否真的生效：任务注册/注销可能静默失败（如权限不足），避免前端显示"开"实际没开
+      const actual = await ctx.getAutoStartEnabled();
+      if (actual !== Boolean(body.enabled)) {
+        return sendJson(res, 500, { error: '开机自启设置失败（可能权限不足），请检查系统后重试' });
+      }
+      return sendJson(res, 200, { enabled: actual });
     }
     if (method === 'GET' && pathname === '/api/models') {
       return sendJson(res, 200, { models: ctx.config.models, default: ctx.config.defaultModel });

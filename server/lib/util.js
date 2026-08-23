@@ -160,6 +160,11 @@ export function readRawBody(req) {
 }
 
 export function serveMediaFile(req, res, rec, asDownload) {
+  // 防御：脏记录 fileName 缺失时 path.join 会抛 "path undefined" → 500，直接 404
+  if (!rec || !rec.fileName) {
+    sendJson(res, 404, { error: '文件不存在' });
+    return;
+  }
   const filePath = getMediaPath(rec);
   let stat;
   try {

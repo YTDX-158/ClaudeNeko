@@ -285,7 +285,12 @@ export function sessionsHandler(ctx) {
           store.remove(s.id);
         }
       }
-      const session = store.create({ model: body.model || undefined, cwd: body.cwd || config.defaultCwd, effort: body.effort || undefined });
+      const session = store.create({
+        model: body.model || undefined,
+        cwd: body.cwd || config.defaultCwd,
+        // 建会话 effort 只接受 low/max（标准档=不传）
+        effort: body.effort === 'low' || body.effort === 'max' ? body.effort : undefined,
+      });
       return sendJson(res, 201, { session, cleanedIds });
     }
 
@@ -356,8 +361,14 @@ export function sessionsHandler(ctx) {
           const patch = {};
           if (body.model) patch.model = body.model;
           if (body.title) patch.title = body.title;
-          // effort 允许 null（标准档 = 不传），所以用 !== undefined 判断
-          if (body.effort !== undefined) patch.effort = body.effort;
+          // effort 只接受 null/undefined（标准档）或 low/max，非法值直接 400
+          if (body.effort !== undefined) {
+            if (body.effort === null || body.effort === 'low' || body.effort === 'max') {
+              patch.effort = body.effort;
+            } else {
+              return sendJson(res, 400, { error: '思考档位无效（仅支持 省/标准/强力）' });
+            }
+          }
           return sendJson(res, 200, { session: store.update(id, patch) });
         }
         if (method === 'DELETE') {

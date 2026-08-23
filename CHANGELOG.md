@@ -11,6 +11,7 @@
 ### 🔧 修复（实测踩坑）
 - **vbs 中文路径乱码**：vbs 拼 `cmd /c cd /d 中文路径 && bat` 时中文坏成 `??` → 改为 ShellExecuteW 直接 Run bat 完整路径
 - **快速 toggle 失败**：setAutoStart 关→立即开时任务注册静默失败（Unregister 异步）→ 注册前清残留任务 + 短延迟
+- **漏洞修复（检查）**：媒体记录 fileName 缺失 → 500（`path undefined`）→ 防御 404；autostart 注册失败无反馈（前端显示"开"实际没开）→ POST 后验证任务状态，不一致返回错误；effort 无值校验 → PATCH/POST 只接受 low/max/null，非法 400
 
 ### 📝 说明
 - schtasks 命令行不支持 ONLOGON + 重复间隔，用 PowerShell `Register-ScheduledTask` 的 Repetition 实现

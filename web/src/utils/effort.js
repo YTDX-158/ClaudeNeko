@@ -32,9 +32,3 @@ export function setDefaultEffort(eff) {
   }
 }
 
-/** 档位显示名（用于会话头部展示） */
-export function effortLabel(eff) {
-  if (eff === 'low') return '🪙 省';
-  if (eff === 'max') return '💪 强力';
-  return '⭐ 标准';
-}
