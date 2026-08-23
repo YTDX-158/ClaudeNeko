@@ -141,6 +141,15 @@ export default function ChatWindow({ session, chat, onBranch }) {
         <div className="chat-tools">
           <button className="chat-export" onClick={handleExport} title="导出当前对话为 .txt">导出</button>
           {session?.model && <span className="chat-model">{session.model}</span>}
+          {session?.claudeSessionId && (
+            <button
+              className="chat-model"
+              onClick={() => navigator.clipboard.writeText(session.claudeSessionId).catch(() => {})}
+              title={`Claude 会话 ID：${session.claudeSessionId}（点击复制，可在 claude CLI 用 --resume 接续）`}
+            >
+              🪪 {session.claudeSessionId.slice(0, 8)}…
+            </button>
+          )}
         </div>
       </header>
 
