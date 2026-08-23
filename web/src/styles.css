@@ -1237,9 +1237,10 @@ body {
 /* 生成中 spinner */
 .gen-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(0,0,0,.15); border-top-color: var(--accent, #4a7cff); border-radius: 50%; animation: gen-spin .8s linear infinite; margin-right: 5px; vertical-align: -2px; }
 @keyframes gen-spin { to { transform: rotate(360deg); } }
-/* AI 生成作品附件放大（用户参考附件保持缩略） */
-.msg-assistant .msg-attach-card .thumb { width: 70%; max-width: 70%; height: auto; object-fit: contain; }
-.msg-assistant .msg-attach-card video { width: 70%; max-width: 70%; height: auto; }
+/* AI 生成作品附件：自适应比例完整显示（竖/横/超宽/正方都完整，不裁切不变形；用户参考附件保持缩略） */
+.msg-assistant .msg-attach-card { max-width: min(80%, 520px); flex-direction: column; align-items: flex-start; }
+.msg-assistant .msg-attach-card .thumb,
+.msg-assistant .msg-attach-card video { width: auto; height: auto; max-width: 100%; max-height: 60vh; object-fit: contain; }
 
 
 /* 附件下载按钮（卡片右上角，一直显示） */
