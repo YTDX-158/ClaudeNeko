@@ -481,7 +481,7 @@ function maybeStartMediaClaude(session, skill, prompt) {
   if (!session || session.mediaClaudeInited) return;
   session.mediaClaudeInited = true;
   store.update(session.id, { mediaClaudeInited: true });
-  const cPrompt = `这个会话在生成媒体：${skill === 'image' ? '生图' : '生视频'}「${prompt}」。请一句话简短确认，并记住本会话在做 AI 媒体生成。`;
+  const cPrompt = `用户在生成媒体：${skill === 'image' ? '生图' : '生视频'}「${prompt}」。你只需回复一句简短的确认（例如"好的，正在生成"）。不要展开、不要记录、不要执行任何操作、不要写记忆。`;
   const runner = createClaudeRunner({
     claudeBin: config.claudeBin,
     prompt: cPrompt,
