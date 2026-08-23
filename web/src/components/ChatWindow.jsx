@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import MessageList from './MessageList.jsx';
 import Composer from './Composer.jsx';
 import CatMascot from './CatMascot.jsx';
@@ -15,7 +15,23 @@ export default function ChatWindow({ session, chat, onBranch }) {
   const [composerText, setComposerText] = useState('');
   const [quote, setQuote] = useState(null); // { text, role } | null
   const [attachments, setAttachments] = useState([]); // 待发送附件（媒体库快照）
+  const [sid, setSid] = useState(null); // 实时 claude 会话 ID（列表快照不含，单独拉）
   const taRef = useRef(null);
+
+  // 实时拉当前会话的 claudeSessionId（发消息/生成媒体后会变，消息数变化时重拉）
+  useEffect(() => {
+    if (!session?.id) return;
+    let live = true;
+    api
+      .getSession(session.id)
+      .then((d) => {
+        if (live) setSid(d.session?.claudeSessionId || null);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [session?.id, chat.messages.length]);
 
   // 技能包发送：生图/生视频（异步轮询）/下载视频（可选转录）
   // 生成中 → genCards 临时气泡；完成后 → 落盘 + 转成 AI 消息气泡进消息流
@@ -141,13 +157,13 @@ export default function ChatWindow({ session, chat, onBranch }) {
         <div className="chat-tools">
           <button className="chat-export" onClick={handleExport} title="导出当前对话为 .txt">导出</button>
           {session?.model && <span className="chat-model">{session.model}</span>}
-          {session?.claudeSessionId && (
+          {sid && (
             <button
               className="chat-model"
-              onClick={() => navigator.clipboard.writeText(session.claudeSessionId).catch(() => {})}
-              title={`Claude 会话 ID：${session.claudeSessionId}（点击复制，可在 claude CLI 用 --resume 接续）`}
+              onClick={() => navigator.clipboard.writeText(sid).catch(() => {})}
+              title={`Claude 会话 ID：${sid}（点击复制，可在 claude CLI 用 --resume 接续）`}
             >
-              🪪 {session.claudeSessionId.slice(0, 8)}…
+              🪪 {sid.slice(0, 8)}…
             </button>
           )}
         </div>
