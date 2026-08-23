@@ -20,8 +20,41 @@ export class ApiError extends Error {
 /**
  * @param {{ doubaoKey:string, imageModels:any[], videoModels:any[], ratios:string[], imageSizes:object, downloadBlacklist:string[], transcribeEnabled:boolean }} cfg
  */
+/** 生图尺寸计算：目标像素档 × 比例 → clamp 边长≤4096 + 校验≥下限（Seedream 5.0）。
+ *  标签是档位不是精确像素：非 1:1 的 4K = 该比例下 clamped 的最大合法尺寸。 */
+function calcImageSize(ratio, resolution) {
+  const TARGET = { '2K': 3686400, '3K': 8294400, '4K': 16777216 };
+  const MAX_SIDE = 4096;
+  const MIN_PIXELS = 3686400;
+  const [a, b] = String(ratio || '1:1').split(':').map(Number);
+  if (!a || !b) return '1920x1920';
+  const target = TARGET[String(resolution || '2K')] || TARGET['2K'];
+  let w = Math.sqrt((target * a) / b);
+  let h = Math.sqrt((target * b) / a);
+  const clamp = () => {
+    const s = Math.min(1, MAX_SIDE / Math.max(w, h));
+    w = Math.round(w * s);
+    h = Math.round(h * s);
+  };
+  clamp();
+  if (w * h < MIN_PIXELS) {
+    const up = Math.sqrt(MIN_PIXELS / (w * h));
+    w = Math.round(w * up);
+    h = Math.round(h * up);
+    clamp();
+  }
+  if (w % 2) w -= 1;
+  if (h % 2) h -= 1;
+  // 偶数化可能让像素略低于下限（差极小）：给短边 +2 达标
+  if (w * h < MIN_PIXELS) {
+    if (w <= h) w += 2;
+    else h += 2;
+  }
+  return `${w}x${h}`;
+}
+
 export function createMediaService(cfg) {
-  const { doubaoKey, imageModels, videoModels, ratios, imageSizes, downloadBlacklist, transcribeEnabled } = cfg;
+  const { doubaoKey, imageModels, videoModels, ratios, imageResolutions, downloadBlacklist, transcribeEnabled } = cfg;
   const tasks = new Map(); // taskId -> {status, mediaId?, error?, ts}
   let active = 0;
   let seq = 0;
@@ -64,11 +97,11 @@ export function createMediaService(cfg) {
   }
 
   // ---- 生图（同步，2-5s）----
-  async function generateImage({ prompt, model, ratio }) {
+  async function generateImage({ prompt, model, ratio, resolution }) {
     requireKey();
     if (!isImageModel(model)) throw new ApiError('MODEL_UNAVAILABLE', `当前 key 未开通此模型：${model}`);
     if (!isValidRatio(ratio)) throw new ApiError('INVALID_RATIO', `比例不支持：${ratio}`);
-    const size = imageSizes[ratio] || '1024x1024';
+    const size = calcImageSize(ratio, resolution);
     const j = await arkFetch('/images/generations', {
       method: 'POST',
       headers: headers(),
@@ -90,7 +123,7 @@ export function createMediaService(cfg) {
   }
 
   // ---- 生视频（异步任务，前端轮询）----
-  async function generateVideo({ prompt, model, ratio, duration }) {
+  async function generateVideo({ prompt, model, ratio, duration, resolution }) {
     requireKey();
     if (!isVideoModel(model)) throw new ApiError('MODEL_UNAVAILABLE', `当前 key 未开通此模型：${model}`);
     if (!isValidRatio(ratio)) throw new ApiError('INVALID_RATIO', `比例不支持：${ratio}`);
@@ -98,13 +131,16 @@ export function createMediaService(cfg) {
     if (duration && !m.durations.includes(Number(duration))) {
       throw new ApiError('INVALID_DURATION', `该模型不支持时长 ${duration}s`);
     }
+    if (resolution && !m.resolutions.includes(String(resolution))) {
+      throw new ApiError('INVALID_RESOLUTION', `该模型不支持分辨率 ${resolution}`);
+    }
     if (active >= MAX_ACTIVE) throw new ApiError('BUSY', '已有生成任务进行中，请稍候');
     active += 1;
     const body = {
       model,
       content: [{ type: 'text', text: prompt }],
       watermark: false,
-      resolution: '720P',
+      resolution: resolution || '720P',
       aspect_ratio: ratio,
     };
     if (duration) body.duration = Number(duration);
@@ -190,7 +226,7 @@ export function createMediaService(cfg) {
 
   /** 前端渲染选项用：模型全列（可用性运行时判定），含比例/时长/是否配了 key */
   function getConfig() {
-    return { imageModels, videoModels, ratios, hasKey: !!doubaoKey, transcribeEnabled };
+    return { imageModels, videoModels, imageResolutions, ratios, hasKey: !!doubaoKey, transcribeEnabled };
   }
 
   // 任务 TTL 清理（后台定时，防 tasks Map 无限膨胀）

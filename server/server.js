@@ -520,10 +520,10 @@ async function routeApi(req, res, url) {
     if (!prompt) return sendJson(res, 400, { error: 'EMPTY_PROMPT', message: '提示词不能为空' });
     try {
       if (body.kind === 'image') {
-        return sendJson(res, 200, await media.generateImage({ prompt, model: body.model, ratio: body.ratio }));
+        return sendJson(res, 200, await media.generateImage({ prompt, model: body.model, ratio: body.ratio, resolution: body.resolution }));
       }
       if (body.kind === 'video') {
-        return sendJson(res, 200, await media.generateVideo({ prompt, model: body.model, ratio: body.ratio, duration: body.duration }));
+        return sendJson(res, 200, await media.generateVideo({ prompt, model: body.model, ratio: body.ratio, duration: body.duration, resolution: body.resolution }));
       }
       return sendJson(res, 400, { error: 'BAD_KIND', message: 'kind 需为 image 或 video' });
     } catch (e) {

@@ -30,7 +30,7 @@ export default function Composer({
 
   // 技能包：生图 / 生视频 / 下载视频
   const [skill, setSkill] = useState(null);
-  const [genOpts, setGenOpts] = useState({ model: '', ratio: '9:16', duration: undefined, url: '', transcribe: false });
+  const [genOpts, setGenOpts] = useState({ model: '', ratio: '9:16', duration: undefined, resolution: undefined, url: '', transcribe: false });
   const [mediaCfg, setMediaCfg] = useState(null);
 
   useEffect(() => {
@@ -62,7 +62,7 @@ export default function Composer({
       } else {
         const t = value.trim();
         if (!t) return;
-        const opts = { skill, prompt: t, model: genOpts.model, ratio: genOpts.ratio };
+        const opts = { skill, prompt: t, model: genOpts.model, ratio: genOpts.ratio, resolution: genOpts.resolution };
         if (skill === 'video') opts.duration = genOpts.duration;
         onGenSend(opts);
         onChange('');

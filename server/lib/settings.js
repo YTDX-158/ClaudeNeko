@@ -36,17 +36,19 @@ const MEDIA = {
     { id: 'doubao-seedream-5-0-pro-260628', label: 'Seedream 5.0 Pro' },
   ],
   videoModels: [
-    { id: 'doubao-seedance-2-5-260628', label: 'Seedance 2.5', durations: [30] },
-    { id: 'doubao-seedance-2-0-mini-260615', label: 'Seedance 2.0 Mini', durations: [4, 5, 10, 15] },
-    { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0', durations: [4, 5, 10, 15] },
-    { id: 'doubao-seedance-2-0-fast-260128', label: 'Seedance Fast', durations: [4, 5, 10, 15] },
+    // Seedance 官方 resolution 仅 480P/720P（官方不支持 1080P）
+    { id: 'doubao-seedance-2-5-260628', label: 'Seedance 2.5', durations: [30], resolutions: ['480P', '720P'] },
+    { id: 'doubao-seedance-2-0-mini-260615', label: 'Seedance 2.0 Mini', durations: [4, 5, 10, 15], resolutions: ['480P', '720P'] },
+    { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0', durations: [4, 5, 10, 15], resolutions: ['480P', '720P'] },
+    { id: 'doubao-seedance-2-0-fast-260128', label: 'Seedance Fast', durations: [4, 5, 10, 15], resolutions: ['480P', '720P'] },
   ],
   ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
-  imageSizes: {
-    // Seedream 5.0 要求 ≥3686400 像素（1920×1920），各比例按最小达标换算
-    '9:16': '1440x2560', '16:9': '2560x1440', '1:1': '1920x1920',
-    '4:3': '2560x1920', '3:4': '1920x2560', '21:9': '2944x1260',
-  },
+  // 生图分辨率档位（Seedream 5.0：目标像素，最终尺寸由 mediaGen 按比例+clamp 计算）
+  imageResolutions: [
+    { id: '2K', label: '2K' },
+    { id: '3K', label: '3K' },
+    { id: '4K', label: '4K' },
+  ],
   downloadBlacklist: [],
   transcribeEnabled: true,
 };

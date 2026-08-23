@@ -54,6 +54,16 @@ export default function SkillBar({ skill, onSkillChange, opts, onOptsChange, med
               </option>
             ))}
           </select>
+          <select value={opts.resolution || '2K'} onChange={(e) => set({ resolution: e.target.value })}>
+            {(mediaCfg?.imageResolutions || [{ id: '2K', label: '2K' }, { id: '3K', label: '3K' }, { id: '4K', label: '4K' }]).map(
+              (r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                  {r.id !== '2K' ? '（更慢更贵）' : ''}
+                </option>
+              ),
+            )}
+          </select>
         </div>
       )}
 
@@ -84,6 +94,16 @@ export default function SkillBar({ skill, onSkillChange, opts, onOptsChange, med
               {curModel.durations.map((d) => (
                 <option key={d} value={d}>
                   {d}s
+                </option>
+              ))}
+            </select>
+          )}
+          {curModel?.resolutions?.length > 0 && (
+            <select value={opts.resolution || '720P'} onChange={(e) => set({ resolution: e.target.value })}>
+              {curModel.resolutions.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                  {r === '720P' ? '（更清晰）' : ''}
                 </option>
               ))}
             </select>
