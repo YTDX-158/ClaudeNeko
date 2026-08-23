@@ -1233,3 +1233,11 @@ body {
 .gen-card-transcript { font-size: 12px; white-space: pre-wrap; background: rgba(0,0,0,.05); border-radius: 6px; padding: 8px; max-height: 200px; overflow-y: auto; margin: 6px 0 0; }
 .gen-card-error { font-size: 12px; color: #c0392b; }
 
+
+/* 生成中 spinner */
+.gen-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(0,0,0,.15); border-top-color: var(--accent, #4a7cff); border-radius: 50%; animation: gen-spin .8s linear infinite; margin-right: 5px; vertical-align: -2px; }
+@keyframes gen-spin { to { transform: rotate(360deg); } }
+/* AI 生成作品附件放大（用户参考附件保持缩略） */
+.msg-assistant .msg-attach-card .thumb { width: 70%; max-width: 70%; height: auto; object-fit: contain; }
+.msg-assistant .msg-attach-card video { width: 70%; max-width: 70%; height: auto; }
+

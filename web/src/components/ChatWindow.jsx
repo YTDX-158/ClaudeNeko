@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import MessageList from './MessageList.jsx';
 import Composer from './Composer.jsx';
 import CatMascot from './CatMascot.jsx';
@@ -6,26 +6,31 @@ import ClaudeNiang from './ClaudeNiang.jsx';
 import { downloadText, exportSessionText } from '../utils/export.js';
 import { api } from '../api.js';
 
-/** 生成结果卡片：生成中 / 图片 / 视频 / 转录文案 / 错误（不进会话 jsonl，独立展示） */
+/** 生成结果卡片：生成中（spinner + 生视频计时）/ 错误（完成后转移成 AI 消息气泡） */
 function GenCard({ card }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (card.status !== 'running' || card.skill !== 'video') return;
+    setElapsed(0);
+    const t = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [card.status, card.skill]);
+
   return (
     <div className={`gen-card gen-${card.status}`}>
       <div className="gen-card-head">
         <span className="gen-card-skill">
-          {card.skill === 'image' ? '🎨 生图' : card.skill === 'video' ? '🎬 生视频' : '⬇️ 下载'}
+          {card.skill === 'image' ? '[🎨 生图]' : card.skill === 'video' ? '[🎬 生视频]' : '[⬇️ 下载]'}
         </span>
         {card.model && <span className="gen-card-model">{card.model}</span>}
-        {card.status === 'running' && <span className="gen-card-status">⏳ 生成中…</span>}
+        {card.status === 'running' && (
+          <span className="gen-card-status">
+            <span className="gen-spinner" aria-hidden="true" />
+            {card.skill === 'video' ? `正在生成… 已等 ${elapsed}s` : card.skill === 'download' ? '正在下载…' : '正在生成…'}
+          </span>
+        )}
       </div>
       {card.prompt && <div className="gen-card-prompt">{card.prompt}</div>}
-      {card.status === 'done' && card.mediaId && (
-        card.skill === 'image' ? (
-          <img className="gen-card-media" src={`/api/media/${card.mediaId}`} alt="生成结果" />
-        ) : (
-          <video className="gen-card-media" src={`/api/media/${card.mediaId}`} controls />
-        )
-      )}
-      {card.transcript && <pre className="gen-card-transcript">{card.transcript}</pre>}
       {card.status === 'error' && <div className="gen-card-error">❌ {card.error}</div>}
     </div>
   );
