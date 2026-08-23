@@ -151,7 +151,7 @@ const server = http.createServer(async (req, res) => {
       }
       await routeApi(req, res, url);
     } else {
-      serveStatic(req, res, url);
+      serveStatic(req, res, url, DIST_DIR);
     }
   } catch (err) {
     console.error('[server] 处理请求出错:', err.message);
