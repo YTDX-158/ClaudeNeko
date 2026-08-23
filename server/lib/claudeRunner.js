@@ -20,7 +20,7 @@ export function buildArgs({ prompt, model, effort, claudeSessionId }) {
     'bypassPermissions',
   ];
   if (model) args.push('--model', model);
-  // 思考档位（effort）：DeepSeek V4 原生支持 low/high/max，透传给 claude.exe
+  // 思考档位（effort）：接口只放行 low(省) / max(强力)；标准档不传（DeepSeek 默认 high）
   if (effort) args.push('--effort', effort);
   if (claudeSessionId) args.push('--resume', claudeSessionId);
   return args;

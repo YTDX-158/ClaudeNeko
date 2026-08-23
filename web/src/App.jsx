@@ -71,7 +71,7 @@ export default function App() {
         chat={chat}
         onRename={(title) => activeId && patch(activeId, { title })}
         onBranch={handleBranch}
-        onEffortChange={(effort) => activeId && patch(activeId, { effort })}
+        onEffortChange={(effort) => activeId && patch(activeId, { effort }).catch(() => {})}
       />
       {serverOk === false && (
         <div className="banner" role="alert">

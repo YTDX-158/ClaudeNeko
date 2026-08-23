@@ -17,8 +17,8 @@ async function buildAttachmentContext(attachments) {
     attachments.map(async (a) => {
       const rec = getMedia(a.id);
       if (!rec) return '';
-      const filePath = getMediaPath(rec);
       try {
+        const filePath = getMediaPath(rec); // 移进 try：脏记录缺 fileName 走 catch，不 500
         if (rec.kind === 'image') {
           const buf = await fs.promises.readFile(filePath);
           const r = await describeImage(buf, rec.mime);
@@ -224,8 +224,12 @@ async function handleMessage(ctx, req, res, url) {
   const release = () => {
     if (settled) return;
     settled = true;
-    activeRunners.delete(id);
-    busy.delete(id);
+    // 只有当前 runner 仍是 activeRunners 里登记的那个才清锁：
+    // 若已被 cancel/force-stop 端点删除，或新请求已占位，这里不动，防旧任务清掉新任务的锁
+    if (activeRunners.get(id) === runner) {
+      activeRunners.delete(id);
+      busy.delete(id);
+    }
   };
 
   try {

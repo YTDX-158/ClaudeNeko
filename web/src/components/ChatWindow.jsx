@@ -5,6 +5,7 @@ import CatMascot from './CatMascot.jsx';
 import ClaudeNiang from './ClaudeNiang.jsx';
 import { downloadText, exportSessionText } from '../utils/export.js';
 import { api } from '../api.js';
+import { EFFORT_LEVELS } from '../utils/effort.js';
 
 /**
  * 右侧聊天窗口：标题栏 + 消息流 + 输入区。
@@ -185,13 +186,16 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
           {session?.id && (
             <select
               className="chat-effort"
-              value={session.effort || ''}
+              // 钳制：未知 effort（历史脏数据等）落回标准档显示，避免"显示标准实际跑别的档"
+              value={EFFORT_LEVELS.some((l) => l.id === session.effort) ? session.effort : ''}
               onChange={(e) => onEffortChange?.(e.target.value === '' ? null : e.target.value)}
               title="思考档位（对下一条消息生效）：🪙省=省token · ⭐标准=DeepSeek默认 · 💪强力=深度思考"
             >
-              <option value="">⭐ 标准</option>
-              <option value="low">🪙 省</option>
-              <option value="max">💪 强力</option>
+              {EFFORT_LEVELS.map((lvl) => (
+                <option key={String(lvl.id)} value={lvl.id ?? ''}>
+                  {lvl.label}
+                </option>
+              ))}
             </select>
           )}
           {sid && (

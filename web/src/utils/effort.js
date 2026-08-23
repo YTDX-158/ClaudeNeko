@@ -1,7 +1,7 @@
 /**
  * 思考档位工具：省 / 标准 / 强力 → DeepSeek effort 值。
  * 标准 = null（不传 --effort，走 DeepSeek 默认档），省 = low，强力 = max。
- * 依据 DeepSeek V4 官方：有效档位只有 low / high(默认) / max。
+ * 依据 DeepSeek V4 官方：有效档位 low / max（默认 high，标准档不传即默认）。
  */
 
 export const EFFORT_LEVELS = [

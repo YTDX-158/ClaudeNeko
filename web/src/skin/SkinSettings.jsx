@@ -57,6 +57,11 @@ export default function SkinSettings({ open, onClose }) {
   const [autostart, setAutostart] = useState(null); // null=加载中 / true|false=开关状态
   const [skillsOpen, setSkillsOpen] = useState(false); // 已装 Skills 查看面板
   const [defaultEffort, setDefEffort] = useState(readDefaultEffort); // 全局默认思考档位（省/标准/强力）
+
+  // 打开设置时刷新默认档：组件常驻挂载，运行期 localStorage 可能被改/清，避免显示启动时旧值
+  useEffect(() => {
+    if (open) setDefEffort(readDefaultEffort());
+  }, [open]);
   const fileRef = useRef(null);
 
   // 打开设置时读取开机自启当前状态

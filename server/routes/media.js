@@ -19,7 +19,8 @@ export function mediaHandler(ctx) {
       const name = url.searchParams.get('name') || '';
       const buf = await readRawBody(req);
       if (!buf) return sendJson(res, 413, { error: '文件过大（>50MB）或上传失败' });
-      const r = saveMedia(buf, decodeURIComponent(name));
+      // name 来自 searchParams.get 已百分号解码一次，勿再 decodeURIComponent（文件名含 % 会 URIError → 500）
+      const r = saveMedia(buf, name);
       if (!r.ok) return sendJson(res, 400, { error: r.error });
       return sendJson(res, 201, r.media);
     }

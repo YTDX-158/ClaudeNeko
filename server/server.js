@@ -38,15 +38,36 @@ function runPowerShell(script) {
   return new Promise((resolve) => {
     const child = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true });
     let out = '';
+    let err = '';
+    // 15s 超时：PowerShell 挂起（任务计划服务异常等）时不让 /api/autostart 无限转圈
+    const timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        // 已退出
+      }
+      resolve(out.trim());
+    }, 15000);
     child.stdout.on('data', (d) => (out += d));
-    child.on('close', () => resolve(out.trim()));
-    child.on('error', () => resolve(''));
+    child.stderr.on('data', (d) => (err += d));
+    child.on('close', () => {
+      clearTimeout(timer);
+      // 注册/注销失败的真实原因（Access denied 等）落日志，排障不再靠猜
+      if (err.trim()) console.error('[autostart] powershell stderr:', err.trim());
+      resolve(out.trim());
+    });
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      console.error('[autostart] powershell 启动失败:', e.message);
+      resolve(out.trim());
+    });
   });
 }
 
 async function getAutoStartEnabled() {
+  // 查任务存在且未被禁用（Disabled 状态不算自启开启，前端开关应与真实生效对齐）
   const out = await runPowerShell(
-    `try { Get-ScheduledTask -TaskName '${TASK_LOGON}' -ErrorAction Stop | Out-Null; 'yes' } catch { 'no' }`,
+    `$t = Get-ScheduledTask -TaskName '${TASK_LOGON}' -ErrorAction SilentlyContinue; if ($t -and ("$($t.State)" -ne 'Disabled')) { 'yes' } else { 'no' }`,
   );
   return out === 'yes';
 }

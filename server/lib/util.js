@@ -23,7 +23,9 @@ export function sendJson(res, status, body) {
 
 export function readBody(req) {
   return new Promise((resolve) => {
-    let data = '';
+    // Buffer[] 收集再一次性 utf8 解码：避免 data += chunk 逐块独立解码导致跨包中文字符乱码
+    const chunks = [];
+    let size = 0;
     let tooLarge = false;
     let settled = false;
     const finish = (v) => {
@@ -43,19 +45,29 @@ export function readBody(req) {
     }, 30000);
     req.on('data', (chunk) => {
       if (tooLarge) return;
-      data += chunk;
-      if (data.length > 1e6) {
+      size += chunk.length;
+      if (size > 1e6) {
         tooLarge = true;
         finish({ __tooLarge: true });
         req.pause();
+        return;
       }
+      chunks.push(chunk);
     });
     req.on('end', () => {
+      if (settled) return;
+      let obj = {};
       try {
-        finish(data ? JSON.parse(data) : {});
+        const text = Buffer.concat(chunks).toString('utf8');
+        if (text) {
+          const parsed = JSON.parse(text);
+          // 归一化：null / 数组 / 非对象 → {}（防 body.prompt 崩 + busy 锁泄漏）
+          if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) obj = parsed;
+        }
       } catch {
-        finish({});
+        // 非法 JSON → {}，调用方按缺字段处理（不 500）
       }
+      finish(obj);
     });
     req.on('error', () => finish({}));
   });

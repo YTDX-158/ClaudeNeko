@@ -1,5 +1,6 @@
-' Run ClaudeNeko backend fully hidden (no console window).
-' Called from start-web.bat. Logs to server\log.txt for debugging.
+' Start ClaudeNeko backend fully hidden (no console window).
+' Runs start-node.bat via ShellExecute (NOT cmd /c string parse) so Chinese
+' chars in the path don't get corrupted (same fix as start-server.vbs).
 Set fso = CreateObject("Scripting.FileSystemObject")
 dir = fso.GetParentFolderName(WScript.ScriptFullName)
-CreateObject("Wscript.Shell").Run "cmd /c cd /d """ & dir & """ && node server/server.js >> server\log.txt 2>&1", 0, False
+CreateObject("Wscript.Shell").Run """" & dir & "\start-node.bat""", 0, False
