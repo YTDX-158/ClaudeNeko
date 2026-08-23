@@ -177,5 +177,10 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
     setMessages((prev) => [...prev, msg]);
   }, []);
 
-  return { messages, streaming, responding, recovering, error, send, stop, addMessage };
+  // 替换消息（技能包生成中占位 → 完成结果 / 错误）
+  const replaceMessage = useCallback((id, newMsg) => {
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...newMsg } : m)));
+  }, []);
+
+  return { messages, streaming, responding, recovering, error, send, stop, addMessage, replaceMessage };
 }

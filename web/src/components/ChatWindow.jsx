@@ -1,40 +1,10 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
 import MessageList from './MessageList.jsx';
 import Composer from './Composer.jsx';
 import CatMascot from './CatMascot.jsx';
 import ClaudeNiang from './ClaudeNiang.jsx';
 import { downloadText, exportSessionText } from '../utils/export.js';
 import { api } from '../api.js';
-
-/** 生成结果卡片：生成中（spinner + 生视频计时）/ 错误（完成后转移成 AI 消息气泡） */
-function GenCard({ card }) {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    if (card.status !== 'running' || card.skill !== 'video') return;
-    setElapsed(0);
-    const t = setInterval(() => setElapsed((s) => s + 1), 1000);
-    return () => clearInterval(t);
-  }, [card.status, card.skill]);
-
-  return (
-    <div className={`gen-card gen-${card.status}`}>
-      <div className="gen-card-head">
-        <span className="gen-card-skill">
-          {card.skill === 'image' ? '[🎨 生图]' : card.skill === 'video' ? '[🎬 生视频]' : '[⬇️ 下载]'}
-        </span>
-        {card.model && <span className="gen-card-model">{card.model}</span>}
-        {card.status === 'running' && (
-          <span className="gen-card-status">
-            <span className="gen-spinner" aria-hidden="true" />
-            {card.skill === 'video' ? `正在生成… 已等 ${elapsed}s` : card.skill === 'download' ? '正在下载…' : '正在生成…'}
-          </span>
-        )}
-      </div>
-      {card.prompt && <div className="gen-card-prompt">{card.prompt}</div>}
-      {card.status === 'error' && <div className="gen-card-error">❌ {card.error}</div>}
-    </div>
-  );
-}
 
 /**
  * 右侧聊天窗口：标题栏 + 消息流 + 输入区。
@@ -45,47 +15,55 @@ export default function ChatWindow({ session, chat, onBranch }) {
   const [composerText, setComposerText] = useState('');
   const [quote, setQuote] = useState(null); // { text, role } | null
   const [attachments, setAttachments] = useState([]); // 待发送附件（媒体库快照）
-  const [genCards, setGenCards] = useState([]); // 技能包生成结果（独立展示，不进会话）
   const taRef = useRef(null);
 
   // 技能包发送：生图/生视频（异步轮询）/下载视频（可选转录）
   // 生成中 → genCards 临时气泡；完成后 → 落盘 + 转成 AI 消息气泡进消息流
   const handleGenSend = async (req) => {
-    // 用户提示词作为用户消息进会话（触发命名 + 对话完整；生图/生视频用提示词，下载用 URL）
+    // 用户提示词作为用户消息进会话（触发命名 + 对话完整）
     const userText = (req.prompt || req.url || '').trim();
     if (userText && session?.id) {
       const umsg = { id: `gen-u-${Date.now()}`, role: 'user', text: userText, ts: Date.now() };
       api.appendMediaMessage(session.id, { text: userText, role: 'user' }).catch(() => {});
       if (chat.addMessage) chat.addMessage(umsg);
     }
-    const id = `gen_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const base = { id, skill: req.skill, prompt: req.prompt || req.url || '', model: req.model, status: 'running' };
-    setGenCards((cs) => [base, ...cs]);
+    // 生成中占位（消息流内，带用户生成要求 + spinner）
+    const pid = `gen-p-${Date.now()}`;
+    const label = { image: '[🎨 生图]', video: '[🎬 生视频]', download: '[⬇️ 下载]' }[req.skill] || '';
+    const placeholder = { id: pid, role: 'assistant', text: `正在生成中（${userText}）`, streaming: true, ts: Date.now() };
+    if (chat.addMessage) chat.addMessage(placeholder);
 
+    // 完成：后端落盘 + 占位升级为结果（提示词保留 + 附件）
     const finish = (extra) => {
-      const doneCard = { ...base, status: 'done', ...extra };
-      // 转成 AI 消息气泡：构造 text + 附件 → 后端落盘 + 前端追加进消息流
-      const labels = { image: '[🎨 生图]', video: '[🎬 生视频]', download: '[⬇️ 下载]' };
-      const label = labels[req.skill] || '';
-      const text = doneCard.transcript ? `${label} 视频\n\n${doneCard.transcript}` : doneCard.prompt ? `${label} ${doneCard.prompt}` : label;
-      const attachments = doneCard.mediaId
-        ? [{ id: doneCard.mediaId, name: req.skill === 'image' ? '生成图片' : '生成视频', kind: req.skill === 'image' ? 'image' : 'video' }]
+      const resultText = extra.transcript ? `${label} ${userText}\n\n${extra.transcript}` : `${label} ${userText}`;
+      const attachments = extra.mediaId
+        ? [{ id: extra.mediaId, name: req.skill === 'image' ? '生成图片' : '生成视频', kind: req.skill === 'image' ? 'image' : 'video' }]
         : [];
       if (session?.id && attachments.length) {
-        api.appendMediaMessage(session.id, { text, attachments }).catch(() => {});
+        api.appendMediaMessage(session.id, { text: resultText, attachments }).catch(() => {});
       }
-      if (chat.addMessage) {
-        chat.addMessage({ id: `gen-${Date.now()}`, role: 'assistant', text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) });
-      }
-      setGenCards((cs) => cs.filter((c) => c.id !== id));
+      const resultMsg = { id: `gen-${Date.now()}`, role: 'assistant', text: resultText, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
+      if (chat.replaceMessage) chat.replaceMessage(pid, resultMsg);
     };
-    const fail = (error) => setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'error', error } : c)));
+    // 失败：占位替换为错误
+    const fail = (error) => {
+      const errMsg = { id: `gen-e-${Date.now()}`, role: 'assistant', text: `❌ ${label} 失败：${error}`, ts: Date.now() };
+      if (chat.replaceMessage) chat.replaceMessage(pid, errMsg);
+    };
 
     try {
       if (req.skill === 'image') {
         const r = await api.mediaGenerate({ kind: 'image', prompt: req.prompt, model: req.model, ratio: req.ratio, resolution: req.resolution, sessionId: session?.id });
         finish({ mediaId: r.mediaId });
       } else if (req.skill === 'video') {
+        // 生视频计时：每秒更新占位"已等 N 秒"
+        let sec = 0;
+        const tick = setInterval(() => {
+          sec += 1;
+          if (chat.replaceMessage) {
+            chat.replaceMessage(pid, { id: pid, role: 'assistant', text: `正在生成中（${userText}）已等 ${sec}s`, streaming: true, ts: Date.now() });
+          }
+        }, 1000);
         const r = await api.mediaGenerate({
           kind: 'video',
           prompt: req.prompt,
@@ -100,13 +78,16 @@ export default function ChatWindow({ session, chat, onBranch }) {
             const t = await api.mediaTask(r.taskId);
             if (t.status === 'done') {
               clearInterval(poll);
+              clearInterval(tick);
               finish({ mediaId: t.mediaId });
             } else if (t.status === 'error' || t.status === 'not_found') {
               clearInterval(poll);
+              clearInterval(tick);
               fail(t.error || '生成失败');
             }
           } catch (e) {
             clearInterval(poll);
+            clearInterval(tick);
             fail(e.message);
           }
         }, 4000);
@@ -175,15 +156,6 @@ export default function ChatWindow({ session, chat, onBranch }) {
         onQuote={handleQuote}
         onBranch={onBranch}
       />
-
-      {/* 技能包生成结果（独立区，不进会话消息流） */}
-      {genCards.length > 0 && (
-        <div className="gen-results">
-          {genCards.map((c) => (
-            <GenCard key={c.id} card={c} />
-          ))}
-        </div>
-      )}
 
       {/* 小猫（可拖动）+ claude娘（状态气泡/余额/挂件交互）平级共存 */}
       <CatMascot />
