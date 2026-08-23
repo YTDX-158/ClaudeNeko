@@ -83,7 +83,7 @@ export default function ChatWindow({ session, chat, onBranch }) {
 
     try {
       if (req.skill === 'image') {
-        const r = await api.mediaGenerate({ kind: 'image', prompt: req.prompt, model: req.model, ratio: req.ratio, resolution: req.resolution });
+        const r = await api.mediaGenerate({ kind: 'image', prompt: req.prompt, model: req.model, ratio: req.ratio, resolution: req.resolution, sessionId: session?.id });
         finish({ mediaId: r.mediaId });
       } else if (req.skill === 'video') {
         const r = await api.mediaGenerate({
@@ -93,6 +93,7 @@ export default function ChatWindow({ session, chat, onBranch }) {
           ratio: req.ratio,
           duration: req.duration,
           resolution: req.resolution,
+          sessionId: session?.id,
         });
         const poll = setInterval(async () => {
           try {

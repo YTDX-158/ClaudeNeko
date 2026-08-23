@@ -475,6 +475,35 @@ async function handleMessage(req, res, url) {
   }
 }
 
+/** 每会话生成媒体首次拉 claude：确认 + 留痕（claude 记住本会话在干媒体生成）。
+ *  并行不阻塞生成；失败静默降级（仍标记，不反复拉）。 */
+function maybeStartMediaClaude(session, skill, prompt) {
+  if (!session || session.mediaClaudeInited) return;
+  session.mediaClaudeInited = true;
+  store.update(session.id, { mediaClaudeInited: true });
+  const cPrompt = `这个会话在生成媒体：${skill === 'image' ? '生图' : '生视频'}「${prompt}」。请一句话简短确认，并记住本会话在做 AI 媒体生成。`;
+  const runner = createClaudeRunner({
+    claudeBin: config.claudeBin,
+    prompt: cPrompt,
+    model: session.model || config.defaultModel,
+    claudeSessionId: session.claudeSessionId || undefined,
+    cwd: session.cwd || config.defaultCwd,
+    onEvent: (evt) => {
+      if (evt.type === 'system' && evt.subtype === 'init' && evt.session_id && !session.claudeSessionId) {
+        store.update(session.id, { claudeSessionId: evt.session_id });
+      }
+      if (evt.type === 'assistant' && evt.message?.id) {
+        const text = (evt.message.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+        if (text) {
+          store.appendMessage(session.id, { role: 'assistant', text, ts: Date.now(), claudeMessageId: evt.message.id });
+        }
+      }
+    },
+    onError: () => {}, // 静默：拉 claude 失败不影响生成
+  });
+  // 不 await，后台跑；结果由 onEvent 落盘
+}
+
 async function routeApi(req, res, url) {
   const { pathname } = url;
   const method = req.method;
@@ -518,11 +547,14 @@ async function routeApi(req, res, url) {
     const body = await readBody(req);
     const prompt = String(body.prompt ?? '').trim();
     if (!prompt) return sendJson(res, 400, { error: 'EMPTY_PROMPT', message: '提示词不能为空' });
+    const gsess = body.sessionId ? store.get(String(body.sessionId)) : null;
     try {
       if (body.kind === 'image') {
+        if (gsess) maybeStartMediaClaude(gsess, 'image', prompt);
         return sendJson(res, 200, await media.generateImage({ prompt, model: body.model, ratio: body.ratio, resolution: body.resolution }));
       }
       if (body.kind === 'video') {
+        if (gsess) maybeStartMediaClaude(gsess, 'video', prompt);
         return sendJson(res, 200, await media.generateVideo({ prompt, model: body.model, ratio: body.ratio, duration: body.duration, resolution: body.resolution }));
       }
       return sendJson(res, 400, { error: 'BAD_KIND', message: 'kind 需为 image 或 video' });
