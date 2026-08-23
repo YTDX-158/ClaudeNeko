@@ -51,6 +51,13 @@ export default function ChatWindow({ session, chat, onBranch }) {
   // 技能包发送：生图/生视频（异步轮询）/下载视频（可选转录）
   // 生成中 → genCards 临时气泡；完成后 → 落盘 + 转成 AI 消息气泡进消息流
   const handleGenSend = async (req) => {
+    // 用户提示词作为用户消息进会话（触发命名 + 对话完整；生图/生视频用提示词，下载用 URL）
+    const userText = (req.prompt || req.url || '').trim();
+    if (userText && session?.id) {
+      const umsg = { id: `gen-u-${Date.now()}`, role: 'user', text: userText, ts: Date.now() };
+      api.appendMediaMessage(session.id, { text: userText, role: 'user' }).catch(() => {});
+      if (chat.addMessage) chat.addMessage(umsg);
+    }
     const id = `gen_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const base = { id, skill: req.skill, prompt: req.prompt || req.url || '', model: req.model, status: 'running' };
     setGenCards((cs) => [base, ...cs]);

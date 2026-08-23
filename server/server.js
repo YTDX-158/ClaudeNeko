@@ -635,16 +635,23 @@ async function routeApi(req, res, url) {
     return sendJson(res, 200, { ok: true });
   }
 
-  // 技能包生成结果 → 追加一条 AI 消息进会话（纯展示，无 claudeMessageId，不干扰 Claude 会话）
+  // 技能包消息：生成前用户提示词（role=user，触发命名）+ 生成结果 AI 消息（role=assistant 默认）
   const mmsg = pathname.match(/^\/api\/sessions\/([^/]+)\/media-message$/);
   if (mmsg && method === 'POST') {
     const sid = mmsg[1];
-    if (!store.get(sid)) return sendJson(res, 404, { error: '会话不存在' });
+    const session = store.get(sid);
+    if (!session) return sendJson(res, 404, { error: '会话不存在' });
     const body = await readBody(req);
+    const role = body.role === 'user' ? 'user' : 'assistant';
     const text = String(body.text ?? '').trim();
     const attachments = Array.isArray(body.attachments) ? body.attachments.filter((a) => a && a.id) : [];
     if (!text && !attachments.length) return sendJson(res, 400, { error: '内容为空' });
-    store.appendMessage(sid, { role: 'assistant', text, attachments, ts: Date.now() });
+    store.appendMessage(sid, { role, text, attachments, ts: Date.now() });
+    // 新会话首条用户消息触发自动命名（照 handleMessage：text 或附件名前 15 字）
+    if (role === 'user' && session.title === '新会话') {
+      const nameSource = text || attachments[0]?.name || '生成';
+      store.update(sid, { title: nameSource.slice(0, 15) });
+    }
     return sendJson(res, 201, { ok: true });
   }
 
