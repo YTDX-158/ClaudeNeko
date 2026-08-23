@@ -52,7 +52,10 @@ export default function ChatWindow({ session, chat, onBranch }) {
 
     // 完成：后端落盘 + 占位升级为结果（提示词保留 + 附件）
     const finish = (extra) => {
-      const resultText = extra.transcript ? `${label} ${userText}\n\n${extra.transcript}` : `${label} ${userText}`;
+      const resultText =
+        `${label} ${userText}` +
+        (extra.transcript ? `\n\n${extra.transcript}` : '') +
+        (extra.transcribeError ? `\n⚠️ 转录失败：${extra.transcribeError}` : '');
       const attachments = extra.mediaId
         ? [{ id: extra.mediaId, name: req.skill === 'image' ? '生成图片' : '生成视频', kind: req.skill === 'image' ? 'image' : 'video' }]
         : [];
@@ -110,7 +113,7 @@ export default function ChatWindow({ session, chat, onBranch }) {
         }, 4000);
       } else if (req.skill === 'download') {
         const r = await api.mediaDownload({ url: req.url, transcribe: req.transcribe });
-        finish({ mediaId: r.mediaId, transcript: r.transcript });
+        finish({ mediaId: r.mediaId, transcript: r.transcript, transcribeError: r.transcribeError });
       }
     } catch (e) {
       if (tick) clearInterval(tick); // 提交失败也清理计时器（原来只清理轮询，漏了 tick）

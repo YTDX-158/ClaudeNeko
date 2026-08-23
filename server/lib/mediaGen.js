@@ -18,7 +18,7 @@ export class ApiError extends Error {
 }
 
 /**
- * @param {{ doubaoKey:string, imageModels:any[], videoModels:any[], ratios:string[], imageSizes:object, downloadBlacklist:string[], transcribeEnabled:boolean }} cfg
+ * @param {{ doubaoKey:string, imageModels:any[], videoModels:any[], ratios:string[], imageResolutions:any[], downloadBlacklist:string[], transcribeEnabled:boolean }} cfg
  */
 /** 生图尺寸计算：目标像素档 × 比例 → clamp 边长≤4096 + 校验≥下限（Seedream 5.0）。
  *  标签是档位不是精确像素：非 1:1 的 4K = 该比例下 clamped 的最大合法尺寸。 */
@@ -57,7 +57,6 @@ export function createMediaService(cfg) {
   const { doubaoKey, imageModels, videoModels, ratios, imageResolutions, downloadBlacklist, transcribeEnabled } = cfg;
   const tasks = new Map(); // taskId -> {status, mediaId?, error?, ts}
   let active = 0;
-  let seq = 0;
 
   const headers = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${doubaoKey}` });
 
@@ -174,7 +173,16 @@ export function createMediaService(cfg) {
       if (st === 'succeeded') {
         const url = extractVideoUrl(j);
         let mediaId = null;
-        if (url) mediaId = await downloadToMedia(url, 'mp4');
+        try {
+          if (url) mediaId = await downloadToMedia(url, 'mp4');
+        } catch (e) {
+          // 生成成功但结果下载失败 → 直接判任务失败（防卡 running 到 TTL）
+          t.status = 'error';
+          t.error = e.message;
+          t.ts = Date.now();
+          active = Math.max(0, active - 1);
+          return t;
+        }
         t.status = 'done';
         t.mediaId = mediaId;
         t.ts = Date.now();
@@ -204,6 +212,7 @@ export function createMediaService(cfg) {
     }
     const mediaId = await downloadToMedia(url, 'mp4');
     let transcript;
+    let transcribeError;
     if (transcribe) {
       if (!transcribeEnabled) {
         throw new ApiError('TRANSCRIBE_DISABLED', '转录未开启');
@@ -211,10 +220,10 @@ export function createMediaService(cfg) {
       const rec = getMedia(mediaId);
       const buf = fs.readFileSync(getMediaPath(rec));
       const r = await transcribeAudio(buf); // faster-whisper 直接解码音轨（PyAV 读内容不依赖扩展名）
-      if (!r.ok) throw new ApiError('TRANSCRIBE_FAIL', r.error);
-      transcript = r.text;
+      if (r.ok) transcript = r.text;
+      else transcribeError = r.error; // 转录失败不丢视频：视频保留 + 返回失败提示
     }
-    return { mediaId, transcript };
+    return { mediaId, transcript, transcribeError };
   }
 
   function extractVideoUrl(d) {
