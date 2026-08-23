@@ -44,16 +44,35 @@ export default function ChatWindow({ session, chat, onBranch }) {
   const taRef = useRef(null);
 
   // 技能包发送：生图/生视频（异步轮询）/下载视频（可选转录）
+  // 生成中 → genCards 临时气泡；完成后 → 落盘 + 转成 AI 消息气泡进消息流
   const handleGenSend = async (req) => {
     const id = `gen_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    setGenCards((cs) => [
-      { id, skill: req.skill, prompt: req.prompt || req.url || '', model: req.model, status: 'running' },
-      ...cs,
-    ]);
+    const base = { id, skill: req.skill, prompt: req.prompt || req.url || '', model: req.model, status: 'running' };
+    setGenCards((cs) => [base, ...cs]);
+
+    const finish = (extra) => {
+      const doneCard = { ...base, status: 'done', ...extra };
+      // 转成 AI 消息气泡：构造 text + 附件 → 后端落盘 + 前端追加进消息流
+      const labels = { image: '[🎨 生图]', video: '[🎬 生视频]', download: '[⬇️ 下载]' };
+      const label = labels[req.skill] || '';
+      const text = doneCard.transcript ? `${label} 视频\n\n${doneCard.transcript}` : doneCard.prompt ? `${label} ${doneCard.prompt}` : label;
+      const attachments = doneCard.mediaId
+        ? [{ id: doneCard.mediaId, name: req.skill === 'image' ? '生成图片' : '生成视频', kind: req.skill === 'image' ? 'image' : 'video' }]
+        : [];
+      if (session?.id && attachments.length) {
+        api.appendMediaMessage(session.id, { text, attachments }).catch(() => {});
+      }
+      if (chat.addMessage) {
+        chat.addMessage({ id: `gen-${Date.now()}`, role: 'assistant', text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) });
+      }
+      setGenCards((cs) => cs.filter((c) => c.id !== id));
+    };
+    const fail = (error) => setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'error', error } : c)));
+
     try {
       if (req.skill === 'image') {
         const r = await api.mediaGenerate({ kind: 'image', prompt: req.prompt, model: req.model, ratio: req.ratio, resolution: req.resolution });
-        setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'done', mediaId: r.mediaId } : c)));
+        finish({ mediaId: r.mediaId });
       } else if (req.skill === 'video') {
         const r = await api.mediaGenerate({
           kind: 'video',
@@ -68,24 +87,22 @@ export default function ChatWindow({ session, chat, onBranch }) {
             const t = await api.mediaTask(r.taskId);
             if (t.status === 'done') {
               clearInterval(poll);
-              setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'done', mediaId: t.mediaId } : c)));
+              finish({ mediaId: t.mediaId });
             } else if (t.status === 'error' || t.status === 'not_found') {
               clearInterval(poll);
-              setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'error', error: t.error || '生成失败' } : c)));
+              fail(t.error || '生成失败');
             }
           } catch (e) {
             clearInterval(poll);
-            setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'error', error: e.message } : c)));
+            fail(e.message);
           }
         }, 4000);
       } else if (req.skill === 'download') {
         const r = await api.mediaDownload({ url: req.url, transcribe: req.transcribe });
-        setGenCards((cs) =>
-          cs.map((c) => (c.id === id ? { ...c, status: 'done', mediaId: r.mediaId, transcript: r.transcript } : c)),
-        );
+        finish({ mediaId: r.mediaId, transcript: r.transcript });
       }
     } catch (e) {
-      setGenCards((cs) => cs.map((c) => (c.id === id ? { ...c, status: 'error', error: e.message } : c)));
+      fail(e.message);
     }
   };
 

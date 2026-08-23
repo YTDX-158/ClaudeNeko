@@ -35,6 +35,9 @@ export const api = {
     request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteSession: (id) => request(`/sessions/${id}`, { method: 'DELETE' }),
   listMessages: (id) => request(`/sessions/${id}/messages`),
+  // 技能包生成结果 → 追加一条 AI 消息（text + 附件媒体）进会话
+  appendMediaMessage: (id, body) =>
+    request(`/sessions/${id}/media-message`, { method: 'POST', body: JSON.stringify(body) }),
   // 分支：从某个会话的指定消息处新建会话，返回新会话（含已复制历史）
   createBranch: (parentId, fromMsgId) =>
     request('/sessions/branch', {

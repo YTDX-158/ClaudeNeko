@@ -172,5 +172,10 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
     abortRef.current?.abort();
   }, [sessionId]);
 
-  return { messages, streaming, responding, recovering, error, send, stop };
+  // 外部追加消息（技能包生成结果→AI 气泡）：直接进消息流；落盘由调用方走后端 media-message 端点
+  const addMessage = useCallback((msg) => {
+    setMessages((prev) => [...prev, msg]);
+  }, []);
+
+  return { messages, streaming, responding, recovering, error, send, stop, addMessage };
 }

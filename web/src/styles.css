@@ -1221,9 +1221,9 @@ body {
 .skillbar-opts select, .skillbar-url { font-size: 12px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border, #ddd); background: var(--bg, #fff); color: var(--text, #333); }
 .skillbar-url { flex: 1; min-width: 160px; }
 .skillbar-check { font-size: 12px; display: flex; align-items: center; gap: 4px; color: var(--text, #333); cursor: pointer; }
-/* 生成结果卡片（独立展示，不进会话） */
-.gen-results { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 8px; max-height: 40vh; overflow-y: auto; }
-.gen-card { border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 10px; background: var(--card-bg, rgba(0,0,0,.03)); }
+/* 生成结果（生成中气泡，进消息流；完成即转成 AI 消息） */
+.gen-results { display: flex; flex-direction: column; gap: 6px; padding: 0 16px 8px; max-height: 30vh; overflow-y: auto; align-items: flex-start; }
+.gen-card { max-width: 72%; border: 1px solid var(--border, #ddd); border-radius: 12px; padding: 8px 12px; background: var(--card-bg, rgba(0,0,0,.04)); }
 .gen-card-head { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 6px; }
 .gen-card-skill { font-weight: 600; }
 .gen-card-model { color: #888; }

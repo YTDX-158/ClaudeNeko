@@ -635,6 +635,19 @@ async function routeApi(req, res, url) {
     return sendJson(res, 200, { ok: true });
   }
 
+  // 技能包生成结果 → 追加一条 AI 消息进会话（纯展示，无 claudeMessageId，不干扰 Claude 会话）
+  const mmsg = pathname.match(/^\/api\/sessions\/([^/]+)\/media-message$/);
+  if (mmsg && method === 'POST') {
+    const sid = mmsg[1];
+    if (!store.get(sid)) return sendJson(res, 404, { error: '会话不存在' });
+    const body = await readBody(req);
+    const text = String(body.text ?? '').trim();
+    const attachments = Array.isArray(body.attachments) ? body.attachments.filter((a) => a && a.id) : [];
+    if (!text && !attachments.length) return sendJson(res, 400, { error: '内容为空' });
+    store.appendMessage(sid, { role: 'assistant', text, attachments, ts: Date.now() });
+    return sendJson(res, 201, { ok: true });
+  }
+
   const m = pathname.match(/^\/api\/sessions\/([^/]+)(\/messages)?$/);
   if (m) {
     const [, id, suffix] = m;
