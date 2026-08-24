@@ -15,6 +15,14 @@ const MODELS = [
 
 const DEFAULT_PORT = 4000;
 
+/**
+ * claude 子进程默认工作目录。
+ * 指向 C:\Windows\System32 → claude 会加载该目录对应的记忆夹（C--Windows-System32，
+ * 用户的全部画像/规则/知识库），让 Neko 里的对话和桌面 CLI 一样"认识用户"。
+ * 2026-08-24 记忆修复：此前默认 os.homedir() → 对应记忆夹是空的，对话"失忆"。
+ */
+const DEFAULT_WORK_CWD = 'C:\\Windows\\System32';
+
 /* ---------- 媒体生成配置（BYOK：豆包 key 从 env / ~/.claude/settings.json 读，不硬编码） ---------- */
 // 豆包账号级 key：优先 DOUBAO_API_KEY，VISION_API_KEY 兜底（同账号视觉 key 可调 Seedream/Seedance，零额外配置）
 function readDoubaoKey() {
@@ -95,7 +103,7 @@ export function resolveConfig() {
     claudeBin: findClaudeBin(),
     models: MODELS,
     defaultModel: MODELS[0].id,
-    defaultCwd: os.homedir(),
+    defaultCwd: DEFAULT_WORK_CWD,
     dataDir,
     port: Number(process.env.PORT) || DEFAULT_PORT,
     media: { ...MEDIA, doubaoKey: readDoubaoKey() },

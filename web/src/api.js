@@ -46,6 +46,12 @@ export const api = {
   getAutostart: () => request('/autostart'),
   setAutostart: (enabled) => request('/autostart', { method: 'POST', body: JSON.stringify({ enabled }) }),
 
+  // ---- 远程访问（手机/公网连接，需配对码；默认关） ----
+  remoteStatus: () => request('/remote/status'),
+  remoteOn: () => request('/remote/on', { method: 'POST' }),
+  remoteOff: () => request('/remote/off', { method: 'POST' }),
+  remoteRegenerateCode: () => request('/remote/regenerate-code', { method: 'POST' }),
+
   // ---- 技能包：生成媒体 / 下载视频（POST 用自定义提取友好 message） ----
   mediaConfig: () => request('/media/config'),
   mediaGenerate: async (body) => {

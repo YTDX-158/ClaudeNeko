@@ -17,9 +17,16 @@ export default function Sidebar({
   onOpenSettings,
   onOpenMedia,
   onRename,
+  drawerOpen = false,
+  onDrawerClose = () => {},
 }) {
+  // 移动端：选中会话后自动收起抽屉（桌面无抽屉，onDrawerClose 空操作）
+  const selectSession = (id) => {
+    setActiveId(id);
+    onDrawerClose();
+  };
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${drawerOpen ? ' drawer-open' : ''}`}>
       <div className="sidebar-header">
         <span className="logo">
           Claude<span className="logo-accent">Neko</span>
@@ -29,7 +36,7 @@ export default function Sidebar({
         </button>
       </div>
 
-      <button className="new-btn-primary" title="新建会话" onClick={onCreate}>
+      <button className="new-btn-primary" title="新建会话" onClick={() => { onCreate(); onDrawerClose(); }}>
         ＋ 新建会话
       </button>
 
@@ -48,7 +55,7 @@ export default function Sidebar({
             <SessionList
               sessions={sessions}
               activeId={activeId}
-              onSelect={setActiveId}
+              onSelect={selectSession}
               onRemove={remove}
               onRename={onRename}
             />

@@ -11,12 +11,17 @@ import { sendJson, readBody, serveStatic } from './lib/util.js';
 import { systemHandler } from './routes/system.js';
 import { mediaHandler } from './routes/media.js';
 import { sessionsHandler } from './routes/sessions.js';
+import { remoteHandler } from './routes/remote.js';
+import { createRemote } from './lib/remote/index.js';
+import * as pairing from './lib/remote/pairing.js';
 
 const config = resolveConfig();
 const media = createMediaService(config.media);
 const store = new SessionStore(config.dataDir);
 const busy = new Set(); // per-session 在途锁
 const activeRunners = new Map(); // id -> runner（取消用）
+const remote = createRemote({ pairing }); // 远程访问生命周期（默认关）
+const remoteRouter = remoteHandler({ pairing, remote });
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(SERVER_DIR, '..', 'web', 'dist');
@@ -152,6 +157,9 @@ async function routeApi(req, res, url) {
   const sessRes = await sessionsRouter(req, res, url);
   if (sessRes !== null) return;
 
+  const remoteRes = await remoteRouter(req, res, url);
+  if (remoteRes !== null) return;
+
   sendJson(res, 404, { error: '接口不存在' });
 }
 
@@ -192,3 +200,23 @@ server.listen(config.port, '127.0.0.1', () => {
   console.log(`[server] ClaudeNeko 后端已启动: http://127.0.0.1:${config.port}`);
   console.log(`[server] claude.exe: ${config.claudeBin}`);
 });
+
+/* ---------- 退出清理：杀隧道 + 关远程代理，避免 Windows 下孤儿残留 ---------- */
+function cleanupRemote() {
+  try {
+    remote.stop();
+  } catch {
+    // 忽略
+  }
+}
+process.on('exit', cleanupRemote);
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  try {
+    process.on(sig, () => {
+      cleanupRemote();
+      process.exit(0);
+    });
+  } catch {
+    // 平台不支持该信号
+  }
+}

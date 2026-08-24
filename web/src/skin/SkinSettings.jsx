@@ -57,6 +57,8 @@ export default function SkinSettings({ open, onClose }) {
   const [autostart, setAutostart] = useState(null); // null=加载中 / true|false=开关状态
   const [skillsOpen, setSkillsOpen] = useState(false); // 已装 Skills 查看面板
   const [defaultEffort, setDefEffort] = useState(readDefaultEffort); // 全局默认思考档位（省/标准/强力）
+  const [remote, setRemote] = useState(null); // null=加载中 / {enabled, publicUrl, pairCode}
+  const [remoteBusy, setRemoteBusy] = useState(false); // 开关切换中（防连点）
 
   // 打开设置时刷新默认档：组件常驻挂载，运行期 localStorage 可能被改/清，避免显示启动时旧值
   useEffect(() => {
@@ -72,6 +74,14 @@ export default function SkinSettings({ open, onClose }) {
     return () => { cancelled = true; };
   }, [open]);
 
+  // 打开设置时读取远程访问状态（enabled/publicUrl/pairCode）
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.remoteStatus().then((r) => { if (!cancelled) setRemote(r); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open]);
+
   const toggleAutostart = async () => {
     const next = !autostart;
     setAutostart(next); // 乐观更新
@@ -80,6 +90,33 @@ export default function SkinSettings({ open, onClose }) {
       if (r.enabled !== next) setAutostart(r.enabled);
     } catch {
       setAutostart(!next); // 失败回滚
+    }
+  };
+
+  // 远程访问开关：开启=起代理+隧道+生成配对码；关闭=全停
+  const toggleRemote = async () => {
+    if (remoteBusy) return;
+    const next = !(remote?.enabled ?? false);
+    setRemoteBusy(true);
+    try {
+      const r = next ? await api.remoteOn() : await api.remoteOff();
+      setRemote(r);
+    } catch {
+      // 失败保持原状态，给用户可感知的反馈
+      const e = (remote?.enabled ?? false) ? '关闭失败' : '开启失败（可能 cloudflared 未装）';
+      alert(e);
+    } finally {
+      setRemoteBusy(false);
+    }
+  };
+
+  // 重新生成配对码（换新码 = 旧设备全部失效，需重新配对）
+  const regenerateCode = async () => {
+    try {
+      const r = await api.remoteRegenerateCode();
+      setRemote((prev) => ({ ...prev, pairCode: r.pairCode }));
+    } catch {
+      // 静默
     }
   };
 
@@ -380,6 +417,31 @@ export default function SkinSettings({ open, onClose }) {
                     {autostart === null ? '…' : autostart ? '开 ✓' : '关'}
                   </button>
                 </div>
+                <div className="skin-row">
+                  <span>远程访问（手机/公网连接，需配对码；桌面本地不受影响）</span>
+                  <button
+                    className={`skin-btn${remote?.enabled ? ' active' : ''}`}
+                    onClick={toggleRemote}
+                    disabled={remote === null || remoteBusy}
+                  >
+                    {remote === null ? '…' : remoteBusy ? '…' : remote?.enabled ? '开 ✓' : '关'}
+                  </button>
+                </div>
+                {remote?.enabled && (
+                  <div className="skin-section" style={{ marginTop: 8 }}>
+                    <div className="skin-hint">
+                      手机浏览器打开公网地址，输入配对码即可（配对一次，之后免输）。
+                    </div>
+                    <div className="skin-hint" style={{ wordBreak: 'break-all' }}>
+                      📱 {remote.publicUrl || '（未获取到公网地址，可能 cloudflared 未装，仅局域网可用）'}
+                    </div>
+                    <div className="skin-row">
+                      <span>配对码：{remote.pairCode ?? '—'}</span>
+                      <button className="skin-btn" onClick={regenerateCode} disabled={remoteBusy}>换码</button>
+                    </div>
+                    <div className="skin-hint">⚠️ 换码后旧设备全部失效需重配。远程下禁用了「下载视频」以防安全风险。</div>
+                  </div>
+                )}
                 <div className="skin-row">
                   <span>猫猫（右下角粒子猫，可拖动）</span>
                   <button

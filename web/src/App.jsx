@@ -16,6 +16,9 @@ export default function App() {
   const [serverOk, setServerOk] = useState(null);
   const [skinOpen, setSkinOpen] = useState(false);
   const [mediaOpen, setMediaOpen] = useState(false);
+  // 移动端侧栏抽屉开关（窄屏默认收起，点汉堡展开；宽屏无感）
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const closeSidebar = () => setSidebarOpen(false);
 
   useEffect(() => {
     const check = () => {
@@ -59,12 +62,26 @@ export default function App() {
     <div className="app">
       {/* WebGL 流体背景（设为「流体」壁纸时生效） */}
       <FluidCanvas />
+      {/* 移动端汉堡按钮：窄屏展开侧栏抽屉；宽屏隐藏（display:none） */}
+      <button
+        className="mobile-menu-btn"
+        aria-label="打开侧栏"
+        onClick={() => setSidebarOpen(true)}
+      >
+        ☰
+      </button>
+      {/* 移动端侧栏遮罩：抽屉开着时点空白收起 */}
+      {sidebarOpen && (
+        <div className="sidebar-scrim" onClick={closeSidebar} />
+      )}
       <Sidebar
         {...sessions}
-        onCreate={handleCreate}
+        onCreate={() => { handleCreate(); closeSidebar(); }}
         onOpenSettings={() => setSkinOpen(true)}
         onOpenMedia={() => setMediaOpen(true)}
         onRename={(id, title) => patch(id, { title })}
+        drawerOpen={sidebarOpen}
+        onDrawerClose={closeSidebar}
       />
       <ChatWindow
         session={activeSession}
@@ -72,6 +89,7 @@ export default function App() {
         onRename={(title) => activeId && patch(activeId, { title })}
         onBranch={handleBranch}
         onEffortChange={(effort) => activeId && patch(activeId, { effort }).catch(() => {})}
+        onClickCapture={closeSidebar}
       />
       {serverOk === false && (
         <div className="banner" role="alert">
