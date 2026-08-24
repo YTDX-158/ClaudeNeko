@@ -29,13 +29,19 @@ export function createRemote(deps) {
 
       _startPromise = (async () => {
         // 1) 起远程代理（监听 127.0.0.1:4001）
+        // 注意：server.listen 的端口冲突（EADDRINUSE）是异步 'error' 事件，
+        // 同步 try/catch 抓不到，所以由 startRemoteProxy 用 Promise 包装：
+        // 返回 { server }（成功）或抛错（失败），失败时正确置 proxy=null。
+        let server;
         try {
-          proxy = startRemoteProxy({ port: REMOTE_PORT, pairing: deps.pairing });
+          const r = await startRemoteProxy({ port: REMOTE_PORT, pairing: deps.pairing });
+          server = r.server;
         } catch (err) {
           console.error('[remote] 代理启动失败:', err.message);
           proxy = null;
           return { url: null };
         }
+        proxy = server;
 
         // 2) 起 cloudflared 隧道（失败/未安装 → 仅局域网可用）
         const t = await startTunnel(REMOTE_PORT);

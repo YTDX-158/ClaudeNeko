@@ -145,11 +145,24 @@ export function startRemoteProxy({ port, pairing }) {
       if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' });
       res.end('代理连接失败');
     });
+    // 连接清理：任一端断开都销毁另一端的连接，防 SSE 长连接/大文件挂死泄漏
+    res.on('close', () => { try { upstream.destroy(); } catch { /* 已关 */ } });
+    req.on('aborted', () => { try { upstream.destroy(); } catch { /* 已关 */ } });
     req.pipe(upstream);
   });
 
-  server.listen(port, '127.0.0.1', () => {
-    console.log(`[remote] 远程代理已启动: http://127.0.0.1:${port}（仅配对凭证可过）`);
+  // 返回 Promise：端口冲突（EADDRINUSE）是异步 'error' 事件，同步 try/catch 抓不到，
+  // 这里监听 listening/error 包装成成功/失败，让调用方（index.js）能正确判断启动是否成功。
+  return new Promise((resolve, reject) => {
+    const onErr = (err) => {
+      try { server.close(); } catch { /* 已关 */ }
+      reject(err);
+    };
+    server.once('error', onErr);
+    server.listen(port, '127.0.0.1', () => {
+      server.removeListener('error', onErr);
+      console.log(`[remote] 远程代理已启动: http://127.0.0.1:${port}（仅配对凭证可过）`);
+      resolve({ server });
+    });
   });
-  return server;
 }
