@@ -6,6 +6,12 @@ rem Already running? skip start, just open browser.
 curl -s --max-time 2 http://127.0.0.1:4000/api/health >nul 2>&1
 if %errorlevel%==0 goto ready
 
+rem Fresh clone? Friendly prompt if dependencies not installed.
+if not exist "node_modules" (
+  echo [ClaudeNeko] 未找到依赖，先执行 npm install ...
+  call npm install
+)
+
 rem Rebuild when dist missing OR any web\src file is newer than dist (covers source edits).
 set NEEDBUILD=0
 for /f %%i in ('powershell -NoProfile -Command "$s=Get-ChildItem ''web\src'' -Recurse -File -EA SilentlyContinue|Sort-Object LastWriteTime -Descending|Select-Object -First 1;if(!$s){''0'';exit};$d=Get-Item ''web\dist\index.html'' -EA SilentlyContinue;if(!$d){''1'';exit};if($s.LastWriteTime -gt $d.LastWriteTime){''1''}else{''0''}"') do set NEEDBUILD=%%i

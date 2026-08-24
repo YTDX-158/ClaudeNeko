@@ -441,7 +441,7 @@ export default function SkinSettings({ open, onClose }) {
                       手机浏览器打开公网地址，输入配对码即可（配对一次，之后免输）。
                     </div>
                     <div className="skin-hint" style={{ wordBreak: 'break-all' }}>
-                      📱 {remote.publicUrl || '（未获取到公网地址，可能 cloudflared 未装，仅局域网可用）'}
+                      📱 {remote.publicUrl || '（未获取到公网地址，可能 cloudflared 未装，远程不可用）'}
                     </div>
                     <div className="skin-row">
                       <span>配对码：{remote.pairCode ?? '—'}</span>

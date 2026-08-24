@@ -20,7 +20,7 @@ const media = createMediaService(config.media);
 const store = new SessionStore(config.dataDir);
 const busy = new Set(); // per-session 在途锁
 const activeRunners = new Map(); // id -> runner（取消用）
-const remote = createRemote({ pairing }); // 远程访问生命周期（默认关）
+const remote = createRemote({ pairing, config }); // 远程访问生命周期（默认关）
 const remoteRouter = remoteHandler({ pairing, remote });
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));

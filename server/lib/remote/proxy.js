@@ -18,8 +18,6 @@ import http from 'node:http';
 import { randomBytes, createHash } from 'node:crypto';
 import { readBody } from '../util.js';
 
-/** 业务端口（本地 ClaudeNeko 主服务） */
-const TARGET_PORT = 4000;
 const AUTH_COOKIE = 'neko_auth';
 /** 远程模式下禁用的路径（SSRF 等高风险接口） */
 const BLOCKED_PATHS = new Set(['/api/media/download']);
@@ -84,10 +82,10 @@ function getCookie(header, name) {
 
 /**
  * 启动远程代理。
- * @param {{port:number, pairing:{hasSession:(h:string)=>boolean, readPairCode:()=>string|null}}} opts
+ * @param {{port:number, targetPort:number, pairing:{hasSession:(h:string)=>boolean, readPairCode:()=>string|null}}} opts
  * @returns {http.Server}
  */
-export function startRemoteProxy({ port, pairing }) {
+export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
   const server = http.createServer(async (req, res) => {
     const url = req.url.split('?')[0];
     const method = req.method;
@@ -150,13 +148,12 @@ export function startRemoteProxy({ port, pairing }) {
     const headers = { ...req.headers };
     delete headers.host; // 让 Node 重算为目标端口 host
     delete headers.connection;
-    // 关键：把 Origin/Referer 重写成 localhost——业务端口 4000 有"来源校验"
-    // （isLocalRequest），手机请求带公网 Origin 会被 403。代理已通过配对鉴权，
-    // 转发时应伪装成本机来源，让业务校验放行。
-    if (headers.origin) headers.origin = 'http://127.0.0.1:4000';
-    if (headers.referer) headers.referer = 'http://127.0.0.1:4000/';
+    // 关键：把 Origin/Referer 重写成 localhost——业务端口有"来源校验"（isLocalRequest），
+    // 手机请求带公网 Origin 会被 403。代理已通过配对鉴权，转发时应伪装成本机来源。
+    if (headers.origin) headers.origin = `http://127.0.0.1:${targetPort}`;
+    if (headers.referer) headers.referer = `http://127.0.0.1:${targetPort}/`;
     const upstream = http.request(
-      { host: '127.0.0.1', port: TARGET_PORT, path: req.url, method, headers },
+      { host: '127.0.0.1', port: targetPort, path: req.url, method, headers },
       (up) => {
         // 转发上游响应头；若上游是 SSE（text/event-stream）headers 会带好，透传即可
         res.writeHead(up.statusCode, up.headers);

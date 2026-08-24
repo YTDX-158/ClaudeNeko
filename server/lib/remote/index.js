@@ -4,12 +4,12 @@ import { spawn } from 'node:child_process';
 import { startRemoteProxy } from './proxy.js';
 import { startTunnel } from './tunnel.js';
 
-/** 远程代理端口（独立于业务 4000；cloudflared 指向这里） */
-export const REMOTE_PORT = 4001;
+/** 远程代理端口（独立于业务端口；cloudflared 指向这里）。环境变量可覆盖。 */
+export const REMOTE_PORT = Number(process.env.NEKO_REMOTE_PORT) || 4001;
 
 /**
  * 创建远程管理器。
- * @param {{ pairing: object }} deps
+ * @param {{ pairing: object, config: { port: number } }} deps
  */
 export function createRemote(deps) {
   let proxy = null;
@@ -34,7 +34,11 @@ export function createRemote(deps) {
         // 返回 { server }（成功）或抛错（失败），失败时正确置 proxy=null。
         let server;
         try {
-          const r = await startRemoteProxy({ port: REMOTE_PORT, pairing: deps.pairing });
+          const r = await startRemoteProxy({
+            port: REMOTE_PORT,
+            pairing: deps.pairing,
+            targetPort: deps.config?.port ?? 4000, // 业务端口跟随 config，改 PORT 不断链
+          });
           server = r.server;
         } catch (err) {
           console.error('[remote] 代理启动失败:', err.message);

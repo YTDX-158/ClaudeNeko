@@ -3,8 +3,8 @@
 ## v1.5.0（2026-08-24）—— 记忆修复 + 远程访问 📱
 
 ### 🧠 记忆修复（对话变聪明）
-- **工作目录指向 `C:\Windows\System32`**：claude 子进程默认从主目录改为 System32 → 加载你的**全套记忆**（画像/规则/知识库 1.8MB）
-- 之前默认 `os.homedir()` → 对应记忆夹是空的，Neko 对话"失忆"；现在和桌面 CLI 一样认识用户
+- **工作目录可配置（`NEKO_WORK_CWD`）**：claude 子进程默认在主目录，需要"加载某个目录的记忆"时设环境变量 `NEKO_WORK_CWD` 指向该目录（如 `C:\Windows\System32`，加载桌面 CLI 那套记忆 → 对话"认识用户"）
+- 面向市场：默认 `os.homedir()`（大众合理值），不硬编码个人路径
 - **实测**：新会话问"你是谁的用户" → 准确答出「仰天大笑 · 某高校 · 数媒 23级」✓
 - **老会话不迁**：已聊过的会话 cwd 保持原样（避免原生会话上下文丢失）；新会话自动聪明
 
@@ -22,7 +22,7 @@
 - 聊天区全宽 + 隐藏模型标签 + 输入区安全区适配
 
 ### 🔧 涉及改动
-- `server/lib/settings.js`：新增 `DEFAULT_WORK_CWD = 'C:\Windows\System32'`，defaultCwd 改用它
+- `server/lib/settings.js`：新增 `NEKO_WORK_CWD` 环境变量支持（默认 `os.homedir()`），替代硬编码工作目录
 - `server/lib/remote/`（新目录）：`pairing.js`（配对凭证存储，改路径+动态码）/ `tunnel.js`（搬 @inksnow/c2web MIT）/ `proxy.js`（Cookie 鉴权 + SSE pipe 转发 + 下载禁用）/ `index.js`（生命周期管理）
 - `server/routes/remote.js`：远程状态/开关/换码 API
 - `server/server.js`：接线 remote + 退出清理（杀隧道防孤儿）

@@ -17,11 +17,23 @@ const DEFAULT_PORT = 4000;
 
 /**
  * claude 子进程默认工作目录。
- * 指向 C:\Windows\System32 → claude 会加载该目录对应的记忆夹（C--Windows-System32，
- * 用户的全部画像/规则/知识库），让 Neko 里的对话和桌面 CLI 一样"认识用户"。
- * 2026-08-24 记忆修复：此前默认 os.homedir() → 对应记忆夹是空的，对话"失忆"。
+ * 面向市场：不做个人硬编码——默认 os.homedir()（大众合理值），
+ * 需要自定义（如"加载某个目录的记忆"）时用环境变量 NEKO_WORK_CWD 覆盖。
+ * 本人使用：在 ~/.claude/settings.json 的 env 里设 NEKO_WORK_CWD=C:\Windows\System32，
+ * claude 即加载该目录对应记忆夹（用户画像/规则/知识库），让 Neko 对话"认识用户"。
  */
-const DEFAULT_WORK_CWD = 'C:\\Windows\\System32';
+function resolveDefaultCwd() {
+  if (process.env.NEKO_WORK_CWD) return process.env.NEKO_WORK_CWD;
+  // 兼容老配置：曾硬编码在代码里，现在从 ~/.claude/settings.json 的 env 读（无则 homedir）
+  try {
+    const env = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf8')).env || {};
+    if (env.NEKO_WORK_CWD) return env.NEKO_WORK_CWD;
+  } catch {
+    // 忽略，用默认
+  }
+  return os.homedir();
+}
+const DEFAULT_WORK_CWD = resolveDefaultCwd();
 
 /* ---------- 媒体生成配置（BYOK：豆包 key 从 env / ~/.claude/settings.json 读，不硬编码） ---------- */
 // 豆包账号级 key：优先 DOUBAO_API_KEY，VISION_API_KEY 兜底（同账号视觉 key 可调 Seedream/Seedance，零额外配置）
