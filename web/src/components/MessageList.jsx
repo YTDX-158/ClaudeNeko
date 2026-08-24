@@ -1,17 +1,26 @@
 import { useEffect, useRef } from 'react';
 import MessageBubble from './MessageBubble.jsx';
 
-export default function MessageList({ messages, error, onQuote, onBranch }) {
+export default function MessageList({ messages, error, onQuote, onBranch, sessionId }) {
   const endRef = useRef(null);
   const listRef = useRef(null);
+  const prevSessionRef = useRef(sessionId);
 
-  // 自动滚动到底，但只在接近底部时才滚——用户往上翻（看历史/用目录跳转）时不打断
+  // 自动滚动：
+  //  - 会话切换时无条件滚到底（否则新会话消息灌入时 scrollTop 还是 0 → 停在顶部）
+  //  - 同会话追加消息时只在接近底部才滚（用户往上翻/用目录跳转时不打断）
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
+    const isSwitch = prevSessionRef.current !== sessionId;
+    prevSessionRef.current = sessionId;
+    if (isSwitch) {
+      endRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      return;
+    }
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
     if (nearBottom) endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages]);
+  }, [messages, sessionId]);
 
   return (
     <div className="message-list" ref={listRef}>

@@ -38,7 +38,17 @@ export default function MediaLibrary({ open, onClose }) {
 
   useEffect(() => {
     if (open) refresh();
+    else {
+      // 关闭面板时重置管理模式与选中，防下次打开误操作
+      setManageMode(false);
+      setSelected(new Set());
+    }
   }, [open]);
+
+  // 切换 kind 筛选时清空选中：防"已选 N 项"命中当前筛选不可见的文件（误删/误打包）
+  useEffect(() => {
+    setSelected(new Set());
+  }, [kind]);
 
   if (!open) return null;
 
@@ -168,7 +178,7 @@ export default function MediaLibrary({ open, onClose }) {
                   <span className="media-name" title={m.originalName}>{m.originalName}</span>
                   <span className="media-meta">{m.kind} · {(m.size / 1024).toFixed(0)}KB</span>
                 </div>
-                <div className="media-card-actions">
+                <div className="media-card-actions" onClick={(e) => e.stopPropagation()}>
                   {m.kind === 'document' && (
                     <a className="media-btn" href={`/api/media/${m.id}`} target="_blank" rel="noopener noreferrer">预览</a>
                   )}

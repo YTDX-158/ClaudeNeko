@@ -24,10 +24,10 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
   const userMessages = (chat.messages ?? []).filter((m) => m.role === 'user');
   const jumpToUser = (mid) => {
     setNavOpen(false);
-    // 等抽屉收起后滚动，避免布局变化干扰定位
-    setTimeout(() => {
+    // 抽屉是 fixed 不影响 message-list 布局，无需延时；rAF 确保渲染后定位
+    requestAnimationFrame(() => {
       document.getElementById(`mid-${mid}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 50);
+    });
   };
 
   // 实时拉当前会话的 claudeSessionId（发消息/生成媒体后会变，消息数变化时重拉）
@@ -236,6 +236,7 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
         error={chat.error}
         onQuote={handleQuote}
         onBranch={onBranch}
+        sessionId={session?.id}
       />
 
       {/* 📑 用户消息导航抽屉：列出所有用户提问，点击跳转 */}

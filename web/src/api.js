@@ -69,7 +69,8 @@ export const api = {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // 延迟回收：大 zip 浏览器还没读完 blob 就 revoke 会导致下载失败
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   },
   mediaConfig: () => request('/media/config'),
   mediaGenerate: async (body) => {

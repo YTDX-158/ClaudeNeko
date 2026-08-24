@@ -36,14 +36,32 @@ export function mediaHandler(ctx) {
       const body = await readBody(req);
       const ids = Array.isArray(body?.ids) ? body.ids.filter((x) => typeof x === 'string') : [];
       if (!ids.length) return sendJson(res, 400, { error: '未选择要导出的媒体' });
+      // 上限保护：防一次打包过多/过大（同步读 + 全内存打包会阻塞事件循环/占内存）
+      if (ids.length > 200) return sendJson(res, 413, { error: '一次最多导出 200 个文件' });
+      // 一次取全量索引，避免循环里反复读+解析 index.json
+      const idx = listMedia();
+      const nameCount = new Map();
       const files = [];
+      let totalSize = 0;
       for (const id of ids) {
-        const rec = getMedia(id);
+        const rec = idx.find((m) => m.id === id);
         if (!rec || !rec.fileName) continue; // 跳过不存在/脏记录
         try {
-          const data = fs.readFileSync(getMediaPath(rec));
-          // zip 内用原始文件名（UTF-8 由 zip.js 处理），重复名加序号防覆盖
-          files.push({ name: rec.originalName || rec.fileName, data });
+          const data = await fs.promises.readFile(getMediaPath(rec)); // 异步读，不阻塞事件循环
+          totalSize += data.length;
+          if (totalSize > 500 * 1024 * 1024) {
+            return sendJson(res, 413, { error: '导出内容超过 500MB 上限' });
+          }
+          // zip 条目名消毒：只取 basename、去路径分隔符/控制字符、限长（防 zip-slip + 超长截断）
+          let name = (rec.originalName || rec.fileName).replace(/[\\/:\0\r\n\t]/g, '_').slice(0, 200) || 'file';
+          // 重复名加序号，防同名覆盖丢文件
+          const n = nameCount.get(name) || 0;
+          nameCount.set(name, n + 1);
+          if (n > 0) {
+            const dot = name.lastIndexOf('.');
+            name = dot > 0 ? `${name.slice(0, dot)}(${n})${name.slice(dot)}` : `${name}(${n})`;
+          }
+          files.push({ name, data });
         } catch {
           // 文件读不到跳过
         }

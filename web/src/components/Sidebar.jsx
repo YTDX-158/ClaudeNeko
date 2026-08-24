@@ -56,22 +56,26 @@ export default function Sidebar({
     exitManage();
   };
 
-  // 批量导出（含思考跟随全局开关）
+  // 批量导出（含思考跟随全局开关；单会话失败不整批丢弃，记名提示）
   const handleBatchExport = async () => {
     if (!selected.size) return;
     const includeThinking = localStorage.getItem('neko-export-thinking') === '1';
-    try {
-      const parts = [];
-      for (const s of sessions.filter((s) => selected.has(s.id))) {
+    const parts = [];
+    const failed = [];
+    for (const s of sessions.filter((s) => selected.has(s.id))) {
+      try {
         const { messages } = await api.listMessages(s.id);
         parts.push(exportSessionText(s, messages, { includeThinking }));
+      } catch {
+        failed.push(s.title || s.id.slice(0, 8));
       }
+    }
+    if (parts.length) {
       const d = new Date();
       const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
       downloadText(`ClaudeNeko-批量会话-${date}.txt`, parts.join('\n\n'));
-    } catch {
-      // 导出失败静默
     }
+    if (failed.length) alert(`有 ${failed.length} 个会话导出失败：${failed.slice(0, 5).join('、')}${failed.length > 5 ? '…' : ''}`);
   };
 
   return (
@@ -115,7 +119,7 @@ export default function Sidebar({
             '会话'
           )}
         </div>
-        <div className="session-list">
+        <div className="sidebar-sessions">
           {loading ? (
             <p className="hint">加载中…</p>
           ) : sessions.length === 0 ? (

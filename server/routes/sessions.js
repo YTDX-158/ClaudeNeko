@@ -379,7 +379,11 @@ export function sessionsHandler(ctx) {
           const patch = {};
           if (body.model) patch.model = body.model;
           if (body.title) patch.title = body.title;
-          if (body.pinned !== undefined) patch.pinned = !!body.pinned; // 会话置顶
+          if (body.pinned !== undefined) {
+            // 严格类型校验：防字符串 "false" 被 !! 强转成 true 误置顶（与 effort 校验风格一致）
+            if (typeof body.pinned !== 'boolean') return sendJson(res, 400, { error: '置顶参数无效（需布尔值）' });
+            patch.pinned = body.pinned;
+          }
           // effort 只接受 null/undefined（标准档）或 low/max，非法值直接 400
           if (body.effort !== undefined) {
             if (body.effort === null || body.effort === 'low' || body.effort === 'max') {
