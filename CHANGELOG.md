@@ -1,5 +1,30 @@
 # 更新日志
 
+## v1.5.1（2026-08-25）—— 思考过程显示 🧠
+
+### 🧠 新增
+- **AI 思考过程显示**：DeepSeek 推理模型的思考逐字流式出现，消息上方「🧠 思考过程」折叠块，点开看完整推理（默认收起）
+  - 数据来源：`thinking_delta` 流式事件（此前被丢弃，现在累积 + 转发）
+  - 零额外 token 成本——思考本就传输，只是之前 Neko 没展示
+- **思考永久保存**：落盘到消息的 `thinking` 字段，刷新/切会话后仍在
+- **导出可选**：设置 → 功能 → 「导出包含思考过程」（默认关）；两个导出入口（当前对话 + 全部会话）都读取该全局开关
+
+### 🔧 涉及改动
+- `server/routes/sessions.js`：流式累积 `accThinking`（`thinking_delta`）+ 转发前端；assistant 块空值兜底；落盘 `thinking` 字段
+- `web/src/hooks/useChatStream.js`：流式气泡加 `thinking` 字段 + `thinking_delta` 累加
+- `web/src/components/MessageBubble.jsx`：`<details>` 折叠块（纯文本 `<pre>`，防 XSS）
+- `web/src/styles.css`：`.msg-thinking` 样式（移动端 `pre-wrap` 防横向滚动）
+- `web/src/utils/export.js`：`messagesToText` / `exportSessionText` 加 `includeThinking` 参数
+- `web/src/skin/SkinSettings.jsx` + `web/src/components/ChatWindow.jsx`：导出读取全局开关
+
+### 🧪 实测
+- thinking_delta 194 事件逐字流式到达（text_delta 117、done 1）✓
+- 落盘：assistant 消息带 thinking（762 字）✓
+- 导出：默认不含思考、开开关含「🧠 [思考过程]」段 ✓
+- 分支/历史注入不受影响（只拼 text，思考不混入 prompt）✓
+
+---
+
 ## v1.5.0（2026-08-24）—— 记忆修复 + 远程访问 📱
 
 ### 🧠 记忆修复（对话变聪明）

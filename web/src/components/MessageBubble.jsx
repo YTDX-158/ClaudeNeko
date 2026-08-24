@@ -189,6 +189,13 @@ export default function MessageBubble({ message, onQuote, onBranch }) {
   return (
     <div className="msg msg-assistant">
       <div className="msg-body">
+        {/* DeepSeek 思考过程：默认折叠，点开看 AI 推理；纯文本 <pre> 不解析 markdown 防 XSS */}
+        {message.thinking && (
+          <details className="msg-thinking">
+            <summary className="msg-thinking-summary">🧠 思考过程</summary>
+            <pre className="msg-thinking-body">{message.thinking}</pre>
+          </details>
+        )}
         <div className="md">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}

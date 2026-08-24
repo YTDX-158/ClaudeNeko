@@ -158,11 +158,12 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
     chat.stop(); // 断开 SSE + 释放前端流式态
   };
 
-  // 导出当前对话为 .txt 聊天记录
+  // 导出当前对话为 .txt 聊天记录（是否含思考跟全局开关一致，设置里可改）
   const handleExport = () => {
     if (!chat.messages.length) return;
     const safe = (session?.title ?? '新会话').replace(/[\\/:*?"<>|]/g, '_');
-    downloadText(`ClaudeNeko-${safe}.txt`, exportSessionText(session, chat.messages));
+    const includeThinking = localStorage.getItem('neko-export-thinking') === '1';
+    downloadText(`ClaudeNeko-${safe}.txt`, exportSessionText(session, chat.messages, { includeThinking }));
   };
 
   // claude娘 心情：生成中按阶段（思考中 → 回答中），否则看输入框是否在打字

@@ -180,6 +180,7 @@ async function handleMessage(ctx, req, res, url) {
   send('start', { sessionId: id });
 
   let lastAssistantMsgId = null;
+  let accThinking = ''; // 流式累积的思考内容（DeepSeek reasoning；result 无 thinking，必须这里攒）
 
   const runner = createClaudeRunner({
     claudeBin: config.claudeBin,
@@ -196,6 +197,14 @@ async function handleMessage(ctx, req, res, url) {
           send('model_update', { sessionId: id, model: evt.model });
         }
       }
+      if (evt.type === 'stream_event' && evt.event?.type === 'content_block_delta' && evt.event.delta?.type === 'thinking_delta') {
+        // DeepSeek 思考逐字流式：累积（供落盘）+ 转发前端逐字显示
+        const tk = evt.event.delta.thinking || '';
+        if (tk) {
+          accThinking += tk;
+          send('thinking_delta', { text: tk });
+        }
+      }
       if (evt.type === 'stream_event' && evt.event?.type === 'content_block_delta' && evt.event.delta?.type === 'text_delta') {
         send('text_delta', { text: evt.event.delta.text });
       }
@@ -204,11 +213,16 @@ async function handleMessage(ctx, req, res, url) {
         lastAssistantMsgId = evt.message.id;
         const text = (evt.message.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('');
         if (text) send('assistant', { claudeMessageId: evt.message.id, text });
+        // 兜底：thinking_delta 没来但 assistant 块带思考时，仅累积供落盘（不 send 大帧）
+        if (!accThinking) {
+          const tk = (evt.message.content ?? []).filter((b) => b.type === 'thinking').map((b) => b.thinking).join('');
+          if (tk) accThinking = tk;
+        }
       }
       if (evt.type === 'result') {
         const text = typeof evt.result === 'string' ? evt.result : '';
         if (text) {
-          store.appendMessage(id, { role: 'assistant', text, ts: Date.now(), claudeMessageId: lastAssistantMsgId ?? null });
+          store.appendMessage(id, { role: 'assistant', text, thinking: accThinking || undefined, ts: Date.now(), claudeMessageId: lastAssistantMsgId ?? null });
         }
         send('done', { text });
       }

@@ -112,7 +112,7 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
         ts: Date.now(),
         ...(attachments.length ? { attachments } : {}),
       };
-      const streamMsg = { id: `tmp-s-${Date.now()}`, role: 'assistant', text: '', streaming: true };
+      const streamMsg = { id: `tmp-s-${Date.now()}`, role: 'assistant', text: '', thinking: '', streaming: true };
       setMessages((prev) => [...prev, userMsg, streamMsg]);
 
       const controller = new AbortController();
@@ -122,7 +122,15 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
       const client = new StreamClient({
         signal: controller.signal,
         onEvent: (event, data) => {
-          if (event === 'text_delta') {
+          if (event === 'thinking_delta') {
+            // 思考逐字流式：累加到流式气泡的 thinking 字段（与 text_delta 对称）
+            setMessages((prev) => {
+              const copy = [...prev];
+              const last = copy[copy.length - 1];
+              if (last?.streaming) copy[copy.length - 1] = { ...last, thinking: (last.thinking || '') + (data.text || '') };
+              return copy;
+            });
+          } else if (event === 'text_delta') {
             setResponding(true);
             setMessages((prev) => {
               const copy = [...prev];

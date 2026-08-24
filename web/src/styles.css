@@ -1321,3 +1321,38 @@ body {
   /* 输入区舒适间距 */
   .composer { padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0)); }
 }
+
+/* ============ 思考过程折叠块（DeepSeek reasoning 显示） ============ */
+.msg-thinking {
+  margin: 0 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(0, 0, 0, 0.2));
+  overflow: hidden;
+}
+.msg-thinking-summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.msg-thinking-summary:hover {
+  color: var(--accent);
+}
+.msg-thinking-body {
+  margin: 0;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  max-height: 40vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+}
