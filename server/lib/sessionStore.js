@@ -28,9 +28,10 @@ export class SessionStore {
     fs.writeFileSync(this.sessionsFile, JSON.stringify(this.sessions, null, 2));
   }
 
-  /** @returns {Array<object>} 按 updatedAt 倒序的新数组 */
+  /** @returns {Array<object>} 置顶优先，其次按 updatedAt 倒序的新数组。
+   *  兼容历史会话无 pinned 字段（undefined 视为 false）。 */
   list() {
-    return [...this.sessions].sort((a, b) => b.updatedAt - a.updatedAt);
+    return [...this.sessions].sort((a, b) => ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) || (b.updatedAt - a.updatedAt));
   }
 
   /** @returns {object|null} */
@@ -50,6 +51,7 @@ export class SessionStore {
       claudeSessionId: null,
       parentId: parentId ?? null, // 分支来源会话 id（普通会话 null）
       branchFromMsg: branchFromMsg ?? null, // 分支点消息的 claudeMessageId
+      pinned: false, // 会话置顶：置顶优先排前，不被新会话刷沉
       createdAt: now,
       updatedAt: now,
     };

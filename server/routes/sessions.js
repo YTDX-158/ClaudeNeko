@@ -379,6 +379,7 @@ export function sessionsHandler(ctx) {
           const patch = {};
           if (body.model) patch.model = body.model;
           if (body.title) patch.title = body.title;
+          if (body.pinned !== undefined) patch.pinned = !!body.pinned; // 会话置顶
           // effort 只接受 null/undefined（标准档）或 low/max，非法值直接 400
           if (body.effort !== undefined) {
             if (body.effort === null || body.effort === 'low' || body.effort === 'max') {

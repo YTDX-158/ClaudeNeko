@@ -1,7 +1,9 @@
 // routes/media.js — 媒体库 + 生成媒体/下载（架构重构步3）
-import { saveMedia, listMedia, getMedia, deleteMedia } from '../lib/mediaStore.js';
+import fs from 'node:fs';
+import { saveMedia, listMedia, getMedia, getMediaPath, deleteMedia } from '../lib/mediaStore.js';
 import { sendJson, readBody, readRawBody, serveMediaFile } from '../lib/util.js';
 import { ApiError } from '../lib/mediaGen.js';
+import { createZip } from '../lib/zip.js';
 
 export function mediaHandler(ctx) {
   return async (req, res, url) => {
@@ -27,6 +29,34 @@ export function mediaHandler(ctx) {
 
     if (method === 'GET' && pathname === '/api/media') {
       return sendJson(res, 200, { media: listMedia() });
+    }
+
+    // 媒体批量导出：按 id 列表打包 zip（STORE 模式，零依赖）
+    if (method === 'POST' && pathname === '/api/media/export-zip') {
+      const body = await readBody(req);
+      const ids = Array.isArray(body?.ids) ? body.ids.filter((x) => typeof x === 'string') : [];
+      if (!ids.length) return sendJson(res, 400, { error: '未选择要导出的媒体' });
+      const files = [];
+      for (const id of ids) {
+        const rec = getMedia(id);
+        if (!rec || !rec.fileName) continue; // 跳过不存在/脏记录
+        try {
+          const data = fs.readFileSync(getMediaPath(rec));
+          // zip 内用原始文件名（UTF-8 由 zip.js 处理），重复名加序号防覆盖
+          files.push({ name: rec.originalName || rec.fileName, data });
+        } catch {
+          // 文件读不到跳过
+        }
+      }
+      if (!files.length) return sendJson(res, 404, { error: '所选媒体均无法读取' });
+      const zip = createZip(files);
+      // filename* 用 RFC 5987 编码中文文件名（Node header 不接受非 ASCII）
+      res.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="claudeneko.zip"; filename*=UTF-8''ClaudeNeko-%E5%AA%92%E4%BD%93-${Date.now()}.zip`,
+      });
+      res.end(zip);
+      return;
     }
 
     // 技能包：生成媒体 / 下载视频（必须在 mm 文件匹配之前，否则 /api/media/config 会被当成文件 id）

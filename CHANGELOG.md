@@ -1,5 +1,33 @@
 # 更新日志
 
+## v1.5.2（2026-08-25）—— 对话体验升级 📑📌
+
+### 🆕 新增
+- **会话置顶 📌**：侧栏每个会话常驻置顶按钮，置顶的会话排最前、柔和底色区分，不被新会话刷沉
+- **会话批量管理 ☑**：侧栏「☑」进入多选 → 批量删除（确认防误删）/ 批量导出 txt（跟随"导出含思考"开关），一次刷新
+- **媒体库批量管理 ☑**：媒体库「管理」进入多选 → 批量删除 / **批量下载 zip**（后端手写 STORE 模式 zip，零依赖）
+- **用户消息导航 📑**：对话右上「📑」抽屉列出所有用户提问，点击跳转到对应位置；流式生成不打断跳转（不在底部才自动滚）
+
+### 🔧 涉及改动
+- `server/lib/sessionStore.js`：`pinned` 字段 + 置顶优先排序（兼容老会话）
+- `server/routes/sessions.js`：PATCH 支持 `pinned`
+- `server/lib/zip.js`（新增）：手写 STORE 模式 zip + CRC-32 查表，零依赖
+- `server/routes/media.js`：`POST /api/media/export-zip` 批量打包下载（UTF-8 文件名）
+- `web/src/hooks/useSessions.js`：`togglePin` / `removeMany`（批量删除一次刷新）
+- `web/src/components/Sidebar.jsx` + `SessionList.jsx` + `SessionItem.jsx`：置顶按钮 + 多选模式 + 批量操作条
+- `web/src/components/MediaLibrary.jsx`：多选模式 + 批量删除/下载 + zip
+- `web/src/components/MessageList.jsx`：自动滚动"不在底部才滚" + 用户消息锚点
+- `web/src/components/ChatWindow.jsx`：📑 抽屉目录 + 跳转
+- `web/src/api.js`：`exportMediaZip`
+
+### 🧪 实测
+- 置顶：置顶排最前、取消恢复、老会话兼容 ✓
+- 媒体 zip：export-zip → 解压成功、中文文件名正确 ✓
+- 批量删除/导出：多选 → 删除/导出生效、一次刷新 ✓
+- 导航：抽屉列出用户消息、跳转定位 ✓
+
+---
+
 ## v1.5.1（2026-08-25）—— 思考过程显示 🧠
 
 ### 🧠 新增

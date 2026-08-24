@@ -28,7 +28,17 @@ function formatRecentTime(ts) {
  * 单个会话项：点击切换 / 双击改名 / 悬浮删除（两次确认）/
  * 第二行右侧显示最近对话时间（悬浮看完整时间）。
  */
-export default function SessionItem({ session, active, onSelect, onRemove, onRename }) {
+export default function SessionItem({
+  session,
+  active,
+  onSelect,
+  onRemove,
+  onRename,
+  onTogglePin,
+  manageMode = false,
+  checked = false,
+  onToggleSelect,
+}) {
   const [confirming, setConfirming] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -61,10 +71,22 @@ export default function SessionItem({ session, active, onSelect, onRemove, onRen
 
   return (
     <li
-      className={`session-item${active ? ' active' : ''}`}
+      className={`session-item${active ? ' active' : ''}${session.pinned ? ' pinned' : ''}${manageMode ? ' manage' : ''}`}
       role="listitem"
-      onClick={() => !editing && onSelect(session.id)}
+      onClick={() => {
+        if (editing) return;
+        if (manageMode) onToggleSelect?.(session.id);
+        else onSelect(session.id);
+      }}
     >
+      {manageMode && (
+        <span
+          className={`session-item-check${checked ? ' checked' : ''}`}
+          onClick={(e) => { e.stopPropagation(); onToggleSelect?.(session.id); }}
+        >
+          {checked ? '✓' : ''}
+        </span>
+      )}
       <div className="session-item-main">
         {editing ? (
           <input
@@ -95,13 +117,24 @@ export default function SessionItem({ session, active, onSelect, onRemove, onRen
           </span>
         </div>
       </div>
-      <button
-        className="session-item-del"
-        title={confirming ? '再点一次确认删除' : '删除会话'}
-        onClick={handleDelete}
-      >
-        {confirming ? '确认？' : '×'}
-      </button>
+      {!manageMode && (
+        <>
+          <button
+            className={`session-item-pin${session.pinned ? ' pinned' : ''}`}
+            title={session.pinned ? '取消置顶' : '置顶会话'}
+            onClick={(e) => { e.stopPropagation(); onTogglePin?.(session.id); }}
+          >
+            {session.pinned ? '📌' : '📍'}
+          </button>
+          <button
+            className="session-item-del"
+            title={confirming ? '再点一次确认删除' : '删除会话'}
+            onClick={handleDelete}
+          >
+            {confirming ? '确认？' : '×'}
+          </button>
+        </>
+      )}
     </li>
   );
 }

@@ -17,7 +17,18 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
   const [quote, setQuote] = useState(null); // { text, role } | null
   const [attachments, setAttachments] = useState([]); // 待发送附件（媒体库快照）
   const [sid, setSid] = useState(null); // 实时 claude 会话 ID（列表快照不含，单独拉）
+  const [navOpen, setNavOpen] = useState(false); // 📑 用户消息导航抽屉
   const taRef = useRef(null);
+
+  // 用户消息导航目录：所有 user 消息（第 N 问 · 前 20 字）
+  const userMessages = (chat.messages ?? []).filter((m) => m.role === 'user');
+  const jumpToUser = (mid) => {
+    setNavOpen(false);
+    // 等抽屉收起后滚动，避免布局变化干扰定位
+    setTimeout(() => {
+      document.getElementById(`mid-${mid}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  };
 
   // 实时拉当前会话的 claudeSessionId（发消息/生成媒体后会变，消息数变化时重拉）
   useEffect(() => {
@@ -181,6 +192,9 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
       <header className="chat-header">
         <h1 className="chat-title">{session?.title ?? '新会话'}</h1>
         <div className="chat-tools">
+          {userMessages.length > 0 && (
+            <button className="chat-export" onClick={() => setNavOpen(true)} title="跳转到某条用户提问（对话导航）">📑</button>
+          )}
           <button className="chat-export" onClick={handleExport} title="导出当前对话为 .txt">导出</button>
           <button className="chat-export" onClick={handleForceStop} title="强制结束当前对话任务（杀 claude + 取消生成，聊天卡住或生视频太久时用）">⛔ 结束</button>
           {session?.model && <span className="chat-model">{session.model}</span>}
@@ -223,6 +237,28 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
         onQuote={handleQuote}
         onBranch={onBranch}
       />
+
+      {/* 📑 用户消息导航抽屉：列出所有用户提问，点击跳转 */}
+      {navOpen && <div className="msg-nav-scrim" onClick={() => setNavOpen(false)} />}
+      <aside className={`msg-nav${navOpen ? ' open' : ''}`}>
+        <div className="msg-nav-header">
+          <span>📑 用户消息（{userMessages.length}）</span>
+          <button className="skin-close" onClick={() => setNavOpen(false)} title="关闭">✕</button>
+        </div>
+        <div className="msg-nav-list">
+          {userMessages.length === 0 && <div className="skin-hint">还没有用户消息</div>}
+          {userMessages.map((m, i) => {
+            const mid = m.id ?? m.ts;
+            const preview = (m.text ?? '').replace(/\s+/g, ' ').trim();
+            return (
+              <button key={mid} className="msg-nav-item" onClick={() => jumpToUser(mid)} title={preview}>
+                <span className="msg-nav-num">{i + 1}</span>
+                <span className="msg-nav-text">{preview.slice(0, 24) || '（附件消息）'}</span>
+              </button>
+            );
+          })}
+        </div>
+      </aside>
 
       {/* 小猫（可拖动）+ claude娘（状态气泡/余额/挂件交互）平级共存 */}
       <CatMascot />

@@ -79,11 +79,27 @@ export function useSessions() {
     [],
   );
 
+  // 批量删除：循环删除后一次刷新（避免逐次刷新闪烁）
+  const removeMany = useCallback(async (ids) => {
+    await Promise.all(ids.map((id) => api.deleteSession(id).catch(() => {})));
+    setSessions((prev) => prev.filter((s) => !ids.includes(s.id)));
+    setActiveId((prev) => (ids.includes(prev) ? null : prev));
+  }, []);
+
   const patch = useCallback(async (id, patchData) => {
     const { session } = await api.patchSession(id, patchData);
     setSessions((prev) => prev.map((s) => (s.id === id ? session : s)));
     return session;
   }, []);
+
+  // 会话置顶/取消置顶（PATCH pinned；列表排序由后端 list 置顶优先，前端可再本地重排保证即时）
+  const togglePin = useCallback(async (id) => {
+    const target = sessions.find((s) => s.id === id);
+    if (!target) return;
+    const next = !target.pinned;
+    await patch(id, { pinned: next });
+    setSessions((prev) => [...prev].sort((a, b) => (b.pinned - a.pinned) || (b.updatedAt - a.updatedAt)));
+  }, [sessions, patch]);
 
   // 纯本地更新标题（服务端已改，这里只同步 UI，避免重复 PATCH）
   const updateLocalTitle = useCallback((id, title) => {
@@ -97,5 +113,5 @@ export function useSessions() {
 
   const activeSession = sessions.find((s) => s.id === activeId) ?? null;
 
-  return { sessions, activeId, activeSession, loading, refresh, create, remove, patch, updateLocalTitle, updateLocalModel, setActiveId };
+  return { sessions, activeId, activeSession, loading, refresh, create, remove, removeMany, patch, togglePin, updateLocalTitle, updateLocalModel, setActiveId };
 }

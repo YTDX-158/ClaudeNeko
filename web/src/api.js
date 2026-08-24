@@ -53,6 +53,24 @@ export const api = {
   remoteRegenerateCode: () => request('/remote/regenerate-code', { method: 'POST' }),
 
   // ---- 技能包：生成媒体 / 下载视频（POST 用自定义提取友好 message） ----
+  // 媒体批量导出 zip：POST ids → 返回 zip blob（前端触发下载）
+  exportMediaZip: async (ids) => {
+    const res = await fetch(BASE + '/media/export-zip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ClaudeNeko-媒体-${Date.now()}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
   mediaConfig: () => request('/media/config'),
   mediaGenerate: async (body) => {
     const res = await fetch(BASE + '/media/generate', {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { uploadToMedia } from '../utils/upload.js';
+import { api } from '../api.js';
 import Lightbox from './Lightbox.jsx';
 
 const KINDS = [
@@ -22,6 +23,8 @@ export default function MediaLibrary({ open, onClose }) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [view, setView] = useState(null); // Lightbox 大图查看
+  const [manageMode, setManageMode] = useState(false); // 多选模式
+  const [selected, setSelected] = useState(new Set()); // 选中的媒体 id
   const fileRef = useRef(null);
 
   const refresh = () => {
@@ -59,6 +62,35 @@ export default function MediaLibrary({ open, onClose }) {
     refresh();
   };
 
+  // 媒体批量管理
+  const toggleSelected = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const toggleAll = () => {
+    setSelected((prev) => (prev.size === filtered.length ? new Set() : new Set(filtered.map((m) => m.id))));
+  };
+  const handleBatchDelete = async () => {
+    if (!selected.size) return;
+    if (!window.confirm(`确定删除选中的 ${selected.size} 个文件？此操作不可撤销。`)) return;
+    await Promise.all([...selected].map((id) => fetch(`/api/media/${id}`, { method: 'DELETE' }).catch(() => {})));
+    setSelected(new Set());
+    setManageMode(false);
+    refresh();
+  };
+  const handleBatchDownload = async () => {
+    if (!selected.size) return;
+    try {
+      await api.exportMediaZip([...selected]);
+    } catch {
+      // 下载失败静默
+    }
+  };
+
   const filtered = kind === 'all' ? media : media.filter((m) => m.kind === kind);
 
   return (
@@ -77,6 +109,13 @@ export default function MediaLibrary({ open, onClose }) {
             />
             <button className="skin-btn" onClick={() => fileRef.current?.click()} disabled={uploading}>
               {uploading ? '上传中…' : '↑ 上传'}
+            </button>
+            <button
+              className={`skin-btn${manageMode ? ' active' : ''}`}
+              onClick={() => { setManageMode((v) => !v); setSelected(new Set()); }}
+              title={manageMode ? '退出批量管理' : '批量管理（多选删除/下载）'}
+            >
+              {manageMode ? '✓ 完成' : '☑ 管理'}
             </button>
             <button className="skin-close" onClick={onClose} title="关闭">✕</button>
           </div>
@@ -102,10 +141,22 @@ export default function MediaLibrary({ open, onClose }) {
 
           {!loading &&
             filtered.map((m) => (
-              <div key={m.id} className="media-card">
+              <div
+                key={m.id}
+                className={`media-card${selected.has(m.id) ? ' selected' : ''}`}
+                onClick={() => manageMode && toggleSelected(m.id)}
+              >
+                {manageMode && (
+                  <span
+                    className={`media-check${selected.has(m.id) ? ' checked' : ''}`}
+                    onClick={(e) => { e.stopPropagation(); toggleSelected(m.id); }}
+                  >
+                    {selected.has(m.id) ? '✓' : ''}
+                  </span>
+                )}
                 <div
                   className="media-preview"
-                  onClick={() => (m.kind === 'image' || m.kind === 'video') && setView(m)}
+                  onClick={() => !manageMode && (m.kind === 'image' || m.kind === 'video') && setView(m)}
                   style={{ cursor: m.kind === 'image' || m.kind === 'video' ? 'zoom-in' : 'default' }}
                 >
                   {m.kind === 'image' && <img src={`/api/media/${m.id}`} alt={m.originalName} loading="lazy" />}
@@ -122,11 +173,29 @@ export default function MediaLibrary({ open, onClose }) {
                     <a className="media-btn" href={`/api/media/${m.id}`} target="_blank" rel="noopener noreferrer">预览</a>
                   )}
                   <a className="media-btn" href={`/api/media/${m.id}/download`} download>下载</a>
-                  <button className="media-btn danger" onClick={() => handleDelete(m.id)}>删除</button>
+                  {!manageMode && (
+                    <button className="media-btn danger" onClick={() => handleDelete(m.id)}>删除</button>
+                  )}
                 </div>
               </div>
             ))}
         </div>
+
+        {/* 媒体批量操作条（管理模式下显示） */}
+        {manageMode && (
+          <div className="media-batch-bar">
+            <span className="media-batch-info">已选 {selected.size} 项</span>
+            <button className="batch-btn" onClick={toggleAll}>
+              {selected.size === filtered.length ? '取消全选' : '全选'}
+            </button>
+            <button className="batch-btn" onClick={handleBatchDownload} disabled={selected.size === 0}>
+              下载 zip
+            </button>
+            <button className="batch-btn danger" onClick={handleBatchDelete} disabled={selected.size === 0}>
+              删除
+            </button>
+          </div>
+        )}
         {view && <Lightbox media={view} onClose={() => setView(null)} />}
       </div>
     </div>
