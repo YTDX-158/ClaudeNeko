@@ -16,12 +16,18 @@
 
 import http from 'node:http';
 import { randomBytes, createHash } from 'node:crypto';
+import { readBody } from '../util.js';
 
 /** 业务端口（本地 ClaudeNeko 主服务） */
 const TARGET_PORT = 4000;
 const AUTH_COOKIE = 'neko_auth';
 /** 远程模式下禁用的路径（SSRF 等高风险接口） */
 const BLOCKED_PATHS = new Set(['/api/media/download']);
+/** 配对码暴力破解防护：连续失败 N 次后锁定 M 毫秒 */
+const MAX_PAIR_FAILS = 5;
+const PAIR_LOCK_MS = 60_000;
+let pairFails = 0; // 全局失败计数（单用户本机场景足够；公网攻击面受限）
+let pairLockUntil = 0;
 
 const sha256 = (s) => createHash('sha256').update(String(s)).digest('hex');
 
@@ -82,35 +88,46 @@ function getCookie(header, name) {
  * @returns {http.Server}
  */
 export function startRemoteProxy({ port, pairing }) {
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = req.url.split('?')[0];
     const method = req.method;
 
     // 1) 配对接口：放行（无需凭证），校验码 → 签发 HttpOnly Cookie
     if (method === 'POST' && url === '/pair') {
-      let body = '';
-      req.on('data', (c) => (body += c));
-      req.on('end', () => {
-        let code = '';
-        try {
-          code = String(JSON.parse(body).code || '');
-        } catch {
-          // 坏请求
+      const body = await readBody(req); // 复用健壮版：超时/1MB上限/UTF-8归一化
+      let code = '';
+      try {
+        code = String(body.code || '');
+      } catch {
+        // 坏请求
+      }
+      // 暴力破解防护：锁定期间直接拒绝（不管码对不对）
+      if (Date.now() < pairLockUntil) {
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, locked: true }));
+        return;
+      }
+      const current = pairing.readPairCode();
+      if (current && code === current) {
+        pairFails = 0; // 配对成功重置计数
+        const session = randomBytes(32).toString('hex');
+        pairing.addSession(sha256(session));
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          // Secure：隧道全走 https，防 http 入口下明文凭证被窃取
+          'Set-Cookie': `${AUTH_COOKIE}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000; Secure`,
+        });
+        res.end(JSON.stringify({ ok: true }));
+      } else {
+        pairFails += 1;
+        if (pairFails >= MAX_PAIR_FAILS) {
+          pairLockUntil = Date.now() + PAIR_LOCK_MS;
+          pairFails = 0; // 锁定后重置计数，避免锁定解除后立即再次累计
+          console.warn(`[remote] 配对失败累计 ${MAX_PAIR_FAILS} 次，已锁定 ${PAIR_LOCK_MS / 1000}s 防爆破`);
         }
-        const current = pairing.readPairCode();
-        if (current && code === current) {
-          const session = randomBytes(32).toString('hex');
-          pairing.addSession(sha256(session));
-          res.writeHead(200, {
-            'Content-Type': 'application/json',
-            'Set-Cookie': `${AUTH_COOKIE}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000`,
-          });
-          res.end(JSON.stringify({ ok: true }));
-        } else {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false }));
-        }
-      });
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false }));
+      }
       return;
     }
 
@@ -133,6 +150,11 @@ export function startRemoteProxy({ port, pairing }) {
     const headers = { ...req.headers };
     delete headers.host; // 让 Node 重算为目标端口 host
     delete headers.connection;
+    // 关键：把 Origin/Referer 重写成 localhost——业务端口 4000 有"来源校验"
+    // （isLocalRequest），手机请求带公网 Origin 会被 403。代理已通过配对鉴权，
+    // 转发时应伪装成本机来源，让业务校验放行。
+    if (headers.origin) headers.origin = 'http://127.0.0.1:4000';
+    if (headers.referer) headers.referer = 'http://127.0.0.1:4000/';
     const upstream = http.request(
       { host: '127.0.0.1', port: TARGET_PORT, path: req.url, method, headers },
       (up) => {
@@ -142,8 +164,18 @@ export function startRemoteProxy({ port, pairing }) {
       },
     );
     upstream.on('error', () => {
-      if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' });
-      res.end('代理连接失败');
+      if (!res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('代理连接失败');
+      } else {
+        // 已开始流式（SSE/大文件）：不能往 text/event-stream 里写裸文本，
+        // 直接销毁连接让客户端感知中断
+        try {
+          res.destroy();
+        } catch {
+          // 已关
+        }
+      }
     });
     // 连接清理：任一端断开都销毁另一端的连接，防 SSE 长连接/大文件挂死泄漏
     res.on('close', () => { try { upstream.destroy(); } catch { /* 已关 */ } });

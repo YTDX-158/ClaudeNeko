@@ -62,13 +62,13 @@ export default function App() {
     <div className="app">
       {/* WebGL 流体背景（设为「流体」壁纸时生效） */}
       <FluidCanvas />
-      {/* 移动端汉堡按钮：窄屏展开侧栏抽屉；宽屏隐藏（display:none） */}
+      {/* 移动端汉堡按钮：窄屏切换侧栏抽屉（开=✕ 可关）；宽屏隐藏（display:none） */}
       <button
         className="mobile-menu-btn"
-        aria-label="打开侧栏"
-        onClick={() => setSidebarOpen(true)}
+        aria-label={sidebarOpen ? '关闭侧栏' : '打开侧栏'}
+        onClick={() => setSidebarOpen((v) => !v)}
       >
-        ☰
+        {sidebarOpen ? '✕' : '☰'}
       </button>
       {/* 移动端侧栏遮罩：抽屉开着时点空白收起 */}
       {sidebarOpen && (
@@ -77,8 +77,8 @@ export default function App() {
       <Sidebar
         {...sessions}
         onCreate={() => { handleCreate(); closeSidebar(); }}
-        onOpenSettings={() => setSkinOpen(true)}
-        onOpenMedia={() => setMediaOpen(true)}
+        onOpenSettings={() => { setSkinOpen(true); closeSidebar(); }}
+        onOpenMedia={() => { setMediaOpen(true); closeSidebar(); }}
         onRename={(id, title) => patch(id, { title })}
         drawerOpen={sidebarOpen}
         onDrawerClose={closeSidebar}
@@ -89,7 +89,6 @@ export default function App() {
         onRename={(title) => activeId && patch(activeId, { title })}
         onBranch={handleBranch}
         onEffortChange={(effort) => activeId && patch(activeId, { effort }).catch(() => {})}
-        onClickCapture={closeSidebar}
       />
       {serverOk === false && (
         <div className="banner" role="alert">

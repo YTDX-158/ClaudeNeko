@@ -8,6 +8,10 @@ export function remoteHandler({ pairing, remote }) {
 
     // 当前远程状态 + 配对码（开启时才返回码，关着不暴露）
     if (method === 'GET' && pathname === '/api/remote/status') {
+      // 配对码是远程访问唯一密钥，本机 GET 也无鉴权 → 校验来源，防恶意网页 DNS rebinding 读到码
+      const origin = req.headers.origin || req.headers.referer || '';
+      const isLocal = !origin || origin === 'null' || /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i.test(origin);
+      if (!isLocal) return sendJson(res, 403, { error: '来源校验失败' });
       const enabled = remote.isEnabled();
       return sendJson(res, 200, {
         enabled,
@@ -32,16 +36,18 @@ export function remoteHandler({ pairing, remote }) {
       return sendJson(res, 200, { enabled, publicUrl: enabled ? urlInfo.url : null, pairCode: code });
     }
 
-    // 关闭远程：停隧道 + 关代理 + 删配对码文件
+    // 关闭远程：停隧道 + 关代理 + 删配对码 + 清空已配对设备（关闭=全部重置）
     if (method === 'POST' && pathname === '/api/remote/off') {
       remote.stop();
       pairing.clearPairCode();
+      pairing.clearSessions();
       return sendJson(res, 200, { enabled: false });
     }
 
-    // 重新生成配对码（不改开关状态）
+    // 重新生成配对码 + 清空已配对设备（换码 = 旧设备全部失效，需重新配对，防设备丢失残留）
     if (method === 'POST' && pathname === '/api/remote/regenerate-code') {
       const code = pairing.generatePairCode();
+      pairing.clearSessions();
       return sendJson(res, 200, { pairCode: code });
     }
 

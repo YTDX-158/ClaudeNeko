@@ -14,16 +14,19 @@ export function startTunnel(port) {
     try {
       child = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${port}`], {
         stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true, // 不闪控制台窗口
       });
     } catch {
       resolve({ url: null, child: null });
       return;
     }
+    child.on('error', () => finish(null)); // 未安装 / spawn 失败（异步错误）
 
     let done = false;
     const finish = (val) => {
       if (!done) {
         done = true;
+        clearTimeout(timer);
         resolve({ url: val, child });
       }
     };
@@ -35,7 +38,14 @@ export function startTunnel(port) {
     };
     child.stdout.on('data', onData);
     child.stderr.on('data', onData);
-    child.on('error', () => finish(null)); // 未安装会走这里
-    setTimeout(() => finish(null), 15000); // 超时降级
+    // 超时降级：15s 没拿到 URL 就放弃，并杀掉 cloudflared 防孤儿进程残留暴露端口
+    const timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        // 已退出
+      }
+      finish(null);
+    }, 15000);
   });
 }

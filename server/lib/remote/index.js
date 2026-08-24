@@ -63,7 +63,8 @@ export function createRemote(deps) {
       // 杀 cloudflared 进程树（Windows 下用 taskkill 清子进程）
       if (tunnelChild) {
         try {
-          spawn('taskkill', ['/pid', String(tunnelChild.pid), '/T', '/F']);
+          const kill = spawn('taskkill', ['/pid', String(tunnelChild.pid), '/T', '/F'], { windowsHide: true });
+          kill.on('error', () => { /* taskkill 缺失等，静默 */ });
         } catch {
           // 已退出
         }

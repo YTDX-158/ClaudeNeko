@@ -101,8 +101,12 @@ export default function SkinSettings({ open, onClose }) {
     try {
       const r = next ? await api.remoteOn() : await api.remoteOff();
       setRemote(r);
+      // 开启动作但服务端实际没开起来（如代理端口被占）→ 给明确提示，不静默
+      if (next && r.enabled === false) {
+        alert('远程开启失败（可能 4001 端口被占用或 cloudflared 未装），请检查后重试');
+      }
     } catch {
-      // 失败保持原状态，给用户可感知的反馈
+      // 网络/异常失败
       const e = (remote?.enabled ?? false) ? '关闭失败' : '开启失败（可能 cloudflared 未装）';
       alert(e);
     } finally {
@@ -110,13 +114,17 @@ export default function SkinSettings({ open, onClose }) {
     }
   };
 
-  // 重新生成配对码（换新码 = 旧设备全部失效，需重新配对）
+  // 重新生成配对码（换新码 = 旧设备全部失效，需重新配对；换码期间禁用防竞态）
   const regenerateCode = async () => {
+    if (remoteBusy) return;
+    setRemoteBusy(true);
     try {
       const r = await api.remoteRegenerateCode();
       setRemote((prev) => ({ ...prev, pairCode: r.pairCode }));
     } catch {
-      // 静默
+      alert('换码失败，请重试');
+    } finally {
+      setRemoteBusy(false);
     }
   };
 
