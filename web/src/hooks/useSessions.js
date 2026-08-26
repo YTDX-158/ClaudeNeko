@@ -73,8 +73,12 @@ export function useSessions() {
   const remove = useCallback(
     async (id) => {
       await api.deleteSession(id);
-      setSessions((prev) => prev.filter((s) => s.id !== id));
-      setActiveId((prev) => (prev === id ? null : prev));
+      setSessions((prev) => {
+        const next = prev.filter((s) => s.id !== id);
+        // 删除当前会话：立即选下一个，不等 3s 轮询（避免聊天区空白 3 秒）
+        setActiveId((cur) => (cur === id ? (next[0]?.id ?? null) : cur));
+        return next;
+      });
     },
     [],
   );
@@ -83,8 +87,12 @@ export function useSessions() {
   const removeMany = useCallback(async (ids) => {
     const results = await Promise.all(ids.map((id) => api.deleteSession(id).then(() => id).catch(() => null)));
     const removed = results.filter(Boolean);
-    setSessions((prev) => prev.filter((s) => !removed.includes(s.id)));
-    setActiveId((prev) => (removed.includes(prev) ? null : prev));
+    setSessions((prev) => {
+      const next = prev.filter((s) => !removed.includes(s.id));
+      // 删除当前会话：立即选下一个（同上，不等轮询）
+      setActiveId((cur) => (removed.includes(cur) ? (next[0]?.id ?? null) : cur));
+      return next;
+    });
   }, []);
 
   const patch = useCallback(async (id, patchData) => {

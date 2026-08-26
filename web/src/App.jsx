@@ -7,6 +7,7 @@ import ChatWindow from './components/ChatWindow.jsx';
 import SkinSettings from './skin/SkinSettings.jsx';
 import FluidCanvas from './skin/FluidCanvas.jsx';
 import MediaLibrary from './components/MediaLibrary.jsx';
+import TerminalView from './components/TerminalView.jsx';
 import { readDefaultEffort } from './utils/effort.js';
 
 export default function App() {
@@ -16,6 +17,14 @@ export default function App() {
   const [serverOk, setServerOk] = useState(null);
   const [skinOpen, setSkinOpen] = useState(false);
   const [mediaOpen, setMediaOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false); // 终端页（c2web 模式）
+  const [terminalSessionId, setTerminalSessionId] = useState(null); // 打开终端的会话 id（每个会话独立入口）
+  // 搜索跳转目标：Sidebar 点搜索结果 → 切会话 + 定位到目标消息气泡（ChatWindow 消费后清除）
+  const [jumpTarget, setJumpTarget] = useState(null);
+  const handleJumpResult = (sessionId, messageIndex) => {
+    sessions.setActiveId(sessionId);
+    setJumpTarget({ sessionId, messageIndex });
+  };
   // 移动端侧栏抽屉开关（窄屏默认收起，点汉堡展开；宽屏无感）
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const closeSidebar = () => setSidebarOpen(false);
@@ -79,16 +88,19 @@ export default function App() {
         onCreate={() => { handleCreate(); closeSidebar(); }}
         onOpenSettings={() => { setSkinOpen(true); closeSidebar(); }}
         onOpenMedia={() => { setMediaOpen(true); closeSidebar(); }}
+        onOpenTerminal={(sid) => { setTerminalSessionId(sid); setTerminalOpen(true); closeSidebar(); }}
         onRename={(id, title) => patch(id, { title })}
         drawerOpen={sidebarOpen}
         onDrawerClose={closeSidebar}
+        onJumpResult={handleJumpResult}
       />
       <ChatWindow
         session={activeSession}
         chat={chat}
-        onRename={(title) => activeId && patch(activeId, { title })}
         onBranch={handleBranch}
         onEffortChange={(effort) => activeId && patch(activeId, { effort }).catch(() => {})}
+        jumpTarget={jumpTarget}
+        onJumpDone={() => setJumpTarget(null)}
       />
       {serverOk === false && (
         <div className="banner" role="alert">
@@ -97,6 +109,7 @@ export default function App() {
       )}
       <SkinSettings open={skinOpen} onClose={() => setSkinOpen(false)} />
       <MediaLibrary open={mediaOpen} onClose={() => setMediaOpen(false)} />
+      <TerminalView open={terminalOpen} onClose={() => setTerminalOpen(false)} sessionId={terminalSessionId} />
     </div>
   );
 }

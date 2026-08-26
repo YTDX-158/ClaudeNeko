@@ -1,7 +1,48 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Lightbox from './Lightbox.jsx';
+
+/**
+ * 回放打字机：把完整文本按节奏逐块显示（assistant 完整答案到达后模拟打字）。
+ * 速度自适应：短文本逐块慢放；长文本自动加速，总时长上限 ~6s。
+ * 返回 { displayed, done, skip }：displayed=当前应显示前缀；done=是否播完；skip=一键显示全文。
+ */
+function useReplay(text, active) {
+  const [shown, setShown] = useState(active ? 0 : text.length);
+  const done = shown >= text.length;
+  // M17：text 或 active 变化时重置播放进度（重放中途消息被替换/续写时从新起点播）
+  const prevTextRef = useRef(text);
+  const prevActiveRef = useRef(active);
+  useEffect(() => {
+    const textChanged = prevTextRef.current !== text;
+    const activeChanged = prevActiveRef.current !== active;
+    prevTextRef.current = text;
+    prevActiveRef.current = active;
+    if (textChanged || activeChanged) setShown(active ? 0 : text.length);
+  }, [text, active]);
+
+  // 回放推进：active 且未播完 → 定时器逐块累加
+  useEffect(() => {
+    if (!active || done) return;
+    const len = text.length;
+    if (!len) return;
+    // 速度：>1500 字 → 每 16ms 30 字符；否则每 16ms 12 字符；总时长上限 ~6s
+    const chunk = len > 1500 ? 30 : 12;
+    const maxTicks = 375; // 375 * 16ms ≈ 6s
+    const ticksNeeded = Math.ceil(len / chunk);
+    const step = Math.max(1, Math.ceil(ticksNeeded / maxTicks)); // 超长时放大步长保 6s 上限
+    const t = setTimeout(() => setShown((s) => Math.min(len, s + chunk * step)), 16);
+    return () => clearTimeout(t);
+  }, [active, shown, text]);
+
+  return {
+    displayed: text.slice(0, shown),
+    done,
+    skip: () => setShown(text.length),
+  };
+}
+
 
 /**
  * 单条消息气泡。
@@ -110,6 +151,11 @@ export default function MessageBubble({ message, onQuote, onBranch }) {
   const text = message.text ?? '';
   const [copied, setCopied] = useState(false);
   const [branched, setBranched] = useState(false);
+  // 回放打字机：assistant 且带 replay 标记（终端完整答案到达）→ 逐字/逐块显示
+  const replaying = !isUser && message.replay && !message.streaming;
+  const { displayed, done, skip } = useReplay(text, replaying);
+  const displayText = replaying ? displayed : text;
+  const isReplayActive = replaying && !done;
 
   // 分支按钮点击：防抖（连点不重复建）；成功后短暂反馈
   const handleBranch = async () => {
@@ -218,9 +264,15 @@ export default function MessageBubble({ message, onQuote, onBranch }) {
               pre: ({ children }) => <pre className="msg-code">{children}</pre>,
             }}
           >
-            {text}
+            {displayText}
           </ReactMarkdown>
         </div>
+        {/* 回放打字机：未播完显示跳过按钮 + 光标 */}
+        {isReplayActive && (
+          <button className="msg-replay-skip" onClick={skip} title="立即显示完整内容">
+            ⏭ 跳过
+          </button>
+        )}
         {message.attachments?.length > 0 && (
           <div className="msg-attach-row">
             {message.attachments.map((a) => (
@@ -228,7 +280,16 @@ export default function MessageBubble({ message, onQuote, onBranch }) {
             ))}
           </div>
         )}
-        {message.streaming && <span className="cursor" aria-hidden="true" />}
+        {(message.streaming || isReplayActive) && <span className="cursor" aria-hidden="true" />}
+        {!message.streaming && message.usage && (
+          <div
+            className="msg-usage"
+            title={`本轮用量：输入 ${message.usage.input_tokens ?? 0} · 输出 ${message.usage.output_tokens ?? 0} · 思考 ${message.usage.output_tokens_details?.thinking_tokens ?? 0} · 缓存读 ${message.usage.cache_read_input_tokens ?? 0} / 写 ${message.usage.cache_creation_input_tokens ?? 0}（输入含记忆/历史上下文）`}
+          >
+            ↑{message.usage.input_tokens ?? 0} ↓{message.usage.output_tokens ?? 0}
+            {message.usage.output_tokens_details?.thinking_tokens > 0 && ` 🧠${message.usage.output_tokens_details.thinking_tokens}`}
+          </div>
+        )}
         {actions}
       </div>
     </div>

@@ -86,6 +86,12 @@ export const api = {
   mediaTask: (id) => request(`/media/task/${id}`),
   // 强制结束当前对话任务（杀 claude + 清生成任务）
   forceStop: (id) => request(`/sessions/${id}/force-stop`, { method: 'POST' }),
+
+  // ---- 成本统计 v1.6.0：全局 token 汇总（单会话 stats 前端暂未用，保留后端路由） ----
+  stats: () => request('/stats'),
+
+  // ---- 搜索 v1.6.0：标题 + 消息全文 ----
+  search: (q) => request(`/search?q=${encodeURIComponent(q)}`),
   mediaDownload: async (body) => {
     const res = await fetch(BASE + '/media/download', {
       method: 'POST',

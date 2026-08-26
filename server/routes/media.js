@@ -28,6 +28,7 @@ export function mediaHandler(ctx) {
     }
 
     if (method === 'GET' && pathname === '/api/media') {
+      if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
       return sendJson(res, 200, { media: listMedia() });
     }
 
@@ -79,6 +80,7 @@ export function mediaHandler(ctx) {
 
     // 技能包：生成媒体 / 下载视频（必须在 mm 文件匹配之前，否则 /api/media/config 会被当成文件 id）
     if (method === 'GET' && pathname === '/api/media/config') {
+      if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
       return sendJson(res, 200, media.getConfig());
     }
 
@@ -95,7 +97,7 @@ export function mediaHandler(ctx) {
         }
         if (body.kind === 'video') {
           if (gsess) ctx.maybeStartMediaClaude(gsess, 'video', prompt);
-          return sendJson(res, 200, await media.generateVideo({ prompt, model: body.model, ratio: body.ratio, duration: body.duration, resolution: body.resolution }));
+          return sendJson(res, 200, await media.generateVideo({ prompt, model: body.model, ratio: body.ratio, duration: body.duration, resolution: body.resolution, refMode: body.refMode, refImages: body.refImages }));
         }
         return sendJson(res, 400, { error: 'BAD_KIND', message: 'kind 需为 image 或 video' });
       } catch (e) {
@@ -105,6 +107,7 @@ export function mediaHandler(ctx) {
 
     const mtask = pathname.match(/^\/api\/media\/task\/([^/]+)$/);
     if (mtask && method === 'GET') {
+      if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
       try {
         return sendJson(res, 200, await media.queryTask(mtask[1]));
       } catch (e) {
@@ -126,6 +129,7 @@ export function mediaHandler(ctx) {
     // 媒体文件服务 / 下载 / 删除（放最后：/api/media/{id} 不与其他端点冲突）
     const mm = pathname.match(/^\/api\/media\/([^/]+)(\/download)?$/);
     if (mm) {
+      if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
       const [, mid, dl] = mm;
       const rec = getMedia(mid);
       if (!rec) return sendJson(res, 404, { error: '文件不存在' });

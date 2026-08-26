@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import MediaPicker from './MediaPicker.jsx';
+import RefImagePicker from './RefImagePicker.jsx';
 import SkillBar from './SkillBar.jsx';
 import { uploadToMedia } from '../utils/upload.js';
 import { api } from '../api.js';
@@ -9,7 +10,7 @@ import { api } from '../api.js';
  * 附件（图片/视频/文档）：拖拽 / 粘贴图片 / 📎媒体库选择 → 统一上传管线 → 附件条。
  * 引用：quote 非空时输入框上方显示引用栏；发送时父级拼成 markdown 引用块。
  */
-export default function Composer({
+const Composer = forwardRef(function Composer({
   value,
   onChange,
   onSend,
@@ -22,16 +23,16 @@ export default function Composer({
   attachments,
   onAttachmentsChange,
   onGenSend,
-}) {
+}, ref) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [dragging, setDragging] = useState(false);
-
   // 技能包：生图 / 生视频 / 下载视频
   const [skill, setSkill] = useState(null);
-  const [genOpts, setGenOpts] = useState({ model: '', ratio: '9:16', duration: undefined, resolution: undefined, url: '', transcribe: false });
+  const [genOpts, setGenOpts] = useState({ model: '', ratio: '9:16', duration: undefined, resolution: undefined, url: '', transcribe: false, refMode: '' });
   const [mediaCfg, setMediaCfg] = useState(null);
+  const [refPickerOpen, setRefPickerOpen] = useState(false); // @ 补全参考图面板
+  const [refInsertPos, setRefInsertPos] = useState(null); // 插入 @imageN 后光标恢复位置
 
   useEffect(() => {
     api
@@ -43,18 +44,29 @@ export default function Composer({
   // 切换技能 → 默认选中该技能第一个模型
   const handleSkillChange = (sk) => {
     setSkill(sk);
+    setRefPickerOpen(false); // 切技能关 @ 面板
     if (sk) {
-      const list = sk === 'image' ? mediaCfg?.imageModels || [] : mediaCfg?.videoModels || [];
-      setGenOpts((o) => ({ ...o, model: list[0]?.id || o.model }));
+      setGenOpts((o) => {
+        const next = { ...o };
+        // image/video 技能切模型到该技能第一个；download 不用 model，保持原值
+        if (sk === 'image' || sk === 'video') {
+          const list = sk === 'image' ? mediaCfg?.imageModels || [] : mediaCfg?.videoModels || [];
+          next.model = list[0]?.id || o.model;
+        }
+        // F2：切到生视频重置时长/分辨率，防跨技能遗留越界（如 2.0 的 4K 切回 2.5 无 4K → 提交失败）
+        if (sk === 'video') {
+          next.duration = undefined;
+          next.resolution = undefined;
+        }
+        return next;
+      });
     }
   };
-  const fileRef = useRef(null);
-  const dragCounter = useRef(0);
-
   const submit = () => {
     // 技能模式：走生成/下载 API，不触发 claude 回复
     if (skill && onGenSend) {
       if (streaming) return; // 聊天流式中不能技能生成：占位 streaming:true 会被流式增量污染
+      if (uploading) return; // F3：上传中不触发（防参考图漏带 + 附件清空后上传完成"复活"）
       if (skill === 'download') {
         const url = (genOpts.url || '').trim();
         if (!url) return;
@@ -64,10 +76,25 @@ export default function Composer({
         const t = value.trim();
         if (!t) return;
         const opts = { skill, prompt: t, model: genOpts.model, ratio: genOpts.ratio, resolution: genOpts.resolution };
-        if (skill === 'video') opts.duration = genOpts.duration;
+        if (skill === 'video') {
+          // duration ?? min：滑块显示与提交保持一致（初始未拖 = 用该模型最低时长）
+          const cur = (mediaCfg?.videoModels || []).find((m) => m.id === genOpts.model);
+          opts.duration = genOpts.duration ?? cur?.durationRange?.min;
+          // 参考图：附件里的图片按顺序作为参考（上传/媒体库两个入口天然都有）
+          let imgs = attachments.filter((a) => a.kind === 'image');
+          // F1：显式选「无」(none) 时不发参考图；''（未选）挂图才默认参考素材
+          if (imgs.length && genOpts.refMode !== 'none') {
+            if (genOpts.refMode === 'first') imgs = imgs.slice(0, 1); // 首帧只用第 1 张
+            else if (genOpts.refMode === 'firstlast') imgs = [imgs[0], imgs[imgs.length - 1]].filter(Boolean); // F4：首帧 + 末帧
+            else imgs = imgs.slice(0, 8); // 参考素材上限 8
+            opts.refMode = genOpts.refMode || 'ref'; // 挂了图但没选方式 → 默认参考素材
+            opts.refImages = imgs.map((a) => a.id);
+          }
+        }
         onGenSend(opts);
         onChange('');
         if (taRef.current) taRef.current.style.height = 'auto';
+        onAttachmentsChange([]); // 生视频提交后清空附件（与普通发送一致）
       }
       return;
     }
@@ -87,7 +114,7 @@ export default function Composer({
     try {
       const results = await Promise.all(list.map((f) => uploadToMedia(f).catch(() => null)));
       const ok = results.filter(Boolean);
-      if (ok.length) onAttachmentsChange([...attachments, ...ok]);
+      if (ok.length) onAttachmentsChange((prev) => [...prev, ...ok]); // F3：函数式更新，防交叉上传覆盖丢附件
       if (ok.length < list.length) setUploadError('部分文件上传失败（类型不支持或超过 50MB）');
     } catch {
       setUploadError('上传失败，请重试');
@@ -102,34 +129,8 @@ export default function Composer({
     addFilesRef.current = addFiles;
   }, [addFiles, attachments]);
 
-  // 拖拽上传（dragCounter 防子元素嵌套闪烁）
-  useEffect(() => {
-    const container = document.querySelector('.composer');
-    if (!container) return;
-    const onDragEnter = (e) => { e.preventDefault(); dragCounter.current++; setDragging(true); };
-    const onDragOver = (e) => e.preventDefault();
-    const onDragLeave = (e) => {
-      e.preventDefault();
-      dragCounter.current--;
-      if (dragCounter.current <= 0) { dragCounter.current = 0; setDragging(false); }
-    };
-    const onDrop = (e) => {
-      e.preventDefault();
-      dragCounter.current = 0;
-      setDragging(false);
-      addFilesRef.current(e.dataTransfer?.files);
-    };
-    container.addEventListener('dragenter', onDragEnter);
-    container.addEventListener('dragover', onDragOver);
-    container.addEventListener('dragleave', onDragLeave);
-    container.addEventListener('drop', onDrop);
-    return () => {
-      container.removeEventListener('dragenter', onDragEnter);
-      container.removeEventListener('dragover', onDragOver);
-      container.removeEventListener('dragleave', onDragLeave);
-      container.removeEventListener('drop', onDrop);
-    };
-  }, []);
+  // 暴露 addFiles 给父级（聊天区拖放转发用）：稳定引用，始终调最新
+  useImperativeHandle(ref, () => ({ addFiles: (files) => addFilesRef.current(files) }), []);
 
   // 粘贴图片（优先取剪贴板图片）
   const handlePaste = (e) => {
@@ -152,6 +153,35 @@ export default function Composer({
     }
   };
 
+  // @ 补全：生视频技能下，光标前是 @ 时弹参考图面板（onKeyUp 读稳定光标；打开后保持直到选图/Esc/点外/切技能）
+  const handleKeyUp = (e) => {
+    if (skill !== 'video') return;
+    const ta = taRef.current;
+    if (!ta) return;
+    if (value[ta.selectionStart - 1] === '@') setRefPickerOpen(true);
+  };
+
+  // 面板引用"已挂的图"：插入 @imageN（N=该图在附件的 index+1），图已在附件，不加附件
+  const handleRefSelect = (media, index) => {
+    const ta = taRef.current;
+    const pos = ta ? ta.selectionStart : value.length;
+    // 实测抓 bug：光标前是刚输入的 @（触发面板的那个）→ 替换它（插入到 @ 位置并跳过 @），避免 @@image1 / 残留 @
+    const replaceAt = pos > 0 && value[pos - 1] === '@';
+    const start = replaceAt ? pos - 1 : pos;
+    const insert = `@image${index + 1} `;
+    const next = value.slice(0, start) + insert + value.slice(start + (replaceAt ? 1 : 0));
+    onChange(next);
+    setRefInsertPos(start + insert.length); // 光标恢复位置
+  };
+
+  // 插入后恢复光标到插入文本后（React 受控输入框光标复位经典坑）
+  useEffect(() => {
+    if (refInsertPos == null) return;
+    const ta = taRef.current;
+    if (ta) ta.setSelectionRange(refInsertPos, refInsertPos);
+    setRefInsertPos(null);
+  }, [refInsertPos, value]);
+
   const handleChange = (e) => {
     onChange(e.target.value);
   };
@@ -165,7 +195,14 @@ export default function Composer({
 
   return (
     <div className="composer">
-      {dragging && <div className="composer-drop-hint">松开上传到媒体库并附加</div>}
+      {skill === 'video' && (
+        <RefImagePicker
+          open={refPickerOpen}
+          onClose={() => setRefPickerOpen(false)}
+          onSelect={handleRefSelect}
+          attachedImages={attachments.filter((a) => a.kind === 'image')}
+        />
+      )}
 
       {quote && (
         <div className="quote-bar">
@@ -201,6 +238,19 @@ export default function Composer({
         </div>
       )}
 
+      {skill === 'video' && attachments.filter((a) => a.kind === 'image').length > 0 && (
+        <div className="composer-refnote">
+          📌 图片将作为参考图
+          {genOpts.refMode === 'first'
+            ? '（首帧只用第 1 张）'
+            : genOpts.refMode === 'firstlast'
+              ? '（首帧 + 末帧）'
+              : genOpts.refMode === 'none'
+                ? '（无参考，图片将忽略）'
+                : '（参考素材）'}
+        </div>
+      )}
+
       <div className="composer-row">
         <button className="composer-attach-btn" title="从媒体库选择" onClick={() => setPickerOpen(true)}>📎</button>
         <textarea
@@ -222,6 +272,7 @@ export default function Composer({
           value={value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          onKeyUp={handleKeyUp}
           onPaste={handlePaste}
           rows={1}
           disabled={disabled}
@@ -235,6 +286,7 @@ export default function Composer({
             disabled={
               disabled ||
               uploading ||
+              streaming || // F7：技能模式 streaming 中禁用（防按钮可点但静默无效）
               (skill === 'download' ? !(genOpts.url || '').trim() : skill ? !value.trim() : !value.trim() && !attachments.length)
             }
           >
@@ -260,4 +312,5 @@ export default function Composer({
       />
     </div>
   );
-}
+});
+export default Composer;

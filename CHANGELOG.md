@@ -1,5 +1,206 @@
 # 更新日志
 
+## v1.8.3（2026-08-26）—— @ 引用已挂的图（简化） 🖼️
+
+### 🎯 变更
+- **@ 只引用"已挂在输入框附件里"的图**（v1.8.2 是弹媒体库全部图面板）→ 简化：要新图先挂图（拖/📎），再 @ 引用
+- 没挂图输入 @ → 面板提示"先挂图再 @ 引用"
+- 点已挂图 → 插入 `@imageN`（N=该图在附件的顺序），**不重复加附件**（已在）
+
+### 🔧 涉及改动
+- `web/src/components/RefImagePicker.jsx`：去掉媒体库加载（fetch /api/media）→ 改收 `attachedImages` prop 直接显示附件图；空时提示"先挂图"
+- `web/src/components/Composer.jsx`：`handleRefSelect(media, index)` 只插入 `@image{index+1}`、不加附件；传 `attachedImages=附件图片`
+
+### ✅ 实测（Playwright）
+- 没挂图 @ → 提示"先挂图" · 挂图后 @ → 面板只显示已挂图 · 点图 → `@image1` 干净插入（无双 @）· 附件不重复 · 挂 2 张 → 点第 2 张 → `@image2`
+
+### 📌 本次不做
+媒体库 @ 面板（已去掉）· 搜索过滤 · 删除附件自动重编号
+
+---
+
+## v1.8.2（2026-08-26）—— 生视频 @ 补全参考图 @🎨
+
+### 🆕 新增
+- **@ 自动补全参考图**：生视频技能下，输入框打 `@` → 弹出媒体库图片面板（缩略图网格）→ 点一张 → 自动插入 `@imageN` + 加入附件参考图。选图即引用，不用手动挂图+写编号
+  - 编号 = 附件图片数 + 1，与附件顺序一致（提交时 @imageN 精确对应第 N 张参考图）
+  - 插入到最新光标位置；光标自动停到插入文本后
+  - 仅生视频技能启用；Esc / 点外 / 切技能关闭面板
+
+### 🔧 涉及改动
+- `web/src/components/RefImagePicker.jsx`（新组件）：媒体库图片面板（filter kind=image 限 50 张滚动、Esc/点外关闭）
+- `web/src/components/Composer.jsx`：@ 检测（onKeyUp 读光标前字符）+ 选图插入（替换触发 @，防双 @）+ 编号协调 + 光标恢复（useEffect setSelectionRange）+ 函数式追加附件
+- `styles.css`：面板浮层样式
+
+### 🔧 实测抓 bug（Playwright）
+- **双 @ / 残留 @**：插入 `@image1` 时没替换掉触发面板的 `@` → `test @@image1 @` → 修复：替换 @ 位置并跳过原 @（`start=pos-1, slice(start+1)`）
+- 实测通过：面板弹出 → 插入 `@image1` 干净 → 二次插入 `@image2` 编号位置正确 → 附件标注出现
+
+### 📌 本次不做
+搜索过滤 · 内联缩略图（纯文本 @imageN）· 聊天模式 @ 补全 · 删除中间附件自动重编号
+
+---
+
+## v1.8.1（2026-08-26）—— 漏洞与冗余修复（2-agent 审查） 🔧
+
+### 🔴 高危（实测验证）
+- **H1 并发重复下载 + 锁双减**：前端轮询与后端盯梢并发调 queryTask，都过入口检查 → 同一视频下载两遍 + `active` 双减 → 新任务锁丢失可并发提交突破 MAX_ACTIVE。修复：queryTask 共享在飞 Promise（`t.querying`）+ 每任务 `lockHeld` 只释放一次
+- **H2 孤儿释放锁**：force-stop 清空后，在飞 queryTask 终态仍 `active--` → 新任务锁被打回 0。修复：cancelAll 先把所有 `lockHeld` 置 false（阻止孤儿释放）
+
+### 🟠 中危
+- **M1 后端参考图不按 mode 限张数**：first 能传 5 张 / ref 传 100 张 → 按 mode 截断（1/2/8）
+- **M2 429 限流误杀**：所有 4xx 判"任务不存在"→ 只 404/410 判终态，429 等走 failCount 重试
+- **F1「无参考」被覆盖**：『无』值 '' 与"未选"同值 → 选无+挂图被默认 ref（白烧钱）→ 改独立值 'none'
+- **F2 跨技能遗留 duration/resolution**：2.0 选 4K → 切走切回 2.5 无 4K → 提交失败 → 切技能重置
+- **F3 上传竞态**：addFiles 闭包旧值丢附件 + 生视频提交不查 uploading → 函数式更新 + 提交前查 uploading
+- **F4 首尾帧取前 2 张**：应为首帧+末帧 → `[imgs[0], imgs[last]]`
+
+### 🟢 防御/整洁
+- L1 duration 空数组兜底失效 + 加整数校验 · L2 gen_tasks.json 无界增长（cleanTimer 同步 persist + loadTasks 清超期）· L3 参考图脏记录守卫 · L4 选参考但图空静默降级 → 明确报错 · F5 切会话 tick/poll 定时器空转（标注待办）· F7 streaming+技能按钮假死（disabled 加 streaming）· 删 fileRef 死变量 · download 技能不再重置 video 模型 · resolution 存储口径统一
+
+### ✅ 回归（实测）
+- 连续 4 个无效参考图 → 锁不泄漏 · duration 4.5 → 整数校验拦截 · 首帧图生视频完整链路 90s done · done 后锁正常释放
+
+### 📌 待办标注
+- F5 生视频 tick/poll 定时器切会话/卸载清理（低危·无数据丢失）· F6 附件乐观清空失败后回填（低危）· api.js 错误字段口径统一（mediaTask 读 j.error vs message）
+
+---
+
+## v1.8.0（2026-08-26）—— 生视频参考图（首帧/首尾帧/参考素材） 🖼️🎬
+
+### 🆕 新增
+- **生视频参考图**：生视频技能下可选参考图，三种模式——首帧（图当第一帧）/ 首尾帧（两张图之间生成）/ 参考素材（多图 ≤8，风格/主体参考）
+- **复用输入框附件**：挂图 = 参考图（拖拽/粘贴/📎媒体库两个入口天然都有，不用单独选图 UI）；附件条技能模式下醒目标注"图片将作为参考图"
+- **base64 本地图直传火山**：无需公网 URL（实测确认 2.5/2.0 都认 `role: first_frame/last_frame/reference_image` + base64，**统一格式不用按模型分支**）
+- **@ 引用**：参考素材模式提示词可写 `@image1` 指认第一张图（透传 + UI 灰字提示）
+- **首帧/首尾帧自动省略 ratio**（火山按图片比例自适应，不裁切）
+
+### 🔧 涉及改动
+- `server/lib/mediaGen.js`：`buildRefBlocks`（读媒体图 base64 + role 排序 + 总预算 58MB + 防御）+ `generateVideo` 加 refMode/refImages + 参考图请求超时 120s
+- `server/routes/media.js`：透传 refMode/refImages
+- `web/src/components/Composer.jsx`：生视频提交把附件 image→refImages（首帧取1/首尾帧取2/参考素材≤8）、默认 refMode='ref'、提交后清空附件、附件条参考图标注
+- `web/src/components/SkillBar.jsx`：参考方式单选（无/首帧/首尾帧/参考素材）+ @ 提示
+- `web/src/components/ChatWindow.jsx`：mediaGenerate 透传参考图参数
+- `styles.css`：参考方式按钮样式
+
+### 🔧 审查迭代（4 轮审视 + 实测抓 2 bug）
+- **锁泄漏 bug（实测抓到）**：buildRefBlocks 在校验后、try 外抛错（REF_INVALID）→ `active+=1` 未释放 → 后续生成全 BUSY → 移入 try 块
+- 单张 5MB 限制太紧（挡掉 4K 图）→ 改**总预算 58MB**
+- 首帧图比例冲突 → 省略 aspect_ratio
+- 火山创建任务阶段校验参数被拒不扣钱 = 天然安全网
+- 附件语义标注可见性 / 切换参考方式自动截断 / 后端 refMode 白名单防御
+
+### ✅ 实测通过（mini 5s 720P 首帧图生视频）
+- 2.5 首帧 `role: first_frame` base64 → HTTP 200
+- 2.5 参考素材 `role: reference_image` base64 → HTTP 200
+- Neko 完整链路：提交（媒体库图当首帧）→ 盯梢 → 约 70s done → 3.3MB 视频落盘
+- 无效参考图 → REF_INVALID 拦截（不花钱）+ 锁不泄漏
+
+### 📌 本次不做
+参考视频（本地视频无法上传火山·技术障碍）· 图片压缩（零依赖）· 真人脸检测（火山拒·提示）
+
+---
+
+## v1.7.0（2026-08-26）—— 生视频认领式兜底 + 时长滑块 🎬🛟
+
+### 🆕 新增
+- **生视频「认领式兜底」**：任务从提交起由后端盯到完成自动落盘（不再依赖前端轮询）——关页/刷新/服务崩溃重启都不丢任务，火山跑完自动下载进媒体库，**不再白烧钱**
+  - 任务落盘 `data/gen_tasks.json`（原子写），启动自动认领 24h 内未完成任务继续盯
+  - 无固定放弃上限：火山说 running 就一直盯（4K 排队 1 小时也等），只有火山明确失败才停
+  - running 超 6 小时强制停（终极刹车，防火山永不返回 → 永久 BUSY）
+  - 连续 3 次查询失败（断网/API 挂）→ 判"查询失败"（释放锁，提示可重新生成）
+  - 点「结束」同步清落盘 → 重启不会复活
+- **生视频时长滑块**：固定档下拉 → 范围内自由拖动（2.5 支持 4~30s，2.0/Mini/Fast 4~15s），显示当前值，切模型自动收敛范围，默认最低值；CLI `--duration` 同步改范围校验
+
+### 🔧 涉及改动
+- `server/lib/mediaGen.js`：后端自轮询盯梢定时器（4K 放宽 10s/防重入）+ 任务落盘 + 启动认领 + 复活检查 + 6h 上限 + TTL 细化（done 10min / error 24h）+ cancelAll 清盘 + 查询失败分级（404→失败）+ 顺手修"成功但无视频地址假装成功"bug
+- `server/lib/settings.js` + `doubao_models.json`：`durations` 数组 → `durationRange{min,max}`（两处同步）
+- `server/server.js`：传 `dataDir` 供任务落盘
+- `web/src/components/SkillBar.jsx`：时长下拉 → 滑块；`Composer.jsx`：提交时 `duration ?? min` 兜底
+- `seedance_gen.py`：CLI 时长范围校验 + `--list` 显示范围
+
+### 🔧 审查迭代（方案 5 轮审视 + 实测发现）
+- 认领锁 2 分钟窗口实测翻车：提交后立即崩溃重启会被"认领锁"挡住不认领 → **去掉认领锁**（单实例重启时旧进程必然已死；双实例重复下载为可接受标注场景）
+- 提交值与 UI 一致性：滑块显示 min 但提交 undefined → Composer 兜底 `?? min`
+
+### ✅ 实测通过（Mini 5s 720P）
+- 提交 → 立即杀服务 → 重启 → "启动认领未完成任务" → 火山已完成 → 自动补下载落盘 3.2MB mp4
+- 重启不认领 done 任务（完成的不复活）
+- force-stop 清空落盘（结束的不复活）
+
+---
+
+## v1.6.1（2026-08-25）—— 导出统一 + 搜索 v2.0 🚀
+
+### 🆕 新增
+- **统一导出面板（ExportDialog）**：所有导出入口收敛为两个——聊天区"导出"（当前会话 txt/json）+ 设置"导出全部"（全部 txt/zip），都弹统一面板选形式 + 勾选含思考；侧栏会话项 ⬇ 与 💾 备份全部 移除
+- **搜索 v2.0**：从"搜会话"升级为"搜内容直达气泡"——只搜消息内容、结果精确到气泡（点击跳转定位对应消息）、多关键词空格/逗号分词 + AND 降级 OR（标注命中词）、每会话所有命中气泡全列、上限 200
+
+### 🔧 涉及改动
+- `web/src/components/ExportDialog.jsx`（新增通用导出面板）
+- `ChatWindow.jsx` / `SkinSettings.jsx` / `SessionItem.jsx` / `Sidebar.jsx`：导出入口统一 + 移除重复按钮
+- `server/routes/sessions.js`：search 路由重写（消息级结果 + AND/OR + 200 上限）
+- `MessageList.jsx`：全部消息加 `msg-{index}` 锚点；`App.jsx` + `ChatWindow.jsx`：jumpTarget 跳转链路（切会话 → 定位气泡）
+
+### 🔧 审查修复（2-agent）
+- **搜索跳转高危 bug**：切到另一会话时过渡渲染会命中旧会话 DOM + 提前清掉 jumpTarget（跳转失效/跳错）→ useChatStream 暴露 `messagesSessionId`，跳转 effect 确认消息数组归属目标会话后再滚动
+- **搜索后端**：snippet 定位改为"所有命中词在文本中最早位置"（修复输入序首词切错上下文）· 关键词去重（"导演 导演"不再算 2 词）· 按完整词限 10 个（不再码元截断切半词）· 单遍收集替代 AND/OR 双扫
+- 死 props 清理（App 给 ChatWindow 传了未使用的 onRename）· ExportDialog `formats` 加默认值
+
+---
+
+## v1.6.0（2026-08-25）—— 三项增强：会话备份 + 搜索 + 成本统计 💾🔍📊
+
+### 🆕 新增
+- **会话 JSON 备份 💾**：会话项 ⬇ 导出单个 JSON（完整数据可恢复）；侧栏「💾 备份全部」打包 zip（复用 STORE 模式 zip，零依赖）
+- **搜索 🔍**：侧栏搜索框（防抖 300ms）→ 标题 + 消息全文搜索，结果带片段点击跳转（性能兜底：限最近 100 会话、每会话首命中即止）
+- **成本统计 📊**：每条 AI 消息显示 token 用量（↑输入 ↓输出 🧠思考）；侧栏底部全局累计；usage 从 claude result 事件抓取落盘（含缓存读/写 + 思考 token）
+
+### 🔧 涉及改动
+- `server/routes/sessions.js`：`GET /api/sessions/:id/export` + `/api/sessions/export-all` + `/api/search?q=` + `/api/stats` + `/api/sessions/:id/stats`；result 事件抓 usage 落盘
+- `web/src/components/SessionItem.jsx`：⬇ 导出按钮
+- `web/src/components/Sidebar.jsx`：💾 备份全部 + 搜索框 + 结果列表 + 全局统计条
+- `web/src/components/MessageBubble.jsx`：AI 消息 token 小字
+- `web/src/api.js`：`stats` / `sessionStats` / `search` 方法
+
+### 🔧 审查修复（2-agent 并行审查 + 逐项验证）
+- **export-all 上限**：会话数 200 / 字节 500MB，防全内存打包 OOM/阻塞
+- **export-all 重名去重**：重名加 `(n)` 序号，防 zip 同名覆盖静默丢数据
+- **分支剥离 usage**：修复成本统计在父会话+分支重复计数
+- **新 GET 端点来源校验**：export/search/stats 防 DNS rebinding 数据外带（实测陌生 Origin → 403）
+- **标题消毒加控制字符** + 抽 `safeFilename` 单一实现（修两处复制粘贴不一致）
+- **usage 取值简化 + 空对象防御 + 与 text 解耦**（无文本也记成本）
+- **搜索 q 长度上限** + 常量提模块级 + `mergeUsage` 统一聚合
+- **前端**：搜索竞态守卫（防旧请求覆盖新结果）· 全局统计随 sessions 刷新（聊天中不再静止）· 点击结果跳转清空搜索态 · 搜索失败独立提示 · debounce 卸载清理
+
+### 🔧 二轮复查修复（2-agent 复查修复本身 + 遗漏）
+- **safeFilename 防孤代理崩溃**：标题可能被 `slice(0,15)` 切断 emoji 产生孤代理 → 单会话导出 `encodeURIComponent` 抛 URIError 500；加 `stripLoneSurrogates` 清理（合法 emoji 保留）
+- **safeFilename 补全**：控制字符全挡（0-31）+ Windows 保留设备名（CON/PRN/AUX/NUL/COM/LPT）加前缀
+- **export-all 去重升级**：Set 记最终名循环 +1，避开真实标题同名撞车（如真实会话叫 `a(1)` 时不再覆盖）
+- **来源校验补全**：会话列表/详情/消息 + media.js 全部 GET（列表/config/task/文件）都加 `isLocalRequest`（远程代理会改写 Origin 不受影响）
+- **export-all 超限 404 文案**：区分"没会话"和"超 500MB 上限"
+- **usage 取值简化**：`evt.usage ?? evt.result?.usage ?? null`
+- **前端搜索状态机补漏**：清空查询时递增请求序号（失效在途请求）+ 每次击键重置 results（防旧结果闪现）+ 卸载清理递增 seq
+
+### 🔧 全项目审查修复（3-agent 全项目审查：后端核心 / 媒体远程 / 前端全部）
+- **P0 安全**：
+  - 去掉 `Origin: null` 本地来源放行（沙箱 iframe / data: 文档等恶意网页可烧豆包配额 / 开远程隧道 / 填磁盘；实测 403）
+  - busy 锁 finally 兜底（claude 启动失败不再锁死会话永久 409）+ claudeRunner 过滤 prompt NUL（spawn 不再抛 ERR_INVALID_ARG_VALUE）
+  - sessions.json 原子写（tmp+rename，防崩溃时写一半损坏索引 → 丢全部会话）
+- **P1 并发 / SSRF**：
+  - 生图加并发锁（与生视频同一把 active，防堆叠烧额度）
+  - 下载视频 SSRF 内网过滤（拒绝 loopback / 私网 / 云元数据段；实测 BLOCKED）
+- **P1 前端**：
+  - claude娘滚轮缩放默认路径失效修复（effect 依赖 [visible] 重挂监听）
+  - 双击 / 双 Enter 并发双流修复（streamingRef 即时守卫）
+  - 删除当前会话后立即选下一个（不再空白 3 秒）
+
+### ⚠️ 注意
+- 成本统计仅对 v1.6.0 后**新消息**有效（历史消息无 usage 数据）；被取消/停止的消息无成本记录
+- 每轮 input_tokens 含记忆 + 历史上下文（缓存命中时走 cache_read），累计按请求次数叠加 = **真实成本口径**（数字会偏大属正常）
+
+---
+
 ## v1.5.2（2026-08-25）—— 对话体验升级 📑📌
 
 ### 🆕 新增

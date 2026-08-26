@@ -35,6 +35,7 @@ export default function SessionItem({
   onRemove,
   onRename,
   onTogglePin,
+  onOpenTerminal,
   manageMode = false,
   checked = false,
   onToggleSelect,
@@ -119,6 +120,13 @@ export default function SessionItem({
       </div>
       {!manageMode && (
         <>
+          <button
+            className="session-item-term"
+            title="打开该会话的终端（常驻 claude TUI）"
+            onClick={(e) => { e.stopPropagation(); onOpenTerminal?.(session.id); }}
+          >
+            🖥
+          </button>
           <button
             className={`session-item-pin${session.pinned ? ' pinned' : ''}`}
             title={session.pinned ? '取消置顶' : '置顶会话'}

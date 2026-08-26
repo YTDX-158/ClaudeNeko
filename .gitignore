@@ -8,3 +8,4 @@ config.env
 .DS_Store
 server/log.txt
 server/media/
+data_backup_*/

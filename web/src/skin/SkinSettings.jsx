@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { skinEngine } from './skinEngine.js';
 import { api } from '../api.js';
 import { downloadText, exportSessionText } from '../utils/export.js';
+import ExportDialog from '../components/ExportDialog.jsx';
 import SkillsPanel from '../components/SkillsPanel.jsx';
 import { EFFORT_LEVELS, readDefaultEffort, setDefaultEffort } from '../utils/effort.js';
 
@@ -59,9 +60,6 @@ export default function SkinSettings({ open, onClose }) {
   const [defaultEffort, setDefEffort] = useState(readDefaultEffort); // 全局默认思考档位（省/标准/强力）
   const [remote, setRemote] = useState(null); // null=加载中 / {enabled, publicUrl, pairCode}
   const [remoteBusy, setRemoteBusy] = useState(false); // 开关切换中（防连点）
-  const [exportThinking, setExportThinking] = useState(
-    () => localStorage.getItem('neko-export-thinking') === '1',
-  ); // 导出是否包含思考过程（全局开关，默认关）
 
   // 打开设置时刷新默认档：组件常驻挂载，运行期 localStorage 可能被改/清，避免显示启动时旧值
   useEffect(() => {
@@ -131,14 +129,25 @@ export default function SkinSettings({ open, onClose }) {
     }
   };
 
-  // 导出全部会话为一个大 .txt（按会话分段）
-  const handleExportAll = async () => {
+  // 导出全部会话：统一面板选 txt/zip（含思考勾选）
+  const [exportAllOpen, setExportAllOpen] = useState(false);
+  const handleExportAllDialog = async (format, includeThinking) => {
+    if (format === 'zip') {
+      // 数据备份：全部会话打包 zip（后端 export-all，含完整数据）
+      const a = document.createElement('a');
+      a.href = '/api/sessions/export-all';
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return;
+    }
     try {
       const { sessions } = await api.listSessions();
       const parts = [];
       for (const s of sessions) {
         const { messages } = await api.listMessages(s.id);
-        parts.push(exportSessionText(s, messages, { includeThinking: exportThinking }));
+        parts.push(exportSessionText(s, messages, { includeThinking }));
       }
       const d = new Date();
       const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
@@ -476,21 +485,8 @@ export default function SkinSettings({ open, onClose }) {
                   <a href="https://platform.deepseek.com" target="_blank" rel="noopener noreferrer">🔗</a>
                 </div>
                 <div className="skin-row">
-                  <span>导出全部会话（txt 聊天记录）</span>
-                  <button className="skin-btn" onClick={handleExportAll}>导出</button>
-                </div>
-                <div className="skin-row">
-                  <span>导出包含思考过程（AI 的🧠推理内容，默认关）</span>
-                  <button
-                    className={`skin-btn${exportThinking ? ' active' : ''}`}
-                    onClick={() => {
-                      const next = !exportThinking;
-                      setExportThinking(next);
-                      localStorage.setItem('neko-export-thinking', next ? '1' : '0');
-                    }}
-                  >
-                    {exportThinking ? '开 ✓' : '关'}
-                  </button>
+                  <span>导出全部会话（文本 / 数据备份，可勾选含思考）</span>
+                  <button className="skin-btn" onClick={() => setExportAllOpen(true)}>导出</button>
                 </div>
                 <div className="skin-row">
                   <span>已装 Skills（查看全部技能）</span>
@@ -520,6 +516,18 @@ export default function SkinSettings({ open, onClose }) {
           <span>仰天大笑 × 孑孓羽然 共同开发 · 外观灵感源自 dsh-dream-skin / Aqua（MIT）</span>
         </div>
         <SkillsPanel open={skillsOpen} onClose={() => setSkillsOpen(false)} />
+        {exportAllOpen && (
+          <ExportDialog
+            title="导出全部会话"
+            scopeLabel="全部会话 · 文本或数据备份"
+            formats={[
+              { value: 'txt', label: '文本 (.txt)' },
+              { value: 'zip', label: '数据备份 (.zip)' },
+            ]}
+            onExport={handleExportAllDialog}
+            onClose={() => setExportAllOpen(false)}
+          />
+        )}
       </div>
     </div>
   );

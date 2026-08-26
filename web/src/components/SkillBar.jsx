@@ -84,17 +84,19 @@ export default function SkillBar({ skill, onSkillChange, opts, onOptsChange, med
               </option>
             ))}
           </select>
-          {curModel?.durations?.length > 0 && (
-            <select
-              value={opts.duration ?? curModel.durations[0]}
-              onChange={(e) => set({ duration: Number(e.target.value) })}
-            >
-              {curModel.durations.map((d) => (
-                <option key={d} value={d}>
-                  {d}s
-                </option>
-              ))}
-            </select>
+          {curModel?.durationRange && (
+            <div className="skillbar-duration">
+              <input
+                type="range"
+                min={curModel.durationRange.min}
+                max={curModel.durationRange.max}
+                step={1}
+                value={opts.duration ?? curModel.durationRange.min}
+                onChange={(e) => set({ duration: Number(e.target.value) })}
+                title="拖动选时长"
+              />
+              <span className="skillbar-durval">{opts.duration ?? curModel.durationRange.min}s</span>
+            </div>
           )}
           {curModel?.resolutions?.length > 0 && (
             <select value={opts.resolution || '720P'} onChange={(e) => set({ resolution: e.target.value })}>
@@ -107,6 +109,30 @@ export default function SkillBar({ skill, onSkillChange, opts, onOptsChange, med
             </select>
           )}
         </div>
+      )}
+
+      {skill === 'video' && (
+        <div className="skillbar-refmode">
+          <span className="skillbar-refmode-label">参考方式</span>
+          {[
+            { v: 'none', l: '无' }, // F1：'无' 用独立值 none，与"未选择"''区分（否则选了无还被默认 ref）
+            { v: 'first', l: '首帧' },
+            { v: 'firstlast', l: '首尾帧' },
+            { v: 'ref', l: '参考素材' },
+          ].map((o) => (
+            <button
+              key={o.v}
+              type="button"
+              className={`skillbar-refmode-btn${(opts.refMode || '') === o.v ? ' active' : ''}`}
+              onClick={() => set({ refMode: o.v })}
+            >
+              {o.l}
+            </button>
+          ))}
+        </div>
+      )}
+      {skill === 'video' && opts.refMode === 'ref' && (
+        <div className="skillbar-hint">💡 提示词里可用 @image1 指认第一张图</div>
       )}
 
       {skill === 'download' && (

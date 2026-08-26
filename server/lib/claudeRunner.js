@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 export function buildArgs({ prompt, model, effort, claudeSessionId }) {
   const args = [
     '-p',
-    prompt,
+    String(prompt).replace(/\0/g, ''), // 过滤 NUL：spawn 参数含 \0 会同步抛 ERR_INVALID_ARG_VALUE
     '--output-format',
     'stream-json',
     '--verbose',

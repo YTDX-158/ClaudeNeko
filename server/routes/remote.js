@@ -10,7 +10,8 @@ export function remoteHandler({ pairing, remote }) {
     if (method === 'GET' && pathname === '/api/remote/status') {
       // 配对码是远程访问唯一密钥，本机 GET 也无鉴权 → 校验来源，防恶意网页 DNS rebinding 读到码
       const origin = req.headers.origin || req.headers.referer || '';
-      const isLocal = !origin || origin === 'null' || /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i.test(origin);
+      // 无来源头=同源/本地程序放行；Origin: null（沙箱 iframe/data:）一律视为陌生来源
+      const isLocal = !origin || /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i.test(origin);
       if (!isLocal) return sendJson(res, 403, { error: '来源校验失败' });
       const enabled = remote.isEnabled();
       return sendJson(res, 200, {

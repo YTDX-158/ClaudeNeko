@@ -1,6 +1,6 @@
 {
   "name": "claudeneko",
-  "version": "1.5.2",
+  "version": "1.9.0",
   "private": true,
   "type": "module",
   "description": "ClaudeNeko：在浏览器中驱动 Claude Code CLI 的本地智能对话界面——双吉祥物互动、深度可定制皮肤、实时余额查询",
@@ -12,11 +12,15 @@
     "prod": "npm run build && node server/server.js"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "jimp": "^1.6.1",
+    "node-pty": "^1.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

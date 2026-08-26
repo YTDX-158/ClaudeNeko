@@ -25,7 +25,10 @@ export class SessionStore {
   }
 
   #save() {
-    fs.writeFileSync(this.sessionsFile, JSON.stringify(this.sessions, null, 2));
+    // 原子写：先写临时文件再 rename，防崩溃时写一半损坏索引 → 下次启动丢全部会话
+    const tmp = `${this.sessionsFile}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(this.sessions, null, 2));
+    fs.renameSync(tmp, this.sessionsFile);
   }
 
   /** @returns {Array<object>} 置顶优先，其次按 updatedAt 倒序的新数组。
@@ -106,5 +109,21 @@ export class SessionStore {
       }
     }
     return out;
+  }
+
+  /** 按索引更新单条消息（认领 pendingJsonl 补 claudeMessageId 用）：读改写整个文件 */
+  updateMessage(id, index, patch) {
+    const file = path.join(this.messagesDir, `${id}.jsonl`);
+    if (!fs.existsSync(file)) return;
+    const lines = fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim());
+    if (index < 0 || index >= lines.length) return;
+    try {
+      const msg = JSON.parse(lines[index]);
+      Object.assign(msg, patch);
+      lines[index] = JSON.stringify(msg);
+      fs.writeFileSync(file, lines.join('\n') + '\n', 'utf8');
+    } catch {
+      // 损坏行跳过（不阻塞）
+    }
   }
 }

@@ -4,6 +4,7 @@ import Composer from './Composer.jsx';
 import CatMascot from './CatMascot.jsx';
 import ClaudeNiang from './ClaudeNiang.jsx';
 import { downloadText, exportSessionText } from '../utils/export.js';
+import ExportDialog from './ExportDialog.jsx';
 import { api } from '../api.js';
 import { EFFORT_LEVELS } from '../utils/effort.js';
 
@@ -12,23 +13,73 @@ import { EFFORT_LEVELS } from '../utils/effort.js';
  * 输入框文本与「引用条」状态都提升到这里：
  * - 引用：点击后输入框上方浮出引用条，输入框保持干净；发送时引用 + 文字拼成 markdown 引用块一起发出
  */
-export default function ChatWindow({ session, chat, onBranch, onEffortChange }) {
+export default function ChatWindow({ session, chat, onBranch, onEffortChange, jumpTarget = null, onJumpDone }) {
   const [composerText, setComposerText] = useState('');
   const [quote, setQuote] = useState(null); // { text, role } | null
   const [attachments, setAttachments] = useState([]); // 待发送附件（媒体库快照）
   const [sid, setSid] = useState(null); // 实时 claude 会话 ID（列表快照不含，单独拉）
   const [navOpen, setNavOpen] = useState(false); // 📑 用户消息导航抽屉
   const taRef = useRef(null);
+  const composerRef = useRef(null);
+  const [dropActive, setDropActive] = useState(false);
+  const dropCounter = useRef(0);
 
-  // 用户消息导航目录：所有 user 消息（第 N 问 · 前 20 字）
-  const userMessages = (chat.messages ?? []).filter((m) => m.role === 'user');
-  const jumpToUser = (mid) => {
+  // 聊天区拖放：拖到 .chat 任意位置 → 加附件（转发给输入框 addFiles）
+  useEffect(() => {
+    const chat = document.querySelector('.chat');
+    if (!chat) return;
+    const onDragEnter = (e) => { e.preventDefault(); dropCounter.current++; setDropActive(true); };
+    const onDragOver = (e) => e.preventDefault();
+    const onDragLeave = (e) => {
+      e.preventDefault();
+      dropCounter.current--;
+      if (dropCounter.current <= 0) { dropCounter.current = 0; setDropActive(false); }
+    };
+    const onDrop = (e) => {
+      e.preventDefault();
+      dropCounter.current = 0;
+      setDropActive(false);
+      composerRef.current?.addFiles(e.dataTransfer?.files);
+    };
+    chat.addEventListener('dragenter', onDragEnter);
+    chat.addEventListener('dragover', onDragOver);
+    chat.addEventListener('dragleave', onDragLeave);
+    chat.addEventListener('drop', onDrop);
+    return () => {
+      chat.removeEventListener('dragenter', onDragEnter);
+      chat.removeEventListener('dragover', onDragOver);
+      chat.removeEventListener('dragleave', onDragLeave);
+      chat.removeEventListener('drop', onDrop);
+    };
+  }, []);
+
+  // 用户消息导航目录：所有 user 消息（第 N 问 · 前 20 字）。
+  // 跳转用「消息在完整数组里的 index」（对应 MessageList 的 msg-{index} 锚点），
+  // 不依赖消息 id/ts——老消息缺 id 或缺 ts 都能跳（方案①）。
+  // ⚠ 在 filter 时直接记录原始 index（不用 indexOf 引用比较——消息可能被合并替换，引用不稳）。
+  const allMessages = chat.messages ?? [];
+  const userMessages = allMessages
+    .map((m, idx) => ({ m, idx }))
+    .filter(({ m }) => m.role === 'user');
+  const jumpToUser = (msgIndex) => {
     setNavOpen(false);
-    // 抽屉是 fixed 不影响 message-list 布局，无需延时；rAF 确保渲染后定位
     requestAnimationFrame(() => {
-      document.getElementById(`mid-${mid}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById(`msg-${msgIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   };
+
+  // 搜索跳转：Sidebar 点结果后切会话 + 定位目标气泡。
+  // 关键守卫：必须确认当前 messages 数组确实属于目标会话（messagesSessionId），
+  // 否则切会话过渡期会命中旧会话的 msg-{index} 并提前清掉 jumpTarget（高危跳转 bug）。
+  useEffect(() => {
+    if (!jumpTarget || !session?.id) return;
+    if (jumpTarget.sessionId !== session.id) return; // 会话还没切过来
+    if (chat.messagesSessionId !== jumpTarget.sessionId) return; // 消息还没加载到目标会话（过渡期）
+    const el = document.getElementById(`msg-${jumpTarget.messageIndex}`);
+    if (!el) return; // 目标气泡还没渲染，等下次 messages 变化
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    onJumpDone?.();
+  }, [chat.messages, chat.messagesSessionId, jumpTarget, session?.id]);
 
   // 实时拉当前会话的 claudeSessionId（发消息/生成媒体后会变，消息数变化时重拉）
   useEffect(() => {
@@ -106,6 +157,8 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
           ratio: req.ratio,
           duration: req.duration,
           resolution: req.resolution,
+          refMode: req.refMode,
+          refImages: req.refImages,
           sessionId: session?.id,
         });
         let polling = false; // 防并发轮询：服务端 succeeded 分支下载 mp4 可能 >4s，两轮询并发会重复 finish
@@ -169,11 +222,21 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
     chat.stop(); // 断开 SSE + 释放前端流式态
   };
 
-  // 导出当前对话为 .txt 聊天记录（是否含思考跟全局开关一致，设置里可改）
-  const handleExport = () => {
+  // 导出当前对话：统一面板选 txt/json（含思考勾选）
+  const [exportOpen, setExportOpen] = useState(false);
+  const handleExportDialog = (format, includeThinking) => {
     if (!chat.messages.length) return;
     const safe = (session?.title ?? '新会话').replace(/[\\/:*?"<>|]/g, '_');
-    const includeThinking = localStorage.getItem('neko-export-thinking') === '1';
+    if (format === 'json') {
+      // 数据备份：触发后端单会话 JSON 下载（含 usage/thinking 完整数据）
+      const a = document.createElement('a');
+      a.href = `/api/sessions/${session.id}/export`;
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return;
+    }
     downloadText(`ClaudeNeko-${safe}.txt`, exportSessionText(session, chat.messages, { includeThinking }));
   };
 
@@ -189,13 +252,14 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
 
   return (
     <main className="chat">
+      {dropActive && <div className="chat-drop-overlay">松开以添加附件</div>}
       <header className="chat-header">
         <h1 className="chat-title">{session?.title ?? '新会话'}</h1>
         <div className="chat-tools">
           {userMessages.length > 0 && (
             <button className="chat-export" onClick={() => setNavOpen(true)} title="跳转到某条用户提问（对话导航）">📑</button>
           )}
-          <button className="chat-export" onClick={handleExport} title="导出当前对话为 .txt">导出</button>
+          <button className="chat-export" onClick={() => setExportOpen(true)} title="导出当前对话（文本/数据）">导出</button>
           <button className="chat-export" onClick={handleForceStop} title="强制结束当前对话任务（杀 claude + 取消生成，聊天卡住或生视频太久时用）">⛔ 结束</button>
           {session?.model && <span className="chat-model">{session.model}</span>}
           {session?.id && (
@@ -248,11 +312,11 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
         </div>
         <div className="msg-nav-list">
           {userMessages.length === 0 && <div className="skin-hint">还没有用户消息</div>}
-          {userMessages.map((m, i) => {
-            const mid = m.id ?? m.ts;
+          {userMessages.map(({ m, idx }, i) => {
+            // idx = 完整消息数组里的位置（对应 msg-{idx} 锚点），filter 时已记录，不依赖引用比较
             const preview = (m.text ?? '').replace(/\s+/g, ' ').trim();
             return (
-              <button key={mid} className="msg-nav-item" onClick={() => jumpToUser(mid)} title={preview}>
+              <button key={`nav-${i}`} className="msg-nav-item" onClick={() => jumpToUser(idx)} title={preview}>
                 <span className="msg-nav-num">{i + 1}</span>
                 <span className="msg-nav-text">{preview.slice(0, 24) || '（附件消息）'}</span>
               </button>
@@ -266,6 +330,7 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
       <ClaudeNiang status={mascotStatus} />
 
       <Composer
+        ref={composerRef}
         value={composerText}
         onChange={setComposerText}
         onSend={handleSend}
@@ -279,6 +344,18 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange }) 
         attachments={attachments}
         onAttachmentsChange={setAttachments}
       />
+      {exportOpen && session?.id && (
+        <ExportDialog
+          title="导出当前对话"
+          scopeLabel={`「${session.title}」 · ${chat.messages.length} 条消息`}
+          formats={[
+            { value: 'txt', label: '文本 (.txt)' },
+            { value: 'json', label: '数据 (.json)' },
+          ]}
+          onExport={handleExportDialog}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
     </main>
   );
 }

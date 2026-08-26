@@ -223,6 +223,8 @@ export default function ClaudeNiang({ status = 'idle' }) {
   }, [status]);
 
   // —— 滚轮缩放（原生 addEventListener + passive:false，避免滚轮时页面跟着滚） ——
+  // 依赖 [visible]：默认关闭时组件 return null、DOM 未挂载（wrapRef 为 null），
+  // 若依赖 [] 则监听器永不挂上、之后打开 claude娘滚轮缩放失效。visible 变 true 时重挂。
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -236,7 +238,7 @@ export default function ClaudeNiang({ status = 'idle' }) {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [visible]);
 
   const handleContextMenu = (e) => {
     e.preventDefault();

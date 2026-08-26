@@ -7,6 +7,7 @@ export default function SessionList({
   onRemove,
   onRename,
   onTogglePin,
+  onOpenTerminal,
   manageMode = false,
   selected,
   onToggleSelected,
@@ -22,6 +23,7 @@ export default function SessionList({
           onRemove={onRemove}
           onRename={onRename}
           onTogglePin={onTogglePin}
+          onOpenTerminal={onOpenTerminal}
           manageMode={manageMode}
           checked={selected?.has(s.id) ?? false}
           onToggleSelect={onToggleSelected}

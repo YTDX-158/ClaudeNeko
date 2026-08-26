@@ -32,15 +32,12 @@ export default function MessageList({ messages, error, onQuote, onBranch, sessio
         </div>
       )}
 
-      {messages.map((m) => {
-        // 用户消息挂 id 供「📑 用户消息导航」目录跳转定位
-        const userAnchor = m.role === 'user' ? { id: `mid-${m.id ?? m.ts}` } : {};
-        return (
-          <div key={m.id ?? m.ts} {...userAnchor}>
-            <MessageBubble message={m} onQuote={onQuote} onBranch={onBranch} />
-          </div>
-        );
-      })}
+      {messages.map((m, index) => (
+        // 所有消息挂 msg-{index} 锚点（搜索跳转定位）；用户消息另挂 data-mid 供「📑」目录
+        <div key={m.id ?? m.ts} id={`msg-${index}`} data-mid={m.role === 'user' ? (m.id ?? m.ts) : undefined}>
+          <MessageBubble message={m} onQuote={onQuote} onBranch={onBranch} />
+        </div>
+      ))}
 
       {error && <div className="msg-error">{error}</div>}
 

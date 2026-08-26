@@ -10,7 +10,8 @@
 //
 // 安全：
 //   - 配对码动态生成（见 pairing.js），不硬编码
-//   - 远程模式下 SSRF 高危接口（/api/media/download 任意 URL 抓取）直接 403 禁用
+//   - 远程模式下禁用高危操作：删数据（DELETE）/ SSRF 下载 / force-stop 杀进程（isBlocked，见下）
+//   - 上传图片与生成媒体（生图/生视频）放行——已配对设备 = 有凭证的外部，便利功能保留，只砍不可逆/高危
 //   - 转发用 pipe 流式透传（SSE / 大文件媒体都不缓冲，不爆内存）
 //   - 仅监听 127.0.0.1（cloudflared 才指向这里，公网不能直连本机 loopback）
 
@@ -19,8 +20,14 @@ import { randomBytes, createHash } from 'node:crypto';
 import { readBody } from '../util.js';
 
 const AUTH_COOKIE = 'neko_auth';
-/** 远程模式下禁用的路径（SSRF 等高风险接口） */
-const BLOCKED_PATHS = new Set(['/api/media/download']);
+
+/** 远程禁用判定：删数据（DELETE）/ SSRF 下载 / force-stop 杀进程 → 403。放行其余（含上传/生成媒体）。 */
+export function isBlocked(method, pathname) {
+  if (method === 'DELETE') return true;                 // 删数据（媒体等）：不可逆
+  if (pathname === '/api/media/download') return true;  // SSRF：任意 URL 抓取
+  if (pathname.endsWith('/force-stop')) return true;    // 杀 claude 进程
+  return false;
+}
 /** 配对码暴力破解防护：连续失败 N 次后锁定 M 毫秒 */
 const MAX_PAIR_FAILS = 5;
 const PAIR_LOCK_MS = 60_000;
@@ -137,8 +144,8 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
       return;
     }
 
-    // 3) 远程禁用 SSRF 高危接口
-    if (BLOCKED_PATHS.has(url)) {
+    // 3) 远程禁用高危操作（删数据 / SSRF 下载 / force-stop）
+    if (isBlocked(method, url)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: '远程模式已禁用该功能（安全保护）' }));
       return;
