@@ -99,11 +99,11 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange, ju
     // streaming 依赖：聊天发消息完成（true→false）重拉 → 分支/新建会话首次回复后 id 自动显示（不再要刷新）
   }, [session?.id, chat.messages.length, chat.streaming]);
 
-  // 技能包发送：生图/生视频（异步轮询）/下载视频（可选转录）
+  // 技能包发送：生图/生视频（异步轮询）
   // 生成中 → genCards 临时气泡；完成后 → 落盘 + 转成 AI 消息气泡进消息流
   const handleGenSend = async (req) => {
     // 用户提示词作为用户消息进会话（触发命名 + 对话完整）
-    const userText = (req.prompt || req.url || '').trim();
+    const userText = (req.prompt || '').trim();
     if (userText && session?.id) {
       const umsg = { id: `gen-u-${Date.now()}`, role: 'user', text: userText, ts: Date.now() };
       api.appendMediaMessage(session.id, { text: userText, role: 'user' }).catch(() => {});
@@ -111,7 +111,7 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange, ju
     }
     // 生成中占位（消息流内，带用户生成要求 + spinner）
     const pid = `gen-p-${Date.now()}`;
-    const label = { image: '[🎨 生图]', video: '[🎬 生视频]', download: '[⬇️ 下载]' }[req.skill] || '';
+    const label = { image: '[🎨 生图]', video: '[🎬 生视频]' }[req.skill] || '';
     const placeholder = { id: pid, role: 'assistant', text: `正在生成中（${userText}）`, streaming: true, ts: Date.now() };
     if (chat.addMessage) chat.addMessage(placeholder);
     let tick = null; // 生视频计时器（外层持有，所有失败路径都清理，防泄漏）
@@ -120,8 +120,7 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange, ju
     const finish = (extra) => {
       const resultText =
         `${label} ${userText}` +
-        (extra.transcript ? `\n\n${extra.transcript}` : '') +
-        (extra.transcribeError ? `\n⚠️ 转录失败：${extra.transcribeError}` : '');
+        (extra.transcript ? `\n\n${extra.transcript}` : '');
       const attachments = extra.mediaId
         ? [{ id: extra.mediaId, name: req.skill === 'image' ? '生成图片' : '生成视频', kind: req.skill === 'image' ? 'image' : 'video' }]
         : [];
@@ -184,9 +183,6 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange, ju
             polling = false;
           }
         }, 4000);
-      } else if (req.skill === 'download') {
-        const r = await api.mediaDownload({ url: req.url, transcribe: req.transcribe });
-        finish({ mediaId: r.mediaId, transcript: r.transcript, transcribeError: r.transcribeError });
       }
     } catch (e) {
       if (tick) clearInterval(tick); // 提交失败也清理计时器（原来只清理轮询，漏了 tick）
@@ -240,12 +236,11 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange, ju
     downloadText(`ClaudeNeko-${safe}.txt`, exportSessionText(session, chat.messages, { includeThinking }));
   };
 
-  // claude娘 心情：生成中按阶段（思考中 → 回答中），否则看输入框是否在打字
+  // claude娘 心情：生成中显示思考中（c2web 模式 assistant 整段到达，无"开始输出"中间态，
+  // 原 responding 恒 false 已删），否则看输入框是否在打字
   const typing = composerText.trim().length > 0;
   const mascotStatus = chat.streaming
-    ? chat.responding
-      ? 'responding'
-      : 'thinking'
+    ? 'thinking'
     : typing
       ? 'typing'
       : 'idle';

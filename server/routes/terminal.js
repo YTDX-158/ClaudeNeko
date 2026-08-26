@@ -15,14 +15,19 @@
 
 import { WebSocketServer } from 'ws';
 
-const TERM_BUF_MAX = 64 * 1024; // 回放缓冲上限（最近 64KB 原始字节）
+const TERM_BUF_MAX = 2 * 1024 * 1024; // 回放缓冲上限（最近 2MB 原始字节，够滚回看多次生成的完整输出；原 64KB 太小）
+const SYNC_WINDOW_MS = 200; // attach 同步窗：200ms 内 drop 实时流，等快照稳定再发（tmux-web 默认值）
 
 /**
  * 创建终端 WS 通道。
  * @param {{ ptyHost: object, transcript: object, store: object, config: object, isLocalRequest: (req)=>boolean }} deps
  */
 export function createTerminalChannel({ ptyHost, transcript, store, config, isLocalRequest }) {
-  const wss = new WebSocketServer({ noServer: true });
+  // perMessageDeflate:false —— 禁用 WS 压缩。
+  // 远程链路（cloudflared 隧道）对 permessage-deflate 压缩帧的转发不可靠（实测手机端
+  // WS 数据损坏：聊天靠 HTTP 轮询兜底仍显示但 streaming 卡死、终端完全空白）。
+  // 禁用后帧全明文，浏览器端不再协商压缩，cloudflared 字节透传即安全。
+  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
   const clients = new Set(); // 所有 ws 连接（ws.sid, ws.wantTerm）
   const termBufs = new Map(); // sid -> 最近 64KB 原始字节（attach 回放）
 
@@ -41,11 +46,19 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
   }, 60000);
   heartbeat.unref?.();
 
-  /** 给订阅某 sid 的 ws 发 JSON（try/catch 防已断） */
-  function broadcast(sid, obj) {
+  /** 给订阅某 sid 的 ws 发 JSON（try/catch 防已断）。
+   *  opts.termOnly=true：终端流只发给「已 attach（wantTerm）」且「不在同步窗内」的客户端——
+   *  防止 attach 前的客户端收到实时流、与稍后的快照回放叠加（手机远程消息重复的根因）。
+   *  聊天事件 ev 不传 termOnly（聊天不依赖 attach，要全收）。 */
+  function broadcast(sid, obj, opts) {
     const payload = JSON.stringify(obj);
+    const now = Date.now();
     for (const ws of clients) {
       if (ws.sid === sid && ws.readyState === 1) {
+        if (opts?.termOnly) {
+          if (!ws.wantTerm) continue; // 没 attach 的不收终端流
+          if (ws.syncUntil && now < ws.syncUntil) continue; // 同步窗内 drop 实时流（等快照稳定）
+        }
         ws.lastActivity = Date.now(); // M14：发送内容也算活动（claude TUI 持续输出会刷新）
         try {
           ws.send(payload);
@@ -56,16 +69,19 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
     }
   }
 
-  /** 记录/回放终端缓冲（只追加到指定 sid 的缓冲，防串会话）。M12：无人看终端（无 wantTerm）时不累积，省内存 */
+  /** 记录/回放终端缓冲（只追加到指定 sid 的缓冲，防串会话）。
+   *  只要有输出就累积（不要求有人开终端页）——聊天发消息也在累积终端历史，
+   *  重开终端页能滚回看之前的完整输出。
+   *  ⚠ 完整帧对齐（实测数据）：claude TUI 每次全量重绘以 \x1b[2J（清屏）开始。
+   *  若 termBuf 超上限被 slice 截断，回放会从「重绘中间」开始 → 手机远程屏幕乱
+   *  （消息多显示/移位/插入错位）。所以保留「最后一次清屏之后」的内容，之前的作废
+   *  → 回放始终从完整帧起点开始，不会从中间截断。 */
   function setTermBuffer(sid, d) {
-    let watching = false;
-    for (const w of clients) {
-      if (w.sid === sid && w.wantTerm) { watching = true; break; }
-    }
-    if (!watching) return;
-    const cur = termBufs.get(sid) || '';
-    const next = (cur + d).slice(-TERM_BUF_MAX);
-    termBufs.set(sid, next);
+    const prev = termBufs.get(sid) || '';
+    const combined = prev + d;
+    const lastClear = combined.lastIndexOf('\x1b[2J');
+    const from = Math.max(lastClear, combined.length - TERM_BUF_MAX); // 无清屏退化到长度上限
+    termBufs.set(sid, combined.slice(from));
   }
 
   /** M12：清理某会话的终端缓冲（会话删除/pty 回收时） */
@@ -92,6 +108,11 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
     }
     const sid = u.searchParams.get('sid');
     if (!sid) {
+      socket.destroy();
+      return;
+    }
+    // C2：校验 sid 真实存在，乱填 sid 不建空壳连接（也防 transcript 懒启动探测误绑）
+    if (!store.get(sid)) {
       socket.destroy();
       return;
     }
@@ -142,11 +163,39 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
       } else if (m.t === 'attach') {
         ws.wantTerm = true;
         ptyHost.touch(sid);
-        try {
-          ws.send(JSON.stringify({ t: 'term-replay', d: getTermBuffer(sid) }));
-        } catch {
-          // 已断
+        // 兜底：pty 不在跑（force-stop 杀过 / 空闲回收过）但用户打开了终端页 → 自动重新拉起
+        // （resume 原会话，历史还在）。注意：WS 连接可能复用（聊天在用），onConnect 不会重新触发，必须在此 ensure。
+        // ⚠ 顺序：ensure 必须在 resize 前（pty 不存在时 resize 无效）。
+        if (!ptyHost.isRunning(sid)) {
+          const session = store.get(sid);
+          ptyHost.ensure(sid, {
+            cwd: session?.cwd || config.defaultCwd,
+            claudeSessionId: session?.claudeSessionId || undefined,
+            model: session?.model,
+          });
+          transcript.ensure(sid, { cwd: session?.cwd || config.defaultCwd, claudeSessionId: session?.claudeSessionId || undefined });
+          clearTermBuffer(sid); // 新 pty 是全新 claude：旧 termBuf 作废，防新旧画面叠加
         }
+        // 客户端列宽同步（借鉴 c2web：resize 触发 Ink 用客户端列宽重绘，拿到权威完整画面）。
+        // 窄视口（手机/窄窗，cols<80）清 termBuf——防回放「旧宽列帧」在新窄屏上折行穿插；
+        // 宽视口（电脑本地）不清——保留滚动历史（回归防护）。
+        if (Number.isInteger(m.cols) && Number.isInteger(m.rows) && m.cols > 0 && m.rows > 0) {
+          if (m.cols < 80) clearTermBuffer(sid);
+          ptyHost.resize(sid, m.cols, m.rows);
+        }
+        // 同步窗（业界 tmux-web sync-window 模式）：attach 后先 drop 实时流 200ms，
+        // 等 termBuf 相对稳定（TUI 用客户端列宽重绘完）再发快照，避免「attach 前的实时流 + 快照回放」叠加乱序。
+        clearTimeout(ws.syncTimer); // 防重复 attach 双定时器
+        ws.syncUntil = Date.now() + SYNC_WINDOW_MS;
+        ws.syncTimer = setTimeout(() => {
+          if (ws.readyState !== 1 || !ws.wantTerm) return; // 中途 detach/断开就放弃
+          ws.syncUntil = 0; // 同步窗结束，恢复实时流
+          try {
+            ws.send(JSON.stringify({ t: 'term-replay', d: getTermBuffer(sid) }));
+          } catch {
+            // 已断
+          }
+        }, SYNC_WINDOW_MS);
       } else if (m.t === 'detach') {
         ws.wantTerm = false;
       }

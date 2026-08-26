@@ -128,11 +128,13 @@ export function createPtyHost({ claudeBin, onData, onExit }) {
     // M2：pty 未就绪（claude TUI 还在启动）→ 进队列，就绪后自动补发（防消息被吞）
     if (!rec.ready) {
       rec.pendingSubmits.push(String(text));
+      rec.lastActive = Date.now(); // C1：排队发送也算活跃（用户在发消息）
       return true;
     }
     try {
       rec.child.write(String(text));
       rec.child.write('\r');
+      rec.lastActive = Date.now(); // C1：注入成功刷新活跃时间（防空闲误回收）
       return true;
     } catch {
       return false;
@@ -145,6 +147,7 @@ export function createPtyHost({ claudeBin, onData, onExit }) {
     if (!rec) return false;
     try {
       rec.child.write(String(data));
+      rec.lastActive = Date.now(); // C1：透传按键也算活跃（终端操作中防误回收）
       return true;
     } catch {
       return false;
@@ -157,6 +160,7 @@ export function createPtyHost({ claudeBin, onData, onExit }) {
     if (!rec) return;
     try {
       rec.child.resize(cols || DEFAULT_COLS, rows || DEFAULT_ROWS);
+      rec.lastActive = Date.now(); // C1：窗口调整也算活跃（防缩放间隙误回收）
     } catch {
       // 已退出
     }

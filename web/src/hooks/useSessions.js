@@ -115,11 +115,6 @@ export function useSessions() {
     );
   }, [sessions, patch]);
 
-  // 纯本地更新标题（服务端已改，这里只同步 UI，避免重复 PATCH）
-  const updateLocalTitle = useCallback((id, title) => {
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
-  }, []);
-
   // 纯本地更新模型（claude 实际用的模型由后端推来，右上角实时显示）
   const updateLocalModel = useCallback((id, model) => {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, model } : s)));
@@ -127,5 +122,5 @@ export function useSessions() {
 
   const activeSession = sessions.find((s) => s.id === activeId) ?? null;
 
-  return { sessions, activeId, activeSession, loading, refresh, create, remove, removeMany, patch, togglePin, updateLocalTitle, updateLocalModel, setActiveId };
+  return { sessions, activeId, activeSession, loading, refresh, create, remove, removeMany, patch, togglePin, updateLocalModel, setActiveId };
 }

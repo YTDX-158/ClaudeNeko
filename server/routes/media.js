@@ -115,17 +115,6 @@ export function mediaHandler(ctx) {
       }
     }
 
-    if (method === 'POST' && pathname === '/api/media/download') {
-      const body = await readBody(req);
-      if (body && body.__tooLarge) return sendJson(res, 413, { error: '内容超过 1MB 上限，请缩短后重试' });
-      if (!body.url) return sendJson(res, 400, { error: 'NO_URL', message: '请粘贴视频链接' });
-      try {
-        return sendJson(res, 200, await media.download({ url: String(body.url), transcribe: !!body.transcribe }));
-      } catch (e) {
-        return genErr(e);
-      }
-    }
-
     // 媒体文件服务 / 下载 / 删除（放最后：/api/media/{id} 不与其他端点冲突）
     const mm = pathname.match(/^\/api\/media\/([^/]+)(\/download)?$/);
     if (mm) {

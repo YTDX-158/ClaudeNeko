@@ -52,7 +52,7 @@ export const api = {
   remoteOff: () => request('/remote/off', { method: 'POST' }),
   remoteRegenerateCode: () => request('/remote/regenerate-code', { method: 'POST' }),
 
-  // ---- 技能包：生成媒体 / 下载视频（POST 用自定义提取友好 message） ----
+  // ---- 技能包：生成媒体（POST 用自定义提取友好 message） ----
   // 媒体批量导出 zip：POST ids → 返回 zip blob（前端触发下载）
   exportMediaZip: async (ids) => {
     const res = await fetch(BASE + '/media/export-zip', {
@@ -92,14 +92,4 @@ export const api = {
 
   // ---- 搜索 v1.6.0：标题 + 消息全文 ----
   search: (q) => request(`/search?q=${encodeURIComponent(q)}`),
-  mediaDownload: async (body) => {
-    const res = await fetch(BASE + '/media/download', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(j?.message || `HTTP ${res.status}`);
-    return j;
-  },
 };

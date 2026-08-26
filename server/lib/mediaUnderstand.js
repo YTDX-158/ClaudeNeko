@@ -123,7 +123,9 @@ except Exception:
 segments, _ = model.transcribe(r'${inPath}')
 print(''.join(s.text for s in segments))
 `;
-    const py = spawn('python', ['-c', script], { windowsHide: true });
+    // PYTHONIOENCODING=utf-8：Windows 下 Python stdout 默认 GBK，Node 用 UTF-8 解码 out += d
+    // 会得到一堆 U+FFFD（实测 1010/1312 字符坏）。强制 Python 输出 UTF-8 即可。
+    const py = spawn('python', ['-c', script], { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
     let out = '';
     const timer = setTimeout(() => {
       try { py.kill(); } catch {}

@@ -2,7 +2,7 @@
 //
 // 从 @inksnow/c2web (MIT) 的 transcript.mjs 移植 + 修正：
 //   - encodeProjectDir 修正为「每个非字母数字字符都转 -」（实测 claude 编码：
-//     C:\Users\仰天大笑 → C--Users-----，中文逐个转 -）
+//     C:\Users\someone → C--Users-------，中文逐个转 -）
 //   - parseLenient 宽松解析（纯 JSON.parse，不依赖 @constellos 库）：
 //     专治 DeepSeek 的 assistant 消息缺 requestId，严格 schema 会整条丢弃
 //   - messageToEvents 增强：同一 message.id 的多块（thinking/text/tool_use）聚合，

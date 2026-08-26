@@ -33,8 +33,8 @@ export default function MessageList({ messages, error, onQuote, onBranch, sessio
       )}
 
       {messages.map((m, index) => (
-        // 所有消息挂 msg-{index} 锚点（搜索跳转定位）；用户消息另挂 data-mid 供「📑」目录
-        <div key={m.id ?? m.ts} id={`msg-${index}`} data-mid={m.role === 'user' ? (m.id ?? m.ts) : undefined}>
+        // 所有消息挂 msg-{index} 锚点（搜索跳转/📑 目录定位）
+        <div key={m.id ?? m.ts} id={`msg-${index}`}>
           <MessageBubble message={m} onQuote={onQuote} onBranch={onBranch} />
         </div>
       ))}

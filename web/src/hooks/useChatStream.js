@@ -17,11 +17,10 @@ import { wsChannel } from '../ws.js';
 // 已重放（打字机）的 assistant claudeMessageId 集合：防切会话回来重复播放
 const replayedSet = new Set();
 
-export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
+export function useChatStream(sessionId, onModelUpdate) {
   const [messages, setMessages] = useState([]);
   const [messagesSessionId, setMessagesSessionId] = useState(null); // 当前 messages 数组属于哪个会话（搜索跳转判定用）
   const [streaming, setStreaming] = useState(false);
-  const [responding, setResponding] = useState(false); // 是否已开始输出文本（区分「思考中」与「回答中」）
   const [recovering, setRecovering] = useState(false); // 刷新回来时上一条还在后台生成
   const [error, setError] = useState(null);
   // 供轮询闭包读取的最新值（避免在 effect 依赖里塞入 streaming/sessionId 导致重建定时器）
@@ -30,12 +29,10 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
   const messagesRef = useRef([]); // M5：供 WS 回调读取最新消息（去重查），避免 effect 依赖 messages
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   // M9：回调 ref 化——WS effect 依赖减为 [sessionId]，不随 App 每次渲染重建（防拉拽终端会话）
-  const titleRef = useRef(onTitleUpdate);
   const modelRef = useRef(onModelUpdate);
   useEffect(() => {
-    titleRef.current = onTitleUpdate;
     modelRef.current = onModelUpdate;
-  }, [onTitleUpdate, onModelUpdate]);
+  }, [onModelUpdate]);
   const lastUpdatedAtRef = useRef(null);
 
   useEffect(() => {
@@ -54,7 +51,6 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
     setRecovering(false);
     // 切会话必须重置 streaming：否则旧会话的流式态吞掉新会话发送 + 停止按钮取消错对象
     setStreaming(false);
-    setResponding(false);
     replayedSet.clear(); // M16：replayedSet 随会话清理（防只增不减；历史消息靠 replay 标记不重放）
     lastUpdatedAtRef.current = null;
     if (!sessionId) return;
@@ -120,12 +116,10 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
           });
           setStreaming(false);
           streamingRef.current = false;
-          setResponding(false);
         } else if (ev.kind === 'error') {
           // A3：pty 异常退出广播的 error 事件 → 清流式态 + 移除空占位 + 显示错误（防永久转圈）
           setStreaming(false);
           streamingRef.current = false;
-          setResponding(false);
           setError(ev.text || '终端进程已退出');
           setMessages((prev) => prev.filter((m) => !(m.streaming && !m.text)));
         }
@@ -208,7 +202,6 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
       setError(null);
       setStreaming(true);
       streamingRef.current = true; // 立即置位：同渲染周期内第二次点击也能拦住
-      setResponding(false);
 
       const userMsg = {
         id: `tmp-u-${Date.now()}`,
@@ -253,7 +246,6 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
     if (sessionId) api.cancelGeneration(sessionId).catch(() => {});
     setStreaming(false);
     streamingRef.current = false;
-    setResponding(false);
     // M8：移除没等到回复的空占位气泡（text 空 + 原本 streaming）。
     // 技能占位 text 非空（"正在生成中…"）不受影响，只有聊天占位（text ''）被清。
     setMessages((prev) => prev.filter((m) => !(m.streaming && !m.text)));
@@ -269,5 +261,5 @@ export function useChatStream(sessionId, onTitleUpdate, onModelUpdate) {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...newMsg } : m)));
   }, []);
 
-  return { messages, messagesSessionId, streaming, responding, recovering, error, send, stop, addMessage, replaceMessage };
+  return { messages, messagesSessionId, streaming, recovering, error, send, stop, addMessage, replaceMessage };
 }

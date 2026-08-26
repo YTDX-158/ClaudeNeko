@@ -16,6 +16,7 @@
 //   - 仅监听 127.0.0.1（cloudflared 才指向这里，公网不能直连本机 loopback）
 
 import http from 'node:http';
+import net from 'node:net'; // P2：原始 TCP 管道转发 WebSocket 升级（远程终端）
 import { randomBytes, createHash } from 'node:crypto';
 import { readBody } from '../util.js';
 
@@ -185,6 +186,57 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
     res.on('close', () => { try { upstream.destroy(); } catch { /* 已关 */ } });
     req.on('aborted', () => { try { upstream.destroy(); } catch { /* 已关 */ } });
     req.pipe(upstream);
+  });
+
+  // ---- WebSocket 转发（P2：远程终端页）----
+  // 手机前端终端页连 wss://公网/ws?sid=xxx → cloudflared → 4001。
+  // Node http server 不挂 upgrade 会把 WS 升级请求当普通 HTTP 处理（404/断连），必须处理。
+  // 校验配对（同 HTTP）→ 重写来源头（业务 4000 的 isLocalRequest 放行）→ 原始 TCP 管道到 4000。
+  // 用原始管道而非 ws 客户端转发：字节级透传，避开 per-message deflate 等握手协商兼容问题。
+  server.on('upgrade', (req, socket, head) => {
+    // 1) 配对鉴权：未配对拒绝升级（ws 握手都不给）
+    const session = getCookie(req.headers.cookie || '', AUTH_COOKIE);
+    const authed = session && pairing.hasSession(sha256(session));
+    // 诊断日志（P2 排查用）：WS 升级到没到代理、配对过没过
+    console.log(`[proxy] WS upgrade ${req.url} cookie=${session ? '有' : '无'} 配对=${authed ? '通过' : '拒绝'}`);
+    if (!authed) {
+      try {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      } catch {
+        // 已断
+      }
+      socket.destroy();
+      return;
+    }
+    // 2) 重写来源头：手机请求带公网 Origin/Host，业务 4000 的 isLocalRequest 会 403，
+    //    代理已通过配对鉴权，转发时应伪装成本机来源（与 HTTP 转发一致）
+    req.headers.origin = `http://127.0.0.1:${targetPort}`;
+    req.headers.referer = `http://127.0.0.1:${targetPort}/`;
+    req.headers.host = `127.0.0.1:${targetPort}`;
+    // 3) 原始 TCP 管道：重建升级请求头（保留 WebSocket 握手必需头）→ 双向透传。
+    //    head 是握手扩展数据（permessage-deflate 等），必须透传，否则协商失败。
+    const upstream = net.connect({ host: '127.0.0.1', port: targetPort }, () => {
+      const rawHeaders =
+        `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n` +
+        Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`).join('\r\n') +
+        '\r\n\r\n';
+      try {
+        upstream.write(rawHeaders);
+        if (head && head.length) upstream.write(head);
+        socket.pipe(upstream);
+        upstream.pipe(socket);
+      } catch {
+        // 已断
+      }
+    });
+    // 任一端断/错 → 销毁另一端（防半开连接挂死）
+    const closePair = () => {
+      try { upstream.destroy(); } catch { /* 已关 */ }
+      try { socket.destroy(); } catch { /* 已关 */ }
+    };
+    upstream.on('error', closePair);
+    socket.on('error', closePair);
+    socket.on('close', () => { try { upstream.destroy(); } catch { /* 已关 */ } });
   });
 
   // 返回 Promise：端口冲突（EADDRINUSE）是异步 'error' 事件，同步 try/catch 抓不到，

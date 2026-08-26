@@ -36,6 +36,7 @@ export default function TerminalView({ open, onClose, sessionId }) {
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
+      scrollback: 10000, // 历史滚动上限 10k 行（xterm 默认仅 1000，claude 输出多时滚不远）
       fontFamily: "'Cascadia Code', 'JetBrains Mono', Consolas, monospace",
       theme: { background: '#1e1e2e', foreground: '#cdd6f4' },
     });
@@ -48,8 +49,28 @@ export default function TerminalView({ open, onClose, sessionId }) {
     // 键盘 → pty
     term.onData((d) => wsChannel.send({ t: 'i', d }));
 
+    // 电脑端复制/粘贴：xterm 所有键盘都转发 pty，Ctrl+C 会变「中断」导致复制不了。
+    // 拦截：有选中文本时 Ctrl+C=复制（不转发 pty），否则放行=中断；Ctrl+V=粘贴。
+    term.attachCustomKeyEventHandler((e) => {
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (!ctrl) return true;
+      const key = e.key.toLowerCase();
+      if (key === 'c' && term.hasSelection()) {
+        navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+        term.clearSelection();
+        return false; // 有选中 → 复制，不当作中断发给 pty
+      }
+      if (key === 'v') {
+        navigator.clipboard.readText().then((t) => term.paste(t)).catch(() => {});
+        return false; // 粘贴进终端（写入 pty）
+      }
+      return true;
+    });
+
     // 订阅终端流
     const unsub = wsChannel.subscribe(sessionId, {
+      // 纯实时流写入。不做 \x1b[2J 手动 reset：xterm 原生处理清屏重绘且不伤 scrollback，
+      // 手动 reset 会清历史（破坏滚动回看）。attach 时的干净状态由服务端同步窗保证。
       onTermData: (d) => term.write(d),
       onTermReplay: (d) => {
         term.reset();
@@ -57,9 +78,9 @@ export default function TerminalView({ open, onClose, sessionId }) {
       },
     });
 
-    // 连接 + attach
+    // 连接 + attach（带当前列宽：服务端 resize pty 让 TUI 用客户端尺寸重绘，防列宽错乱——c2web 方式）
     wsChannel.connect(sessionId);
-    wsChannel.attach();
+    wsChannel.attach(term.cols, term.rows);
 
     // 尺寸变化 → fit + 同步 pty。
     // ⚠ 卡顿修复：不再用 ResizeObserver 观察容器（fit.fit() 会改 xterm 尺寸 → 反触发 RO → 循环，
@@ -129,12 +150,11 @@ export default function TerminalView({ open, onClose, sessionId }) {
     <div className="skin-modal">
       <div className="terminal-box">
         <div className="terminal-header">
-          <button className="terminal-back" onClick={onClose} title="返回聊天（Esc）">
+          <button className="terminal-back" onClick={onClose} title="返回聊天（终端保持运行）">
             ← 返回聊天
           </button>
           <span className="terminal-title">🖥 终端（常驻 claude TUI）</span>
           <span className="terminal-session">会话 {String(sessionId ?? '').slice(0, 8)}…</span>
-          <button className="terminal-close" onClick={onClose} title="关闭终端（Esc）">✕</button>
         </div>
         <div ref={termRef} className="terminal-wrap" />
         <div className="terminal-keys">

@@ -132,10 +132,11 @@ export const wsChannel = {
     return !!(ws && ws.readyState === 1);
   },
 
-  /** 终端 attach：订阅终端流 + 请求回放当前屏 */
-  attach() {
+  /** 终端 attach：订阅终端流 + 请求回放当前屏。
+   *  cols/rows：客户端当前列宽行数（c2web 方式）——服务端据此 resize pty，让 TUI 用匹配尺寸重绘（防列宽错乱）。 */
+  attach(cols, rows) {
     for (const s of subscribers) if (s.sid === currentSid) s.wantTerm = true;
-    wsChannel.send({ t: 'attach' });
+    wsChannel.send({ t: 'attach', ...(cols != null ? { cols, rows } : {}) });
   },
 
   /** 终端 detach：退订终端流（省流量） */

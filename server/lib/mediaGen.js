@@ -13,7 +13,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { saveMedia, getMedia, getMediaPath } from './mediaStore.js';
-import { transcribeAudio } from './mediaUnderstand.js';
 
 const ARK_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
 const MAX_ACTIVE = 1; // 并发：同时只允许一个生成任务，防超并发烧额度
@@ -37,7 +36,7 @@ export class ApiError extends Error {
 }
 
 /**
- * @param {{ doubaoKey:string, imageModels:any[], videoModels:any[], ratios:string[], imageResolutions:any[], downloadBlacklist:string[], transcribeEnabled:boolean, dataDir?:string }} cfg
+ * @param {{ doubaoKey:string, imageModels:any[], videoModels:any[], ratios:string[], imageResolutions:any[], transcribeEnabled:boolean, dataDir?:string }} cfg
  */
 /** 生图尺寸计算：目标像素档 × 比例 → clamp 边长≤4096 + 校验≥下限（Seedream 5.0）。
  *  标签是档位不是精确像素：非 1:1 的 4K = 该比例下 clamped 的最大合法尺寸。 */
@@ -73,7 +72,7 @@ function calcImageSize(ratio, resolution) {
 }
 
 export function createMediaService(cfg) {
-  const { doubaoKey, imageModels, videoModels, ratios, imageResolutions, downloadBlacklist, transcribeEnabled } = cfg;
+  const { doubaoKey, imageModels, videoModels, ratios, imageResolutions, transcribeEnabled } = cfg;
   const tasks = new Map(); // taskId -> {status, mediaId?, error?, ts, resolution, failCount, claimedBy?, claimedAt?, lastWatchAt?}
   let active = 0;
   const dataDir = cfg.dataDir || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data');
@@ -397,49 +396,8 @@ export function createMediaService(cfg) {
     return t.querying;
   }
 
-  // ---- 下载视频（可选转录）----
-  /** SSRF 防护：判断主机是否本机/内网地址（拒绝下载这些，防抓内网/云元数据）。域名不做 DNS 解析级检查（够用）。 */
-  function isPrivateHost(host) {
-    const h = (host || '').toLowerCase().replace(/\.$/, '');
-    if (!h) return true;
-    if (h === 'localhost' || h === '::1' || h === '[::1]' || h === '0.0.0.0') return true;
-    const ipv4 = h.split('.');
-    if (ipv4.length === 4 && ipv4.every((p) => /^\d{1,3}$/.test(p))) {
-      const [a, b] = ipv4.map(Number);
-      return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
-    }
-    return false;
-  }
+  // ---- 下载视频功能已移除（2026-08-27）----
 
-  async function download({ url, transcribe }) {
-    let host = '';
-    try {
-      if (!/^https?:\/\//i.test(url)) throw new Error('scheme');
-      host = new URL(url).hostname;
-    } catch {
-      throw new ApiError('INVALID_URL', '链接需为 http/https 开头的完整视频链接');
-    }
-    if (isPrivateHost(host)) {
-      throw new ApiError('BLOCKED', `不允许下载内网/本机地址：${host}`);
-    }
-    if (downloadBlacklist.some((d) => host === d || host.endsWith(`.${d}`))) {
-      throw new ApiError('BLOCKED', `域名被限制下载：${host}`);
-    }
-    if (transcribe && !transcribeEnabled) {
-      throw new ApiError('TRANSCRIBE_DISABLED', '转录未开启'); // 提前检查，防下载孤儿文件
-    }
-    const mediaId = await downloadToMedia(url, 'mp4');
-    let transcript;
-    let transcribeError;
-    if (transcribe) {
-      const rec = getMedia(mediaId);
-      const buf = fs.readFileSync(getMediaPath(rec));
-      const r = await transcribeAudio(buf); // faster-whisper 直接解码音轨（PyAV 读内容不依赖扩展名）
-      if (r.ok) transcript = r.text;
-      else transcribeError = r.error; // 转录失败不丢视频：视频保留 + 返回失败提示
-    }
-    return { mediaId, transcript, transcribeError };
-  }
 
   function extractVideoUrl(d) {
     const content = d?.content || {};
@@ -494,5 +452,5 @@ export function createMediaService(cfg) {
   // 启动认领：重启后恢复未完成任务（放在定时器之后，认领完盯梢立即接管）
   loadTasks();
 
-  return { generateImage, generateVideo, queryTask, download, getConfig, cancelAll };
+  return { generateImage, generateVideo, queryTask, getConfig, cancelAll };
 }

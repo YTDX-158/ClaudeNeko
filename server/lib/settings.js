@@ -69,7 +69,6 @@ const MEDIA = {
     { id: '3K', label: '3K' },
     { id: '4K', label: '4K' },
   ],
-  downloadBlacklist: [],
   transcribeEnabled: true,
 };
 

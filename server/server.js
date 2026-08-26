@@ -31,7 +31,8 @@ const ptyHost = createPtyHost({
   claudeBin: config.claudeBin,
   onData: (sid, d) => {
     terminal.setTermBuffer(sid, d);
-    terminal.broadcast(sid, { t: 'term', d });
+    // termOnly：终端流只发给已 attach 且不在同步窗的客户端（防 attach 前实时流与快照叠加 → 消息重复）
+    terminal.broadcast(sid, { t: 'term', d }, { termOnly: true });
   },
 
   onExit: (sid) => {

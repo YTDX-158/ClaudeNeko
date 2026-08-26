@@ -459,7 +459,6 @@ export default function SkinSettings({ open, onClose }) {
                       <span>配对码：{remote.pairCode ?? '—'}</span>
                       <button className="skin-btn" onClick={regenerateCode} disabled={remoteBusy}>换码</button>
                     </div>
-                    <div className="skin-hint">⚠️ 换码后旧设备全部失效需重配。远程下禁用了「下载视频」以防安全风险。</div>
                   </div>
                 )}
                 <div className="skin-row">

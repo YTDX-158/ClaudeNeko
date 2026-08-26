@@ -12,7 +12,7 @@ import { readDefaultEffort } from './utils/effort.js';
 
 export default function App() {
   const sessions = useSessions();
-  const { activeId, activeSession, create, patch, updateLocalTitle, updateLocalModel } = sessions;
+  const { activeId, activeSession, create, patch, updateLocalModel } = sessions;
 
   const [serverOk, setServerOk] = useState(null);
   const [skinOpen, setSkinOpen] = useState(false);
@@ -47,7 +47,6 @@ export default function App() {
 
   const chat = useChatStream(
     activeId,
-    (sid, title) => updateLocalTitle(sid, title),
     (sid, model) => updateLocalModel(sid, model),
   );
 

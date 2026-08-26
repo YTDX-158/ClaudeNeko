@@ -27,9 +27,9 @@ const Composer = forwardRef(function Composer({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  // 技能包：生图 / 生视频 / 下载视频
+  // 技能包：生图 / 生视频
   const [skill, setSkill] = useState(null);
-  const [genOpts, setGenOpts] = useState({ model: '', ratio: '9:16', duration: undefined, resolution: undefined, url: '', transcribe: false, refMode: '' });
+  const [genOpts, setGenOpts] = useState({ model: '', ratio: '9:16', duration: undefined, resolution: undefined, refMode: '' });
   const [mediaCfg, setMediaCfg] = useState(null);
   const [refPickerOpen, setRefPickerOpen] = useState(false); // @ 补全参考图面板
   const [refInsertPos, setRefInsertPos] = useState(null); // 插入 @imageN 后光标恢复位置
@@ -48,7 +48,7 @@ const Composer = forwardRef(function Composer({
     if (sk) {
       setGenOpts((o) => {
         const next = { ...o };
-        // image/video 技能切模型到该技能第一个；download 不用 model，保持原值
+        // image/video 技能切模型到该技能第一个
         if (sk === 'image' || sk === 'video') {
           const list = sk === 'image' ? mediaCfg?.imageModels || [] : mediaCfg?.videoModels || [];
           next.model = list[0]?.id || o.model;
@@ -63,39 +63,32 @@ const Composer = forwardRef(function Composer({
     }
   };
   const submit = () => {
-    // 技能模式：走生成/下载 API，不触发 claude 回复
+    // 技能模式：走生成 API，不触发 claude 回复
     if (skill && onGenSend) {
       if (streaming) return; // 聊天流式中不能技能生成：占位 streaming:true 会被流式增量污染
       if (uploading) return; // F3：上传中不触发（防参考图漏带 + 附件清空后上传完成"复活"）
-      if (skill === 'download') {
-        const url = (genOpts.url || '').trim();
-        if (!url) return;
-        onGenSend({ skill, url, transcribe: !!genOpts.transcribe });
-        setGenOpts((o) => ({ ...o, url: '' }));
-      } else {
-        const t = value.trim();
-        if (!t) return;
-        const opts = { skill, prompt: t, model: genOpts.model, ratio: genOpts.ratio, resolution: genOpts.resolution };
-        if (skill === 'video') {
-          // duration ?? min：滑块显示与提交保持一致（初始未拖 = 用该模型最低时长）
-          const cur = (mediaCfg?.videoModels || []).find((m) => m.id === genOpts.model);
-          opts.duration = genOpts.duration ?? cur?.durationRange?.min;
-          // 参考图：附件里的图片按顺序作为参考（上传/媒体库两个入口天然都有）
-          let imgs = attachments.filter((a) => a.kind === 'image');
-          // F1：显式选「无」(none) 时不发参考图；''（未选）挂图才默认参考素材
-          if (imgs.length && genOpts.refMode !== 'none') {
-            if (genOpts.refMode === 'first') imgs = imgs.slice(0, 1); // 首帧只用第 1 张
-            else if (genOpts.refMode === 'firstlast') imgs = [imgs[0], imgs[imgs.length - 1]].filter(Boolean); // F4：首帧 + 末帧
-            else imgs = imgs.slice(0, 8); // 参考素材上限 8
-            opts.refMode = genOpts.refMode || 'ref'; // 挂了图但没选方式 → 默认参考素材
-            opts.refImages = imgs.map((a) => a.id);
-          }
+      const t = value.trim();
+      if (!t) return;
+      const opts = { skill, prompt: t, model: genOpts.model, ratio: genOpts.ratio, resolution: genOpts.resolution };
+      if (skill === 'video') {
+        // duration ?? min：滑块显示与提交保持一致（初始未拖 = 用该模型最低时长）
+        const cur = (mediaCfg?.videoModels || []).find((m) => m.id === genOpts.model);
+        opts.duration = genOpts.duration ?? cur?.durationRange?.min;
+        // 参考图：附件里的图片按顺序作为参考（上传/媒体库两个入口天然都有）
+        let imgs = attachments.filter((a) => a.kind === 'image');
+        // F1：显式选「无」(none) 时不发参考图；''（未选）挂图才默认参考素材
+        if (imgs.length && genOpts.refMode !== 'none') {
+          if (genOpts.refMode === 'first') imgs = imgs.slice(0, 1); // 首帧只用第 1 张
+          else if (genOpts.refMode === 'firstlast') imgs = [imgs[0], imgs[imgs.length - 1]].filter(Boolean); // F4：首帧 + 末帧
+          else imgs = imgs.slice(0, 8); // 参考素材上限 8
+          opts.refMode = genOpts.refMode || 'ref'; // 挂了图但没选方式 → 默认参考素材
+          opts.refImages = imgs.map((a) => a.id);
         }
-        onGenSend(opts);
-        onChange('');
-        if (taRef.current) taRef.current.style.height = 'auto';
-        onAttachmentsChange([]); // 生视频提交后清空附件（与普通发送一致）
       }
+      onGenSend(opts);
+      onChange('');
+      if (taRef.current) taRef.current.style.height = 'auto';
+      onAttachmentsChange([]); // 生视频提交后清空附件（与普通发送一致）
       return;
     }
     const t = value.trim();
@@ -263,11 +256,9 @@ const Composer = forwardRef(function Composer({
                 ? '描述要生成的画面，Enter 生成…'
                 : skill === 'video'
                   ? '描述镜头，Enter 生成视频…'
-                  : skill === 'download'
-                    ? '在上方粘贴视频链接…'
-                    : streaming
-                      ? '生成中，可预打字…（结束后发送）'
-                      : '输入消息，Enter 发送，Shift+Enter 换行'
+                  : streaming
+                    ? '生成中，可预打字…（结束后发送）'
+                    : '输入消息，Enter 发送，Shift+Enter 换行'
           }
           value={value}
           onChange={handleChange}
@@ -287,10 +278,10 @@ const Composer = forwardRef(function Composer({
               disabled ||
               uploading ||
               streaming || // F7：技能模式 streaming 中禁用（防按钮可点但静默无效）
-              (skill === 'download' ? !(genOpts.url || '').trim() : skill ? !value.trim() : !value.trim() && !attachments.length)
+              (skill ? !value.trim() : !value.trim() && !attachments.length)
             }
           >
-            {uploading ? '上传中…' : skill ? (skill === 'download' ? '下载' : skill === 'video' ? '生成视频' : '生成') : '发送'}
+            {uploading ? '上传中…' : skill ? (skill === 'video' ? '生成视频' : '生成') : '发送'}
           </button>
         )}
       </div>

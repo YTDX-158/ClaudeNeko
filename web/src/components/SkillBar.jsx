@@ -1,12 +1,11 @@
 /**
- * SkillBar.jsx — 输入框下方技能包（生图 / 生视频 / 下载视频）
+ * SkillBar.jsx — 输入框下方技能包（生图 / 生视频）
  * 选中技能 → 显示对应选项条；未配 key 显示引导；时长选项跟随所选模型。
  * 可用性由后端运行时判定（未开通模型点了给明确提示），这里不写死灰显。
  */
 const SKILLS = [
   { id: 'image', label: '🎨 生图' },
   { id: 'video', label: '🎬 生视频' },
-  { id: 'download', label: '⬇️ 下载视频' },
 ];
 
 export default function SkillBar({ skill, onSkillChange, opts, onOptsChange, mediaCfg }) {
@@ -133,25 +132,6 @@ export default function SkillBar({ skill, onSkillChange, opts, onOptsChange, med
       )}
       {skill === 'video' && opts.refMode === 'ref' && (
         <div className="skillbar-hint">💡 提示词里可用 @image1 指认第一张图</div>
-      )}
-
-      {skill === 'download' && (
-        <div className="skillbar-opts">
-          <input
-            className="skillbar-url"
-            placeholder="粘贴视频链接…"
-            value={opts.url || ''}
-            onChange={(e) => set({ url: e.target.value })}
-          />
-          <label className="skillbar-check">
-            <input
-              type="checkbox"
-              checked={!!opts.transcribe}
-              onChange={(e) => set({ transcribe: e.target.checked })}
-            />
-            下载后转录文案
-          </label>
-        </div>
       )}
     </div>
   );

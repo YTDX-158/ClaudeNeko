@@ -1,5 +1,21 @@
 # 更新日志
 
+## v1.9.1（2026-08-27）—— 移除「下载视频」功能 🗑️
+
+### 🎯 变更
+- 移除「下载视频」技能包（生图/生视频保留）：粘贴链接下载整个下线
+- 同步清理：后端下载引擎 + 脚本、前端技能入口/选项、`NEKO_DOWNLOAD_SCRIPT`、README 相关说明
+- 保留：媒体库管理、生图/生视频、媒体理解（视频/音频转文字）
+- 注：期间顺带修复了 faster-whisper 转录编码 bug（Windows 下 Python stdout 默认 GBK，Node 按 UTF-8 解码 → `U+FFFD` 坏字；强制 `PYTHONIOENCODING=utf-8` 已修复，供后续复用）
+
+### 🔧 涉及改动
+- `server/lib/mediaGen.js`（删 download 函数族）· `server/routes/media.js`（删 /api/media/download）· `server/lib/settings.js`（删 downloadScript/downloadBlacklist）
+- `web/src/components/SkillBar.jsx` / `Composer.jsx` / `ChatWindow.jsx` / `web/src/api.js`（删下载入口）
+- `web/src/skin/SkinSettings.jsx`（删「远程禁下载」提示）· `README.md`
+- 删除 `server/lib/douyin/`（项目内下载脚本）
+
+---
+
 ## v1.8.3（2026-08-26）—— @ 引用已挂的图（简化） 🖼️
 
 ### 🎯 变更
