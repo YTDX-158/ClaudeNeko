@@ -27,6 +27,9 @@ try {
 const IDLE_REAP_MS = 30 * 60 * 1000; // 空闲 30 分钟回收
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 30;
+const ENTER_DELAY_MS = 200; // 文本写入后延迟写回车：防 Windows ConPTY「背靠背吞回车」（8-27 修复）
+const QUIET_READY_MS = 800; // 输出安静 800ms = claude 界面稳定，才算就绪（防启动滚动期误判）
+const READY_SETTLE_MS = 300; // markReady（jsonl 信号）后再 settle：探测到 jsonl → 输入框激活
 
 /**
  * 清洗传给 pty claude 的环境变量。
@@ -47,9 +50,10 @@ function cleanClaudeEnv(env) {
 
 /**
  * 创建常驻 pty 管理器。
- * @param {{ claudeBin: string, onData?: (sid:string, data:string)=>void, onExit?: (sid:string, code:number)=>void }} opts
+ * @param {{ claudeBin: string, bus?: object, onData?: (sid:string, data:string)=>void }} opts
+ * 退出事件走 bus（'pty:exit'，Phase2 解耦）；onData 高频终端流保留直接回调。
  */
-export function createPtyHost({ claudeBin, onData, onExit }) {
+export function createPtyHost({ claudeBin, bus, onData }) {
   // sid -> { child, sessionId, lastActive }
   const ptys = new Map();
 
@@ -91,32 +95,28 @@ export function createPtyHost({ claudeBin, onData, onExit }) {
       console.error(`[ptyHost] spawn 失败 sid=${sid}:`, e.message);
       return { isNew: false, available: false };
     }
-    const rec = { child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [] };
+    const rec = { child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null };
     ptys.set(sid, rec);
     // M2 兜底：20s 内无论输出多少都强制就绪（防 claude 卡死/输出异常导致消息永久卡队列）
     setTimeout(() => {
-      if (ptys.get(sid) !== rec || rec.ready) return;
-      rec.ready = true;
-      for (const t of rec.pendingSubmits.splice(0)) {
-        try { rec.child.write(String(t)); rec.child.write('\r'); } catch { /* 已退出 */ }
-      }
+      if (ptys.get(sid) !== rec) return;
+      becomeReady(sid, rec, '20s兜底');
     }, 20000);
     child.onData((d) => {
       rec.lastActive = Date.now();
       rec.outAcc += d.length;
-      // 就绪检测：claude TUI 首次绘制会输出足够内容（界面/提示符），累计 ~1KB 视为就绪
+      // 就绪检测（8-27 修复）：仅「输出超 1KB」不可靠——claude 冷启动会先滚一大片
+      // banner/历史，输入框还没激活。改成「输出超 1KB 且安静 800ms（输出停止=界面稳定）」
+      // 才算就绪；另有 markReady（jsonl 信号）与 20s 兜底双保险。
       if (!rec.ready && rec.outAcc > 1000) {
-        rec.ready = true;
-        // 就绪后补发积压的 submit（首次消息可能因启动慢被吞）
-        for (const t of rec.pendingSubmits.splice(0)) {
-          try { rec.child.write(String(t)); rec.child.write('\r'); } catch { /* 已退出 */ }
-        }
+        if (rec.quietTimer) clearTimeout(rec.quietTimer);
+        rec.quietTimer = setTimeout(() => { rec.quietTimer = null; becomeReady(sid, rec, '输出安静'); }, QUIET_READY_MS);
       }
       onData?.(sid, d);
     });
     child.onExit(({ exitCode }) => {
       ptys.delete(sid);
-      onExit?.(sid, exitCode);
+      bus?.emit('pty:exit', { sid, exitCode });
     });
     return { isNew: true, available: true };
   }
@@ -131,14 +131,49 @@ export function createPtyHost({ claudeBin, onData, onExit }) {
       rec.lastActive = Date.now(); // C1：排队发送也算活跃（用户在发消息）
       return true;
     }
+    return doSubmit(rec, text);
+  }
+
+  /** 真正执行注入：文本立即写入，回车延迟 ENTER_DELAY_MS 再写——防 Windows ConPTY
+   *  把「文本+回车」背靠背合并/在 TUI 未及渲染输入行时吞掉回车（8-27 修复）。 */
+  function doSubmit(rec, text) {
     try {
       rec.child.write(String(text));
-      rec.child.write('\r');
       rec.lastActive = Date.now(); // C1：注入成功刷新活跃时间（防空闲误回收）
+      setTimeout(() => {
+        try {
+          rec.child.write('\r');
+          rec.lastActive = Date.now();
+        } catch { /* 已退出 */ }
+      }, ENTER_DELAY_MS);
       return true;
     } catch {
       return false;
     }
+  }
+
+  /** 就绪后补发积压的 submit（首次消息可能因启动慢被吞） */
+  function flushPending(rec) {
+    for (const t of rec.pendingSubmits.splice(0)) doSubmit(rec, t);
+  }
+
+  /** 置就绪（幂等）：任何可靠信号触发都走这里，统一补发积压消息 */
+  function becomeReady(sid, rec, why) {
+    if (rec.ready) return;
+    console.log(`[ptyHost] 就绪 sid=${sid}（${why}）`);
+    rec.ready = true;
+    flushPending(rec);
+  }
+
+  /** 外部就绪信号：transcript 探测到 claude jsonl = 主程序真正起来（比 outAcc 可靠）。
+   *  收到后再 settle READY_SETTLE_MS，给 TUI 画完输入框留时间。 */
+  function markReady(sid) {
+    const rec = ptys.get(sid);
+    if (!rec || rec.ready) return;
+    console.log(`[ptyHost] markReady sid=${sid}（jsonl 信号）`);
+    setTimeout(() => {
+      if (ptys.get(sid) === rec) becomeReady(sid, rec, 'jsonl信号');
+    }, READY_SETTLE_MS);
   }
 
   /** 原始按键透传（含 Esc 中断、方向键选择、Ctrl+C 等），终端视图用 */
@@ -212,7 +247,7 @@ export function createPtyHost({ claudeBin, onData, onExit }) {
   }
 
   return {
-    ensure, submit, write, resize, interrupt, kill, killAll, isRunning, touch, scheduleIdleReap,
+    ensure, submit, markReady, write, resize, interrupt, kill, killAll, isRunning, touch, scheduleIdleReap,
     get available() { return pty !== null; },
   };
 }

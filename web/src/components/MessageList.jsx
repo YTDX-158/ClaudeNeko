@@ -4,22 +4,56 @@ import MessageBubble from './MessageBubble.jsx';
 export default function MessageList({ messages, error, onQuote, onBranch, sessionId }) {
   const endRef = useRef(null);
   const listRef = useRef(null);
-  const prevSessionRef = useRef(sessionId);
+  // ⚠ 修复（8-27）：
+  //   旧代码 prevSessionRef 初始 = sessionId → 首次挂载 isSwitch=false → 打开会话停在顶部，
+  //   新消息在顶部上方追加 → 视角永远看不到最新（"每次回复跳顶"根因）。
+  //   现改为 sticky scroll：打开/切换会话滚到底；之后只要用户没主动上翻就持续跟随到底
+  //   （claude 回复陆续追加也能跟上，不会停在中间）。
+  const prevSessionRef = useRef(null);
+  const justSwitchedRef = useRef(true);   // 切换后待滚底（等消息加载完）
+  const userScrolledRef = useRef(false);  // 用户是否主动上翻（上翻 = 停止跟随）
+  const isAutoScrollRef = useRef(false);  // 程序滚动标记（防 onScroll 误判用户上翻）
+
+  // 滚到底：等两帧布局完成（图片/长文本高度定稿后再滚，防落空）
+  const scrollToBottom = () => {
+    isAutoScrollRef.current = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      endRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      setTimeout(() => { isAutoScrollRef.current = false; }, 120);
+    }));
+  };
+
+  // 监听用户滚动：滚到底 = 恢复跟随；离开底部 = 用户主动浏览，停止跟随
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (isAutoScrollRef.current) return; // 程序滚动，忽略
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+      userScrolledRef.current = !atBottom;
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
 
   // 自动滚动：
-  //  - 会话切换时无条件滚到底（否则新会话消息灌入时 scrollTop 还是 0 → 停在顶部）
-  //  - 同会话追加消息时只在接近底部才滚（用户往上翻/用目录跳转时不打断）
+  //  - 切换/首次挂载：等该会话消息加载完滚到底（见最近消息），并重置为自动跟随
+  //  - 之后消息追加：用户没主动上翻就持续跟随到底（AI 回复也能跟上）
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
     const isSwitch = prevSessionRef.current !== sessionId;
     prevSessionRef.current = sessionId;
     if (isSwitch) {
-      endRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      justSwitchedRef.current = true;
+      userScrolledRef.current = false; // 切会话 = 回到自动跟随状态
+    }
+    if (justSwitchedRef.current && messages.length > 0) {
+      justSwitchedRef.current = false;
+      scrollToBottom();
       return;
     }
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-    if (nearBottom) endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    if (!userScrolledRef.current) scrollToBottom();
   }, [messages, sessionId]);
 
   return (

@@ -6,13 +6,18 @@ import { fileURLToPath } from 'node:url';
 import { resolveConfig } from './lib/settings.js';
 import { SessionStore } from './lib/sessionStore.js';
 import { createClaudeRunner } from './lib/claudeRunner.js';
+import { createBusyLock } from './lib/busyLock.js';
 import { createMediaService } from './lib/mediaGen.js';
 import { createPtyHost } from './lib/ptyHost.js';
+import { createEventBus } from './lib/bus.js';
 import { createTranscriptService } from './lib/transcript.js';
 import { sendJson, readBody, serveStatic } from './lib/util.js';
 import { systemHandler } from './routes/system.js';
 import { mediaHandler } from './routes/media.js';
 import { sessionsHandler } from './routes/sessions.js';
+import { statsHandler } from './routes/stats.js';
+import { searchHandler } from './routes/search.js';
+import { exportHandler } from './routes/export.js';
 import { remoteHandler } from './routes/remote.js';
 import { createTerminalChannel } from './routes/terminal.js';
 import { createRemote } from './lib/remote/index.js';
@@ -21,40 +26,42 @@ import * as pairing from './lib/remote/pairing.js';
 const config = resolveConfig();
 const media = createMediaService({ ...config.media, dataDir: config.dataDir }); // dataDir 供任务落盘 gen_tasks.json
 const store = new SessionStore(config.dataDir);
-const busy = new Set(); // per-session 在途锁
-const busyTimers = new Map(); // sid -> 5min 超时 timer（H3：assistant 释放锁时清掉，防旧 timer 删新锁）
+const busyLock = createBusyLock(); // per-session 在途锁（唯一写入口，见 lib/busyLock.js）
+const bus = createEventBus(); // 模块解耦事件总线（Phase2，事件字典见 lib/bus.js）
 const remote = createRemote({ pairing, config }); // 远程访问生命周期（默认关）
 const remoteRouter = remoteHandler({ pairing, remote });
 
 // 常驻 pty + jsonl 轮询 + 终端 WS 通道（c2web 模式）
 const ptyHost = createPtyHost({
   claudeBin: config.claudeBin,
+  bus, // Phase2：pty 退出走事件总线
   onData: (sid, d) => {
     terminal.setTermBuffer(sid, d);
     // termOnly：终端流只发给已 attach 且不在同步窗的客户端（防 attach 前实时流与快照叠加 → 消息重复）
     terminal.broadcast(sid, { t: 'term', d }, { termOnly: true });
   },
-
-  onExit: (sid) => {
-    // M4：pty 异常退出时释放 busy 锁 + 清超时器 + 广播异常（否则用户卡在"生成中"）
-    // 注意：不在此释放 transcript（force-stop 后用户会重新发消息 → 重新 ensure，
-    // 若释放则 emitted=0 全量回放 → 触发历史重复）。释放只发生在会话删除（见 DELETE handler）。
-    console.log(`[ptyHost] pty 退出 sid=${sid}`);
-    busy.delete(sid);
-    const t = busyTimers.get(sid);
-    if (t) { clearTimeout(t); busyTimers.delete(sid); }
-    terminal.broadcast(sid, { t: 'ev', e: { kind: 'error', text: '终端进程已退出，请重新发送消息' } });
-  },
+});
+// Phase2：pty 退出走事件总线（M4：释放 busy + 广播异常，否则用户卡在"生成中"）
+// 注意：不在此释放 transcript（force-stop 后用户会重新发消息 → 重新 ensure，
+// 若释放则 emitted=0 全量回放 → 触发历史重复）。释放只发生在会话删除（见 DELETE handler）。
+bus.on('pty:exit', ({ sid }) => {
+  console.log(`[ptyHost] pty 退出 sid=${sid}`);
+  busyLock.release(sid);
+  terminal.broadcast(sid, { t: 'ev', e: { kind: 'error', text: '终端进程已退出，请重新发送消息' } });
 });
 ptyHost.scheduleIdleReap();
 
-// transcript 轮询回调：把 jsonl 新消息镜像进 store + 推 WS 事件
+// transcript 轮询回调：把 jsonl 新消息镜像进 store + 推 WS 事件（Phase2 走事件总线）
 const transcript = createTranscriptService({
-  onEvent: handleTranscriptEvent,
-  onSessionId: onSessionIdDiscovered,
+  bus,
   // 探测时排除 store 已有会话的 claudeSessionId（防命中活跃会话污染新会话）
   getKnownSessionIds: () => store.list().map((s) => s.claudeSessionId).filter(Boolean),
 });
+// Phase2：server 订阅 transcript 事件做 store 镜像 / busy 释放 / WS 推送
+bus.on('transcript:sessionId', onSessionIdDiscovered);
+bus.on('transcript:user', ({ sid, ev }) => claimPendingUser(sid, ev));
+bus.on('transcript:assistant', handleAssistantEvent);
+bus.on('transcript:tool', ({ sid, ev }) => terminal.broadcast(sid, { t: 'ev', e: ev }));
 
 // 终端 WS 通道（upgrade 挂载在 server.on('upgrade')）
 const terminal = createTerminalChannel({ ptyHost, transcript, store, config, isLocalRequest });
@@ -64,7 +71,10 @@ const DIST_DIR = path.join(SERVER_DIR, '..', 'web', 'dist');
 const APP_VERSION = JSON.parse(fs.readFileSync(path.join(SERVER_DIR, '..', 'package.json'), 'utf8')).version || '1.3.0';
 const systemRouter = systemHandler({ config, appVersion: APP_VERSION, getAutoStartEnabled, setAutoStart, readBody });
 const mediaRouter = mediaHandler({ media, store, maybeStartMediaClaude, isLocalRequest });
-const sessionsRouter = sessionsHandler({ store, config, busy, busyTimers, media, isLocalRequest, ptyHost, transcript, terminal });
+const sessionsRouter = sessionsHandler({ store, config, busyLock, media, isLocalRequest, ptyHost, transcript, terminal });
+const statsRouter = statsHandler({ store, isLocalRequest }); // 成本统计（独立路由）
+const searchRouter = searchHandler({ store, isLocalRequest }); // 消息搜索（独立路由）
+const exportRouter = exportHandler({ store, isLocalRequest }); // 会话导出（独立路由）
 
 /* ---------- 工具 ---------- */
 
@@ -184,45 +194,39 @@ function maybeStartMediaClaude(session, skill, prompt) {
 
 /* ---------- transcript 事件 → store 镜像 + WS 推送 ---------- */
 /** 新会话首次探测到 claudeSessionId（transcript 扫描 jsonl 得到）→ 回写 store（修正点2：归属权只由这里写） */
-function onSessionIdDiscovered(sid, claudeSessionId) {
+function onSessionIdDiscovered({ sid, claudeSessionId }) {
+  // ⚠ Phase2 适配：bus 订阅收的是 payload 对象（{sid, claudeSessionId}），
+  // 不是旧的 (sid, claudeSessionId) 两参数——签名不匹配会导致永不回写 claudeSessionId
   const s = store.get(sid);
   if (!s || s.claudeSessionId) return;
   // ⚠ 占用检查（8-26 P1 修复）：该 claudeSessionId 已被其他会话占用 → 探测到别人在用的会话，忽略
   const taken = store.list().some((x) => x.id !== sid && x.claudeSessionId === claudeSessionId);
   if (taken) return;
   store.update(sid, { claudeSessionId });
+  // 探测到 jsonl = claude 主程序真正就绪 → 通知 ptyHost 补发积压消息
+  //（8-27 修复：outAcc>1000 就绪判定不可靠，冷启动会提前亮灯吞回车）
+  ptyHost.markReady(sid);
 }
 
-/** transcript 轮询到新消息：user 认领 pendingJsonl、assistant 落盘 store、tool 广播不落盘 */
-function handleTranscriptEvent(sid, ev) {
+/** transcript:assistant 事件（Phase2 拆分）：落盘 store + 释放 busy + WS 推送 */
+function handleAssistantEvent({ sid, ev }) {
   try {
-    if (ev.kind === 'user') {
-      // 修正点3：找最近一条 pendingJsonl 用户消息补 claudeMessageId（供轮询去重）；
-      // 若没有（终端直接打字产生的），append 新消息（前端会显示）
-      claimPendingUser(sid, ev);
-    } else if (ev.kind === 'assistant') {
-      // 去重：jsonl 同 message.id 多次轮询（emitted 已挡，但跨轮询兜底）
-      const msgs = store.readMessages(sid);
-      if (msgs.some((m) => m.claudeMessageId === ev.claudeMessageId)) return;
-      store.appendMessage(sid, {
-        role: 'assistant',
-        text: ev.text,
-        thinking: ev.thinking || undefined,
-        usage: normalizeUsage(ev.usage) || undefined,
-        ts: ev.ts ?? Date.now(),
-        claudeMessageId: ev.claudeMessageId,
-      });
-      // H3 修复：释放锁时清掉对应 5min 超时器（防旧 timer 到期把下一轮的新锁误删）
-      busy.delete(sid);
-      const t = busyTimers.get(sid);
-      if (t) { clearTimeout(t); busyTimers.delete(sid); }
-      terminal.broadcast(sid, { t: 'ev', e: ev });
-    } else if (ev.kind === 'tool') {
-      // 工具事件：广播给前端（可选渲染小徽标），不落 store
-      terminal.broadcast(sid, { t: 'ev', e: ev });
-    }
+    // 去重：jsonl 同 message.id 多次轮询（emitted 已挡，但跨轮询兜底）
+    const msgs = store.readMessages(sid);
+    if (msgs.some((m) => m.claudeMessageId === ev.claudeMessageId)) return;
+    store.appendMessage(sid, {
+      role: 'assistant',
+      text: ev.text,
+      thinking: ev.thinking || undefined,
+      usage: normalizeUsage(ev.usage) || undefined,
+      ts: ev.ts ?? Date.now(),
+      claudeMessageId: ev.claudeMessageId,
+    });
+    // H3 修复：busyLock.release 内建清 5min 超时器（防旧 timer 到期误删下一轮新锁）
+    busyLock.release(sid);
+    terminal.broadcast(sid, { t: 'ev', e: ev });
   } catch (err) {
-    console.error(`[transcript] 处理事件失败 sid=${sid}:`, err.message);
+    console.error(`[transcript] assistant 事件处理失败 sid=${sid}:`, err.message);
   }
 }
 
@@ -270,6 +274,17 @@ async function routeApi(req, res, url) {
 
   const mediaRes = await mediaRouter(req, res, url);
   if (mediaRes !== null) return;
+
+  // Phase1 拆分：导出/搜索/统计独立路由。放 sessions 前——/api/sessions/export-all 等
+  // 前缀会撞 sessions 的通用匹配（^/api/sessions/([^/]+)），必须让独立路由先处理。
+  const exportRes = await exportRouter(req, res, url);
+  if (exportRes !== null) return;
+
+  const searchRes = await searchRouter(req, res, url);
+  if (searchRes !== null) return;
+
+  const statsRes = await statsRouter(req, res, url);
+  if (statsRes !== null) return;
 
   const sessRes = await sessionsRouter(req, res, url);
   if (sessRes !== null) return;

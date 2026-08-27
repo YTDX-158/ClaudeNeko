@@ -113,6 +113,9 @@ export function messageToEvents(j, acc) {
   const m = j.message || {};
   if (type === 'user') {
     const text = typeof m.content === 'string' ? m.content : '';
+    // ⚠ 过滤 claude --resume 自动注入的系统消息（"Continue from where you left off."）：
+    // 它是 claude 恢复会话时自己写的，不是用户真实输入，落盘会污染对话（8-27 修复）
+    if (text.trim() === 'Continue from where you left off.') return [];
     // user 无 message.id，用行 uuid 作唯一标识（认领/去重用）
     const claudeMessageId = j.uuid || `user-${j.timestamp ?? ''}-${text.length}`;
     if (text.trim()) return [{ kind: 'user', text, claudeMessageId, ts: j.timestamp ? j.timestamp * 1000 : Date.now() }];
@@ -140,6 +143,9 @@ export function messageToEvents(j, acc) {
   // 有 text 块 → 主文本完整，emit 一条 assistant 事件
   if (cur.text) {
     acc.delete(mid);
+    // ⚠ 过滤 resume 副产物 "No response requested."（claude 对系统注入消息的"无需回复"，
+    // 非真回答；与上面 "Continue from where you left off." 成对出现，8-27 修复）
+    if (cur.text.trim() === 'No response requested.') return out;
     const ev = {
       kind: 'assistant',
       text: cur.text,
@@ -157,14 +163,13 @@ export function messageToEvents(j, acc) {
 }
 
 /**
- * 创建 transcript 服务：轮询会话 jsonl，增量把新消息转事件推给回调。
+ * 创建 transcript 服务：轮询会话 jsonl，增量把新消息转事件推到 bus（Phase2 解耦）。
  * @param {{
- *   onEvent:(sid:string, ev:object)=>void,
- *   onSessionId?:(sid:string, id:string)=>void,
- *   getKnownSessionIds?: ()=>string[],  // store 里已有会话的 claudeSessionId（探测时排除）
+ *   bus: object,                       // 事件总线（emit transcript:* 事件，见 lib/bus.js 事件字典）
+ *   getKnownSessionIds?: ()=>string[], // store 里已有会话的 claudeSessionId（探测时排除）
  * }} opts
  */
-export function createTranscriptService({ onEvent, onSessionId, getKnownSessionIds }) {
+export function createTranscriptService({ bus, getKnownSessionIds }) {
   // sid -> { timer, emitted, lastSize, running, acc, cwd, claudeSessionId }
   const pollers = new Map();
 
@@ -189,7 +194,7 @@ export function createTranscriptService({ onEvent, onSessionId, getKnownSessionI
         const latest = findLatestSession(rec.cwd, rec.baseline, known);
         console.log(`[transcript] 探测 sid=${sid} cwd=${rec.cwd} → ${latest ? latest.sessionId.slice(0,8) : '无'}（排除${known.size}已知）`);
         if (latest && latest.sessionId) {
-          if (onSessionId) onSessionId(sid, latest.sessionId);
+          bus.emit('transcript:sessionId', { sid, claudeSessionId: latest.sessionId });
           rec.claudeSessionId = latest.sessionId;
           file = latest.file;
         }
@@ -212,7 +217,7 @@ export function createTranscriptService({ onEvent, onSessionId, getKnownSessionI
         }
         rec.emitted = msgs.length;
         rec.lastSize = size;
-        for (const ev of emittedEvents) onEvent(sid, ev);
+        for (const ev of emittedEvents) bus.emit(`transcript:${ev.kind}`, { sid, ev });
       } catch {
         // 半行/瞬时错误，下轮重试（不更新 lastSize）
       } finally {
