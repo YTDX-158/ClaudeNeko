@@ -52,6 +52,21 @@ export const api = {
   remoteOff: () => request('/remote/off', { method: 'POST' }),
   remoteRegenerateCode: () => request('/remote/regenerate-code', { method: 'POST' }),
 
+  // ---- 模型配置（设置中心「模型配置」） ----
+  getConfig: () => request('/config'),
+  setConfig: (body) => request('/config', { method: 'PUT', body: JSON.stringify(body) }),
+  testConfig: (body) => request('/config/test', { method: 'POST', body: JSON.stringify(body) }),
+  getProfiles: () => request('/config/profiles'),
+  saveProfile: (body) => request('/config/profiles', { method: 'PUT', body: JSON.stringify(body) }),
+  applyProfile: (body) => request('/config/profiles/apply', { method: 'POST', body: JSON.stringify(body) }),
+  deleteProfile: (name) => request(`/config/profiles?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
+
+  // ---- 生图生视频模型条目（设置中心「媒体配置」） ----
+  getMediaConfig: (kind) => request(`/media-config?kind=${kind}`),
+  saveMediaItem: (body) => request('/media-config', { method: 'PUT', body: JSON.stringify(body) }),
+  deleteMediaItem: (kind, id) => request(`/media-config?kind=${kind}&id=${id}`, { method: 'DELETE' }),
+  testMedia: (body) => request('/media-config/test', { method: 'POST', body: JSON.stringify(body) }),
+
   // ---- 技能包：生成媒体（POST 用自定义提取友好 message） ----
   // 媒体批量导出 zip：POST ids → 返回 zip blob（前端触发下载）
   exportMediaZip: async (ids) => {

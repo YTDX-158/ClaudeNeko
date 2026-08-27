@@ -13,7 +13,7 @@ import { EFFORT_LEVELS } from '../utils/effort.js';
  * 输入框文本与「引用条」状态都提升到这里：
  * - 引用：点击后输入框上方浮出引用条，输入框保持干净；发送时引用 + 文字拼成 markdown 引用块一起发出
  */
-export default function ChatWindow({ session, chat, onBranch, onEffortChange, jumpTarget = null, onJumpDone }) {
+export default function ChatWindow({ session, model, chat, onBranch, onEffortChange, jumpTarget = null, onJumpDone }) {
   const [composerText, setComposerText] = useState('');
   const [quote, setQuote] = useState(null); // { text, role } | null
   const [attachments, setAttachments] = useState([]); // 待发送附件（媒体库快照）
@@ -257,7 +257,7 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange, ju
           )}
           <button className="chat-export" onClick={() => setExportOpen(true)} title="导出当前对话（文本/数据）">导出</button>
           <button className="chat-export" onClick={handleForceStop} title="强制结束当前对话任务（杀 claude + 取消生成，聊天卡住或生视频太久时用）">⛔ 结束</button>
-          {session?.model && <span className="chat-model">{session.model}</span>}
+          {model && <span className="chat-model">{model}</span>}
           {session?.id && (
             <select
               className="chat-effort"

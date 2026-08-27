@@ -21,11 +21,18 @@ import { searchHandler } from './routes/search.js';
 import { exportHandler } from './routes/export.js';
 import { remoteHandler } from './routes/remote.js';
 import { createTerminalChannel } from './routes/terminal.js';
+import { configHandler } from './routes/config.js';
+import { mediaConfigHandler } from './routes/mediaConfig.js';
+import { createModelConfig } from './lib/modelConfig.js';
+import { createMediaConfig } from './lib/mediaConfig.js';
+import * as configService from './lib/configService.js';
+import { detectEnv } from './lib/envReport.js';
 import { createRemote } from './lib/remote/index.js';
 import * as pairing from './lib/remote/pairing.js';
 
 const config = resolveConfig();
-const media = createMediaService({ ...config.media, dataDir: config.dataDir }); // dataDir 供任务落盘 gen_tasks.json
+const mediaConfigService = createMediaConfig({ dataDir: config.dataDir }); // 生图生视频模型条目（设置中心「媒体配置」）
+const media = createMediaService({ ...config.media, dataDir: config.dataDir, mediaConfig: mediaConfigService }); // dataDir 供任务落盘 gen_tasks.json
 // 媒体库自动清理（审查⑤）：启动清一次 + 每 24h 清一次（TTL 30 天 / 总量上限 2GB）
 pruneMedia();
 setInterval(() => { try { pruneMedia(); } catch (e) { console.error('[media] 定时清理失败:', e.message); } }, 24 * 3600 * 1000).unref?.();
@@ -73,8 +80,11 @@ const terminal = createTerminalChannel({ ptyHost, transcript, store, config, isL
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(SERVER_DIR, '..', 'web', 'dist');
 const APP_VERSION = JSON.parse(fs.readFileSync(path.join(SERVER_DIR, '..', 'package.json'), 'utf8')).version || '1.3.0';
+const modelConfig = createModelConfig({ dataDir: config.dataDir });
+const configRouter = configHandler({ modelConfig, configService, detectEnv, readBody, ptyHost, store, busyLock, media });
+const mediaConfigRouter = mediaConfigHandler({ mediaConfig: mediaConfigService, readBody });
 const systemRouter = systemHandler({ config, appVersion: APP_VERSION, getAutoStartEnabled, setAutoStart, readBody });
-const mediaRouter = mediaHandler({ media, store, maybeStartMediaClaude, isLocalRequest });
+const mediaRouter = mediaHandler({ media, mediaConfig: mediaConfigService, store, maybeStartMediaClaude, isLocalRequest });
 const sessionsRouter = sessionsHandler({ store, config, busyLock, media, isLocalRequest, ptyHost, transcript, terminal });
 const statsRouter = statsHandler({ store, isLocalRequest }); // 成本统计（独立路由）
 const searchRouter = searchHandler({ store, isLocalRequest }); // 消息搜索（独立路由）
@@ -173,7 +183,7 @@ function maybeStartMediaClaude(session, skill, prompt) {
   const runner = createClaudeRunner({
     claudeBin: config.claudeBin,
     prompt: cPrompt,
-    model: session.model || config.defaultModel,
+    // 不传 model：claude 统一走全局 env（改模型=全局生效）
     // ⚠ 修正点4：不传 claudeSessionId（独立会话）——只是一句确认，不需要上下文，
     // 也避免与常驻 pty 同时写同一 jsonl 冲突。claudeSessionId 归属权只由 transcript 写（修正点2）。
     // M1：cwd 用独立目录（mediaClaude），其 jsonl 建在别处，不干扰会话目录的 transcript 探测
@@ -275,6 +285,12 @@ async function routeApi(req, res, url) {
 
   const sys = await systemRouter(req, res, url);
   if (sys !== null) return;
+
+  const cfgRes = await configRouter(req, res, url);
+  if (cfgRes !== null) return;
+
+  const mcRes = await mediaConfigRouter(req, res, url);
+  if (mcRes !== null) return;
 
   const mediaRes = await mediaRouter(req, res, url);
   if (mediaRes !== null) return;

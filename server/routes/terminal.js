@@ -138,7 +138,7 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
     const ptyRes = ptyHost.ensure(sid, {
       cwd,
       claudeSessionId: session?.claudeSessionId || undefined,
-      model: session?.model,
+      // 不传 model：claude 统一走全局 env（改模型=全局生效）
     });
     console.log(`[terminal] pty ensure sid=${sid}: ${JSON.stringify(ptyRes)}`);
     transcript.ensure(sid, { cwd, claudeSessionId: session?.claudeSessionId || undefined });
@@ -171,7 +171,7 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
           ptyHost.ensure(sid, {
             cwd: session?.cwd || config.defaultCwd,
             claudeSessionId: session?.claudeSessionId || undefined,
-            model: session?.model,
+            // 不传 model：claude 统一走全局 env
           });
           transcript.ensure(sid, { cwd: session?.cwd || config.defaultCwd, claudeSessionId: session?.claudeSessionId || undefined });
           clearTermBuffer(sid); // 新 pty 是全新 claude：旧 termBuf 作废，防新旧画面叠加

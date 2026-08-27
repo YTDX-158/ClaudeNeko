@@ -6,6 +6,7 @@ import { extractDocumentText } from '../lib/docText.js';
 import { describeMedia } from '../lib/mediaUnderstand.js';
 import { getMedia, getMediaPath } from '../lib/mediaStore.js';
 import { sendJson, readBody } from '../lib/util.js';
+import * as configService from '../lib/configService.js'; // 读当前全局模型（env.ANTHROPIC_MODEL）
 
 /** 分支历史注入阈值：早期压缩成摘要，近期保留全量（防长会话分支后 claude 被全量历史拖慢） */
 const BRANCH_RECENT = 15;
@@ -165,7 +166,7 @@ async function handleMessage(ctx, req, res, url) {
     unlockBusy();
     return sendJson(res, 500, { error: '终端功能不可用（node-pty 未加载）' });
   }
-  const ptyRes = ptyHost.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined, model: session.model });
+  const ptyRes = ptyHost.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined }); // 不传 model：claude 统一走全局 env（改模型=全局生效，会话级覆盖已废弃）
   transcript.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined });
   // M2 修复：submit 内部处理"未就绪"——pty 刚起时消息进队列，claude TUI 就绪后自动补发，
   // 不再固定延迟 12s（慢机/大历史也不会吞消息）。isNew 时也直接 submit（排队等就绪）。
@@ -183,13 +184,17 @@ async function handleMessage(ctx, req, res, url) {
 
 export function sessionsHandler(ctx) {
   const { store, config, busyLock } = ctx;
+  // 当前全局模型（env.ANTHROPIC_MODEL）：新建/分支会话用它，让右上角显示=实际调用，切模型实时生效
+  const currentModel = (() => { try { return configService.readSettings().env?.ANTHROPIC_MODEL || null; } catch { return null; } })();
   return async (req, res, url) => {
     const { pathname } = url;
     const method = req.method;
 
     if (method === 'GET' && pathname === '/api/sessions') {
       if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
-      return sendJson(res, 200, { sessions: store.list() });
+      // 缺 model 的旧会话补「当前全局模型」（env.ANTHROPIC_MODEL）——补写死 defaultModel 会让旧会话永远显示旧模型名（切 pro 不生效）
+      const sessions = store.list().map((s) => ({ ...s, model: s.model || currentModel || config.defaultModel }));
+      return sendJson(res, 200, { sessions });
     }
 
     // 分支：从某个会话的指定消息处新建会话，复制其之前的历史作为上下文
@@ -206,7 +211,7 @@ export function sessionsHandler(ctx) {
       const branchPoint = msgs[idx];
       const title = (branchPoint.text ?? '').trim().slice(0, 15) || `从「${(parent.title ?? '源会话').slice(0, 8)}」分支`;
       const session = store.create({
-        model: parent.model || undefined,
+        model: parent.model || currentModel || config.defaultModel, // 分支：优先继承父，否则当前全局模型
         cwd: parent.cwd || config.defaultCwd,
         title: title || '新会话',
         parentId,
@@ -232,7 +237,7 @@ export function sessionsHandler(ctx) {
         }
       }
       const session = store.create({
-        model: body.model || undefined,
+        model: body.model || currentModel || config.defaultModel, // 动态读当前全局模型：右上角显示=实际，切模型实时生效
         cwd: body.cwd || config.defaultCwd,
         // 建会话 effort 只接受 low/max（标准档=不传）
         effort: body.effort === 'low' || body.effort === 'max' ? body.effort : undefined,

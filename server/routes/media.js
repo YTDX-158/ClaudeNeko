@@ -10,6 +10,7 @@ export function mediaHandler(ctx) {
     const { pathname } = url;
     const method = req.method;
     const media = ctx.media;
+    const mediaConfig = ctx.mediaConfig; // 设置中心配置的媒体条目（并入模型列表）
 
     const genErr = (e) =>
       e instanceof ApiError
@@ -82,7 +83,11 @@ export function mediaHandler(ctx) {
     // 技能包：生成媒体 / 下载视频（必须在 mm 文件匹配之前，否则 /api/media/config 会被当成文件 id）
     if (method === 'GET' && pathname === '/api/media/config') {
       if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
-      return sendJson(res, 200, media.getConfig());
+      const cfg = media.getConfig();
+      // 并入 mediaConfig 条目模型（设置中心配置的条目，前端选择器能选到）
+      const imageModels = [...(cfg.imageModels || []), ...mediaConfig.listItems('image').map((it) => ({ id: it.model, label: it.name }))];
+      const videoModels = [...(cfg.videoModels || []), ...mediaConfig.listItems('video').map((it) => ({ id: it.model, label: it.name }))];
+      return sendJson(res, 200, { ...cfg, imageModels, videoModels });
     }
 
     if (method === 'POST' && pathname === '/api/media/generate') {

@@ -72,17 +72,27 @@ function calcImageSize(ratio, resolution) {
 }
 
 export function createMediaService(cfg) {
-  const { doubaoKey, imageModels, videoModels, ratios, imageResolutions, transcribeEnabled } = cfg;
+  const { doubaoKey, imageModels, videoModels, ratios, imageResolutions, transcribeEnabled, mediaConfig } = cfg;
   const tasks = new Map(); // taskId -> {status, mediaId?, error?, ts, resolution, failCount, claimedBy?, claimedAt?, lastWatchAt?}
   let active = 0;
   const dataDir = cfg.dataDir || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data');
   const tasksFile = path.join(dataDir, 'gen_tasks.json');
 
-  const headers = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${doubaoKey}` });
+  // ---- 按模型条目取接入配置（P1d）：条目优先 → 默认 ARK_BASE/doubaoKey 兜底 ----
+  function resolveEndpoint(model, kind) {
+    const items = mediaConfig?.listItems(kind) || [];
+    const hit = items.find((it) => it.model === model);
+    if (hit) return { baseUrl: hit.baseUrl, apiKey: hit.apiKey, model: hit.model };
+    return { baseUrl: ARK_BASE, apiKey: doubaoKey, model };
+  }
 
   async function arkFetch(path, opts) {
-    const res = await fetch(`${ARK_BASE}${path}`, {
+    // 支持按条目覆盖 baseUrl/apiKey（P1d）：不传则默认 ARK_BASE + doubaoKey
+    const baseUrl = opts?.baseUrl || ARK_BASE;
+    const apiKey = opts?.apiKey || doubaoKey;
+    const res = await fetch(`${baseUrl}${path}`, {
       ...opts,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       signal: opts.signal || AbortSignal.timeout(60000), // 防火山 API 挂起永久占资源
     });
     const j = await res.json().catch(() => ({}));
@@ -93,13 +103,13 @@ export function createMediaService(cfg) {
     return j;
   }
 
-  function requireKey() {
-    if (!doubaoKey) {
-      throw new ApiError('NO_KEY', '未配置生成 key（DOUBAO_API_KEY），请在 ~/.claude/settings.json 的 env 或环境变量里配置');
+  function requireKey(apiKey = doubaoKey) {
+    if (!apiKey) {
+      throw new ApiError('NO_KEY', '未配置生成 key（DOUBAO_API_KEY 或媒体配置条目），请在设置里配置');
     }
   }
-  const isImageModel = (id) => imageModels.some((m) => m.id === id);
-  const isVideoModel = (id) => videoModels.some((m) => m.id === id);
+  const isImageModel = (id) => imageModels.some((m) => m.id === id) || (mediaConfig?.listItems('image') || []).some((it) => it.model === id);
+  const isVideoModel = (id) => videoModels.some((m) => m.id === id) || (mediaConfig?.listItems('video') || []).some((it) => it.model === id);
   const isValidRatio = (r) => ratios.includes(r);
 
   // ---- 任务落盘（gen_tasks.json，原子写；状态变化时调用） ----
@@ -164,7 +174,8 @@ export function createMediaService(cfg) {
 
   // ---- 生图（同步，2-5s）----
   async function generateImage({ prompt, model, ratio, resolution }) {
-    requireKey();
+    const ep = resolveEndpoint(model, 'image');
+    requireKey(ep.apiKey);
     if (!isImageModel(model)) throw new ApiError('MODEL_UNAVAILABLE', `当前 key 未开通此模型：${model}`);
     if (!isValidRatio(ratio)) throw new ApiError('INVALID_RATIO', `比例不支持：${ratio}`);
     if (active >= MAX_ACTIVE) throw new ApiError('BUSY', '已有生成任务进行中，请稍候'); // 生图也走同一把并发锁（防堆叠烧额度）
@@ -173,8 +184,9 @@ export function createMediaService(cfg) {
     const size = calcImageSize(ratio, resolution);
     const j = await arkFetch('/images/generations', {
       method: 'POST',
-      headers: headers(),
-      body: JSON.stringify({ model, prompt, size, watermark: false }),
+      baseUrl: ep.baseUrl,
+      apiKey: ep.apiKey,
+      body: JSON.stringify({ model: ep.model, prompt, size, watermark: false }),
     });
     const item = (j?.data || [])[0];
     if (!item) throw new ApiError('NO_RESULT', '生图无返回');
@@ -235,7 +247,8 @@ export function createMediaService(cfg) {
 
   // ---- 生视频（异步任务：后端自轮询盯梢 + 前端轮询看进度）----
   async function generateVideo({ prompt, model, ratio, duration, resolution, refMode, refImages }) {
-    requireKey();
+    const ep = resolveEndpoint(model, 'video');
+    requireKey(ep.apiKey);
     if (!isVideoModel(model)) throw new ApiError('MODEL_UNAVAILABLE', `当前 key 未开通此模型：${model}`);
     if (!isValidRatio(ratio)) throw new ApiError('INVALID_RATIO', `比例不支持：${ratio}`);
     const m = videoModels.find((x) => x.id === model);
@@ -255,7 +268,7 @@ export function createMediaService(cfg) {
     active += 1;
     const res = resolution || '720P'; // 存储口径与发送口径统一（4K 盯梢放宽判断依赖）
     const body = {
-      model,
+      model: ep.model,
       content: [{ type: 'text', text: prompt }],
       watermark: false,
       resolution: res,
@@ -273,7 +286,8 @@ export function createMediaService(cfg) {
       }
       const j = await arkFetch('/contents/generations/tasks', {
         method: 'POST',
-        headers: headers(),
+        baseUrl: ep.baseUrl,
+        apiKey: ep.apiKey,
         // 参考图大请求体：超时放宽到 120s（数十 MB base64 上传要时间）
         signal: refBlocks ? AbortSignal.timeout(120000) : undefined,
         body: JSON.stringify(body),
@@ -285,6 +299,8 @@ export function createMediaService(cfg) {
         ts: Date.now(),
         resolution: res,
         model,
+        baseUrl: ep.baseUrl, // 查任务用提交时的 key/baseUrl（P1d：自定义条目任务不能用默认 key 查）
+        apiKey: ep.apiKey,
         ratio,
         duration: duration != null ? Number(duration) : undefined,
         prompt,
@@ -327,7 +343,7 @@ export function createMediaService(cfg) {
         return t;
       }
       try {
-        const j = await arkFetch(`/contents/generations/tasks/${taskId}`, { headers: headers() });
+        const j = await arkFetch(`/contents/generations/tasks/${taskId}`, { baseUrl: t.baseUrl, apiKey: t.apiKey });
         const st = j?.status || '';
         if (st === 'succeeded') {
           t.status = 'downloading'; // 先标记，防再次进入本分支
@@ -452,5 +468,8 @@ export function createMediaService(cfg) {
   // 启动认领：重启后恢复未完成任务（放在定时器之后，认领完盯梢立即接管）
   loadTasks();
 
-  return { generateImage, generateVideo, queryTask, getConfig, cancelAll };
+  /** 是否有生成任务在跑（切换模型前检查，有则拒绝——避免 kill 打断生成） */
+  function hasActive() { return active > 0; }
+
+  return { generateImage, generateVideo, queryTask, getConfig, cancelAll, hasActive };
 }

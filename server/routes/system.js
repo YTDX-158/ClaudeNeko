@@ -1,6 +1,7 @@
-// routes/system.js — 系统端点：health / balance / skills / autostart / models（架构重构步2）
+// routes/system.js — 系统端点：health / balance / skills / autostart / models / env（架构重构步2）
 import { fetchBalance } from '../lib/balance.js';
 import { listSkills, sendJson } from '../lib/util.js';
+import { detectEnv } from '../lib/envReport.js';
 
 export function systemHandler(ctx) {
   return async (req, res, url) => {
@@ -8,6 +9,10 @@ export function systemHandler(ctx) {
     const method = req.method;
     if (method === 'GET' && pathname === '/api/health') {
       return sendJson(res, 200, { ok: true, version: ctx.appVersion });
+    }
+    if (method === 'GET' && pathname === '/api/env') {
+      // 环境检测契约（接口 B）：与 ClaudeInstall --detect-json 同结构
+      return sendJson(res, 200, detectEnv());
     }
     if (method === 'GET' && pathname === '/api/balance') {
       return sendJson(res, 200, await fetchBalance());

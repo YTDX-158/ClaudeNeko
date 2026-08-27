@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { skinEngine } from './skinEngine.js';
 import { api } from '../api.js';
+import ModelSettings from './ModelSettings.jsx';
 import { downloadText, exportSessionText } from '../utils/export.js';
 import ExportDialog from '../components/ExportDialog.jsx';
 import SkillsPanel from '../components/SkillsPanel.jsx';
@@ -49,7 +50,7 @@ function SliderRow({ label, value, min = 0, max = 1, step = 0.05, onChange }) {
   );
 }
 
-export default function SkinSettings({ open, onClose }) {
+export default function SkinSettings({ open, onClose, onModelChanged }) {
   const [, setTick] = useState(0);
   const [tab, setTab] = useState('theme');
   const [section, setSection] = useState('appearance'); // 一级分区：appearance(外观) | features(功能)
@@ -188,7 +189,7 @@ export default function SkinSettings({ open, onClose }) {
     <div className="skin-modal" onClick={onClose}>
       <div className="skin-modal-box" onClick={(e) => e.stopPropagation()}>
         <div className="skin-modal-header">
-          <span className="skin-modal-title">{section === 'appearance' ? '外观 / Theme' : '功能 / Features'}</span>
+          <span className="skin-modal-title">{section === 'appearance' ? '外观 / Theme' : section === 'features' ? '功能 / Features' : '模型配置 / Model'}</span>
           <button className="skin-close" onClick={onClose} title="关闭">✕</button>
         </div>
 
@@ -206,6 +207,12 @@ export default function SkinSettings({ open, onClose }) {
               onClick={() => setSection('features')}
             >
               功能
+            </button>
+            <button
+              className={`skin-nav-btn${section === 'model' ? ' active' : ''}`}
+              onClick={() => setSection('model')}
+            >
+              模型配置
             </button>
           </div>
           <div className="skin-main">
@@ -405,7 +412,7 @@ export default function SkinSettings({ open, onClose }) {
           )}
             </div>
             </>
-          ) : (
+          ) : section === 'features' ? (
             <div className="skin-tab-body">
               <div className="skin-section">
                 <div className="skin-section-title">功能</div>
@@ -494,7 +501,8 @@ export default function SkinSettings({ open, onClose }) {
                 <div className="skin-hint">更多功能开关会陆续加到这里</div>
               </div>
             </div>
-          )}
+          ) : null}
+          {section === 'model' && <ModelSettings onModelChanged={onModelChanged} />}
           </div>
         </div>
 

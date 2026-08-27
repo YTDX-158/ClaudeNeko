@@ -16,6 +16,12 @@ export default function App() {
 
   const [serverOk, setServerOk] = useState(null);
   const [skinOpen, setSkinOpen] = useState(false);
+  // 全局当前模型（右上角显示用）：改模型是全局的（写 env），显示也全局统一，不跟会话走
+  const [globalModel, setGlobalModel] = useState(null);
+  const refreshModel = useCallback(() => {
+    api.getConfig().then((r) => setGlobalModel(r.model || null)).catch(() => {});
+  }, []);
+  useEffect(() => { refreshModel(); }, [refreshModel]);
   const [mediaOpen, setMediaOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false); // 终端页（c2web 模式）
   const [terminalSessionId, setTerminalSessionId] = useState(null); // 打开终端的会话 id（每个会话独立入口）
@@ -96,6 +102,7 @@ export default function App() {
       />
       <ChatWindow
         session={activeSession}
+        model={globalModel}
         chat={chat}
         onBranch={handleBranch}
         onEffortChange={(effort) => activeId && patch(activeId, { effort }).catch(() => {})}
@@ -107,7 +114,7 @@ export default function App() {
           无法连接后端（127.0.0.1:4000）——请双击桌面「启动ClaudeNeko.bat」启动服务
         </div>
       )}
-      <SkinSettings open={skinOpen} onClose={() => setSkinOpen(false)} />
+      <SkinSettings open={skinOpen} onClose={() => setSkinOpen(false)} onModelChanged={refreshModel} />
       <MediaLibrary open={mediaOpen} onClose={() => setMediaOpen(false)} />
       <TerminalView open={terminalOpen} onClose={() => setTerminalOpen(false)} sessionId={terminalSessionId} />
     </div>
