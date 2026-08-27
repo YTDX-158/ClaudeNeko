@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import MessageList from './MessageList.jsx';
 import Composer from './Composer.jsx';
 import CatMascot from './CatMascot.jsx';
@@ -191,10 +191,11 @@ export default function ChatWindow({ session, chat, onBranch, onEffortChange, ju
   };
 
   // 引用：在输入框上方挂一条引用栏（不污染输入框内容）
-  const handleQuote = (text, role) => {
+  // useCallback（审查⑦）：稳定回调引用，MessageBubble memo 生效
+  const handleQuote = useCallback((text, role) => {
     setQuote({ text, role });
     taRef.current?.focus();
-  };
+  }, []);
 
   // 发送：有引用则拼成 markdown 引用块 + 用户文字 + 附件
   const handleSend = (userText, msgAttachments = []) => {

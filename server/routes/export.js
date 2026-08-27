@@ -52,6 +52,7 @@ export function exportHandler(ctx) {
       if (!session) return sendJson(res, 404, { error: '会话不存在' });
       const data = JSON.stringify({ version: 1, session, messages: store.readMessages(id) }, null, 2);
       const fname = `${safeFilename(session.title, 'session')}.json`;
+      res.on('error', () => {}); // 客户端断开（EPIPE）不崩进程（审查②）
       res.writeHead(200, {
         'Content-Type': 'application/json; charset=utf-8',
         'Content-Disposition': `attachment; filename="${fname.replace(/[^\w.-]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(fname)}`,
@@ -84,6 +85,7 @@ export function exportHandler(ctx) {
         return sendJson(res, 404, { error: sessions.length ? '会话数据超过 500MB 导出上限，请减少会话或单条导出' : '没有可导出的会话' });
       }
       const zip = createZip(files);
+      res.on('error', () => {}); // 客户端断开（EPIPE）不崩进程（审查②）
       res.writeHead(200, {
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename="claudeneko-sessions-${Date.now()}.zip"`,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Lightbox from './Lightbox.jsx';
@@ -146,7 +146,7 @@ function renderUserText(text) {
   return html;
 }
 
-export default function MessageBubble({ message, onQuote, onBranch }) {
+function MessageBubble({ message, onQuote, onBranch }) {
   const isUser = message.role === 'user';
   const text = message.text ?? '';
   const [copied, setCopied] = useState(false);
@@ -295,3 +295,6 @@ export default function MessageBubble({ message, onQuote, onBranch }) {
     </div>
   );
 }
+
+// memo 优化（审查⑦）：消息多时未变的气泡不重渲染（上游 onQuote/onBranch 已 useCallback 稳定）
+export default memo(MessageBubble);

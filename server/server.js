@@ -8,6 +8,7 @@ import { SessionStore } from './lib/sessionStore.js';
 import { createClaudeRunner } from './lib/claudeRunner.js';
 import { createBusyLock } from './lib/busyLock.js';
 import { createMediaService } from './lib/mediaGen.js';
+import { pruneMedia } from './lib/mediaStore.js';
 import { createPtyHost } from './lib/ptyHost.js';
 import { createEventBus } from './lib/bus.js';
 import { createTranscriptService } from './lib/transcript.js';
@@ -25,6 +26,9 @@ import * as pairing from './lib/remote/pairing.js';
 
 const config = resolveConfig();
 const media = createMediaService({ ...config.media, dataDir: config.dataDir }); // dataDir 供任务落盘 gen_tasks.json
+// 媒体库自动清理（审查⑤）：启动清一次 + 每 24h 清一次（TTL 30 天 / 总量上限 2GB）
+pruneMedia();
+setInterval(() => { try { pruneMedia(); } catch (e) { console.error('[media] 定时清理失败:', e.message); } }, 24 * 3600 * 1000).unref?.();
 const store = new SessionStore(config.dataDir);
 const busyLock = createBusyLock(); // per-session 在途锁（唯一写入口，见 lib/busyLock.js）
 const bus = createEventBus(); // 模块解耦事件总线（Phase2，事件字典见 lib/bus.js）

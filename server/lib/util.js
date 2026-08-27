@@ -17,6 +17,7 @@ const MIME = {
 };
 
 export function sendJson(res, status, body) {
+  res.on('error', () => {}); // 客户端断开（EPIPE）不崩进程（审查② 通用兜底）
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
 }
@@ -92,7 +93,7 @@ export function serveStatic(req, res, url, distDir) {
     if (err || !stat.isFile()) return fallback();
     const ext = path.extname(filePath).toLowerCase();
     res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream' });
-    fs.createReadStream(filePath).pipe(res);
+    safePipe(fs.createReadStream(filePath), res);
   });
 }
 
@@ -171,6 +172,19 @@ export function readRawBody(req) {
   });
 }
 
+/** 安全管道：客户端断开（EPIPE）时解除管道并安全销毁，不崩进程（审查② 8-27）。
+ *  带 destroyed 检查再 destroy——Windows libuv 对已 closing 的 handle 再 close 会 assert。 */
+export function safePipe(stream, res) {
+  const cleanup = () => {
+    try { stream.unpipe(res); } catch { /* 已结束 */ }
+    if (!stream.destroyed) { try { stream.destroy(); } catch { /* 已关 */ } }
+    if (!res.destroyed) { try { res.destroy(); } catch { /* 已关 */ } }
+  };
+  stream.on('error', cleanup);
+  res.on('error', cleanup);
+  stream.pipe(res);
+}
+
 export function serveMediaFile(req, res, rec, asDownload) {
   // 防御：脏记录 fileName 缺失时 path.join 会抛 "path undefined" → 500，直接 404
   if (!rec || !rec.fileName) {
@@ -206,9 +220,9 @@ export function serveMediaFile(req, res, rec, asDownload) {
       'Content-Range': `bytes ${start}-${end}/${stat.size}`,
       'Content-Length': end - start + 1,
     });
-    fs.createReadStream(filePath, { start, end }).pipe(res);
+    safePipe(fs.createReadStream(filePath, { start, end }), res);
   } else {
     res.writeHead(200, { ...base, 'Content-Length': stat.size });
-    fs.createReadStream(filePath).pipe(res);
+    safePipe(fs.createReadStream(filePath), res);
   }
 }

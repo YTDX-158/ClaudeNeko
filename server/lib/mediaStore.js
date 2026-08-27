@@ -117,3 +117,35 @@ export function deleteMedia(id) {
   }
   return true;
 }
+
+/* ---------- 媒体库自动清理（审查⑤ 8-27） ---------- */
+const DEFAULT_TTL = 30 * 24 * 3600 * 1000; // 30 天
+const DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 总容量上限 2GB（视频多时防占死硬盘）
+
+/** 清理过期媒体：① 创建时间超 TTL 的删；② 总量超上限删最旧。返回删除条数。
+ *  启动时 + 定期调用（server.js 接线）。 */
+export function pruneMedia({ maxAgeMs = DEFAULT_TTL, maxBytes = DEFAULT_MAX_BYTES } = {}) {
+  const idx = loadIndex();
+  if (!idx.length) return 0;
+  const now = Date.now();
+  // ① 超 TTL 删
+  const afterTtl = idx.filter((m) => now - (m.createdAt || 0) < maxAgeMs);
+  // ② 总量超上限 → 最旧先删（先按 createdAt 升序）
+  let total = afterTtl.reduce((s, m) => s + (m.size || 0), 0);
+  const ordered = [...afterTtl].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  const keep = [];
+  for (const m of ordered) {
+    if (total > maxBytes) { total -= m.size || 0; continue; }
+    keep.push(m);
+  }
+  const removed = idx.length - keep.length;
+  if (!removed) return 0;
+  const keepIds = new Set(keep.map((m) => m.id));
+  const toDelete = idx.filter((m) => !keepIds.has(m.id));
+  saveIndex(keep);
+  for (const m of toDelete) {
+    try { fs.unlinkSync(path.join(MEDIA_DIR, m.fileName)); } catch { /* 已不存在 */ }
+  }
+  console.log(`[media] 自动清理 ${removed} 条过期媒体（剩余 ${keep.length} 条）`);
+  return removed;
+}

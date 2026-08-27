@@ -30,6 +30,7 @@ const DEFAULT_ROWS = 30;
 const ENTER_DELAY_MS = 200; // 文本写入后延迟写回车：防 Windows ConPTY「背靠背吞回车」（8-27 修复）
 const QUIET_READY_MS = 800; // 输出安静 800ms = claude 界面稳定，才算就绪（防启动滚动期误判）
 const READY_SETTLE_MS = 300; // markReady（jsonl 信号）后再 settle：探测到 jsonl → 输入框激活
+const INTERRUPT_SETTLE_MS = 600; // cancel 后冷却：等 claude 收尾回到输入态再注入（审查①，防新旧消息写同 jsonl 打架）
 
 /**
  * 清洗传给 pty claude 的环境变量。
@@ -95,7 +96,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
       console.error(`[ptyHost] spawn 失败 sid=${sid}:`, e.message);
       return { isNew: false, available: false };
     }
-    const rec = { child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null };
+    const rec = { child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null, lastInterruptAt: 0 };
     ptys.set(sid, rec);
     // M2 兜底：20s 内无论输出多少都强制就绪（防 claude 卡死/输出异常导致消息永久卡队列）
     setTimeout(() => {
@@ -134,22 +135,26 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     return doSubmit(rec, text);
   }
 
-  /** 真正执行注入：文本立即写入，回车延迟 ENTER_DELAY_MS 再写——防 Windows ConPTY
-   *  把「文本+回车」背靠背合并/在 TUI 未及渲染输入行时吞掉回车（8-27 修复）。 */
+  /** 真正执行注入：文本写入（cancel 后延迟冷却），回车延迟 ENTER_DELAY_MS 再写。
+   *  冷却语义（审查①）：cancel 发 Esc 后 claude 进程还在收尾，立即注入新消息会新旧
+   *  写同 jsonl 打架 → cancel 后 INTERRUPT_SETTLE_MS 内提交先等 claude 回到输入态。 */
   function doSubmit(rec, text) {
-    try {
-      rec.child.write(String(text));
-      rec.lastActive = Date.now(); // C1：注入成功刷新活跃时间（防空闲误回收）
-      setTimeout(() => {
-        try {
-          rec.child.write('\r');
-          rec.lastActive = Date.now();
-        } catch { /* 已退出 */ }
-      }, ENTER_DELAY_MS);
-      return true;
-    } catch {
-      return false;
-    }
+    const sinceInterrupt = rec.lastInterruptAt ? Date.now() - rec.lastInterruptAt : Infinity;
+    const wait = sinceInterrupt < INTERRUPT_SETTLE_MS ? INTERRUPT_SETTLE_MS - sinceInterrupt : 0;
+    const go = () => {
+      try {
+        rec.child.write(String(text));
+        rec.lastActive = Date.now(); // C1：注入成功刷新活跃时间（防空闲误回收）
+        setTimeout(() => {
+          try {
+            rec.child.write('\r');
+            rec.lastActive = Date.now();
+          } catch { /* 已退出 */ }
+        }, ENTER_DELAY_MS);
+      } catch { /* 已退出 */ }
+    };
+    if (wait > 0) setTimeout(go, wait); else go();
+    return true;
   }
 
   /** 就绪后补发积压的 submit（首次消息可能因启动慢被吞） */
@@ -201,8 +206,10 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     }
   }
 
-  /** Esc 中断当前生成（对应聊天「停止」按钮） */
+  /** Esc 中断当前生成（对应聊天「停止」按钮）。记录时间供 submit 冷却（审查①） */
   function interrupt(sid) {
+    const rec = ptys.get(sid);
+    if (rec) rec.lastInterruptAt = Date.now();
     return write(sid, '\x1b');
   }
 

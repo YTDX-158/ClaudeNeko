@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { api } from './api.js';
 import { useSessions } from './hooks/useSessions.js';
 import { useChatStream } from './hooks/useChatStream.js';
@@ -58,13 +58,14 @@ export default function App() {
   };
 
   // 分支：从某条 AI 回复新建会话（后端复制其之前历史），成功后切到新会话
-  const handleBranch = async (message) => {
+  // useCallback（审查⑦）：稳定回调引用，MessageBubble 的 memo 才生效（不因父重渲染全量重建）
+  const handleBranch = useCallback(async (message) => {
     if (!activeId || !message?.claudeMessageId) return;
     const { session } = await api.createBranch(activeId, message.claudeMessageId);
     // 新会话插到列表头部并激活
     sessions.setActiveId(session.id);
     await sessions.refresh();
-  };
+  }, [activeId, sessions]);
 
   return (
     <div className="app">

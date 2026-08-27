@@ -70,6 +70,7 @@ export function mediaHandler(ctx) {
       if (!files.length) return sendJson(res, 404, { error: '所选媒体均无法读取' });
       const zip = createZip(files);
       // filename* 用 RFC 5987 编码中文文件名（Node header 不接受非 ASCII）
+      res.on('error', () => {}); // 客户端断开（EPIPE）不崩进程（审查②）
       res.writeHead(200, {
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename="claudeneko.zip"; filename*=UTF-8''ClaudeNeko-%E5%AA%92%E4%BD%93-${Date.now()}.zip`,

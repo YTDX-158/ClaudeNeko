@@ -36,8 +36,11 @@ function extractPdfText(buf) {
   return texts.join(' ').slice(0, MAX_TEXT) || null;
 }
 
-/** docx = zip，解出 word/document.xml 再抽 <w:t> 文字。 */
+/** docx = zip，解出 word/document.xml 再抽 <w:t> 文字。
+ *  ⚠ 安全（审查⑥ 8-27）：防 zip bomb——恶意 docx 塞超大内容，解压会撑爆内存。
+ *  解压前限条目压缩大小 + 解压时 maxOutputLength 硬上限，超限直接拒绝（返回 null，调用方降级）。 */
 function extractDocxText(buf) {
+  const MAX_DECOMPRESS = 20 * 1024 * 1024; // 单条目解压后上限 20MB（正常 docx 远小于此）
   let offset = 0;
   let docXml = null;
   // 简易 ZIP 解析：遍历 Local File Header，找 word/document.xml
@@ -50,8 +53,16 @@ function extractDocxText(buf) {
     const name = buf.toString('utf8', offset + 30, offset + 30 + nameLen);
     const dataStart = offset + 30 + nameLen + extraLen;
     if (name === 'word/document.xml') {
+      // 压缩数据本身超上限也拒绝（防超长条目）
+      if (compSize > MAX_DECOMPRESS) return null;
       const comp = buf.subarray(dataStart, dataStart + compSize);
-      docXml = method === 0 ? comp.toString('utf8') : zlib.inflateRawSync(comp).toString('utf8');
+      try {
+        docXml = method === 0
+          ? comp.toString('utf8')
+          : zlib.inflateRawSync(comp, { maxOutputLength: MAX_DECOMPRESS }).toString('utf8');
+      } catch {
+        return null; // 解压超限/损坏 → 拒绝（不撑爆内存）
+      }
       break;
     }
     offset = dataStart + compSize;

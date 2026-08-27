@@ -9,9 +9,12 @@ import { fileURLToPath } from 'node:url';
  * 注意：-p + stream-json 必须带 --verbose，否则 claude 直接报错。
  */
 export function buildArgs({ prompt, model, effort, claudeSessionId }) {
+  // 审查③：Windows CreateProcess 命令行上限 ~32767 字符，超长会静默失败 → 截断到安全长度
+  const MAX_PROMPT_LEN = 20000;
+  const safePrompt = String(prompt).replace(/\0/g, '').slice(0, MAX_PROMPT_LEN); // 过滤 NUL + 截断
   const args = [
     '-p',
-    String(prompt).replace(/\0/g, ''), // 过滤 NUL：spawn 参数含 \0 会同步抛 ERR_INVALID_ARG_VALUE
+    safePrompt,
     '--output-format',
     'stream-json',
     '--verbose',

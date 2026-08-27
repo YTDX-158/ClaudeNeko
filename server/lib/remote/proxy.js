@@ -165,6 +165,14 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
       (up) => {
         // 转发上游响应头；若上游是 SSE（text/event-stream）headers 会带好，透传即可
         res.writeHead(up.statusCode, up.headers);
+        // 断连防护：客户端/上游任一断开都解除管道 + 带检查销毁，不崩进程（审查②，防重复 close assert）
+        const cleanup = () => {
+          try { up.unpipe(res); } catch { /* 已结束 */ }
+          if (!up.destroyed) { try { up.destroy(); } catch { /* 已关 */ } }
+          if (!res.destroyed) { try { res.destroy(); } catch { /* 已关 */ } }
+        };
+        up.on('error', cleanup);
+        res.on('error', cleanup);
         up.pipe(res);
       },
     );
