@@ -10,6 +10,7 @@ import { downloadText, exportSessionText } from '../utils/export.js';
 import ExportDialog from '../components/ExportDialog.jsx';
 import SkillsPanel from '../components/SkillsPanel.jsx';
 import { EFFORT_LEVELS, readDefaultEffort, setDefaultEffort } from '../utils/effort.js';
+import { readConfirmMedia, setConfirmMedia } from '../utils/mediaConfirm.js';
 
 const ACCENTS = ['#74c0fc', '#34d399', '#4f83f2', '#f472b6', '#f59e0b', '#a78bfa', '#22d3ee', '#f87171'];
 const GRADIENTS = [
@@ -59,12 +60,16 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
   const [autostart, setAutostart] = useState(null); // null=加载中 / true|false=开关状态
   const [skillsOpen, setSkillsOpen] = useState(false); // 已装 Skills 查看面板
   const [defaultEffort, setDefEffort] = useState(readDefaultEffort); // 全局默认思考档位（省/标准/强力）
+  const [confirmMedia, setConfirmMediaState] = useState(readConfirmMedia); // 生成图片/视频前确认（默认关）
   const [remote, setRemote] = useState(null); // null=加载中 / {enabled, publicUrl, pairCode}
   const [remoteBusy, setRemoteBusy] = useState(false); // 开关切换中（防连点）
 
-  // 打开设置时刷新默认档：组件常驻挂载，运行期 localStorage 可能被改/清，避免显示启动时旧值
+  // 打开设置时刷新默认档 / 生成确认开关：组件常驻挂载，运行期 localStorage 可能被改/清，避免显示启动时旧值
   useEffect(() => {
-    if (open) setDefEffort(readDefaultEffort());
+    if (open) {
+      setDefEffort(readDefaultEffort());
+      setConfirmMediaState(readConfirmMedia());
+    }
   }, [open]);
   const fileRef = useRef(null);
 
@@ -128,6 +133,24 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
     } finally {
       setRemoteBusy(false);
     }
+  };
+
+  // 一键恢复默认（按管辖范围分开，footer 按钮按一级分区分流）
+  // - 外观：清外观设置 → 刷新回出厂
+  // - 功能：清猫娘/思考档位 + 关自启/远程（服务端，幂等）→ 全部落定后刷新，让开关显示真实状态
+  const handleReset = async () => {
+    setConfirmReset(false);
+    if (section === 'appearance') {
+      skinEngine.resetAll('appearance');
+      window.location.reload();
+      return;
+    }
+    skinEngine.resetAll('functions'); // 清猫娘开关（localStorage）
+    setDefaultEffort(null);            // 思考档位回标准
+    const results = await Promise.allSettled([api.setAutostart(false), api.remoteOff()]);
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length) alert('恢复功能默认：开机自启/远程访问关闭失败，请检查后重试');
+    window.location.reload();
   };
 
   // 导出全部会话：统一面板选 txt/zip（含思考勾选）
@@ -469,6 +492,19 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
                   </div>
                 )}
                 <div className="skin-row">
+                  <span>生成图片/视频前确认（防误触费钱，默认关）</span>
+                  <button
+                    className={`skin-btn${confirmMedia ? ' active' : ''}`}
+                    onClick={() => {
+                      const next = !confirmMedia;
+                      setConfirmMediaState(next);
+                      setConfirmMedia(next);
+                    }}
+                  >
+                    {confirmMedia ? '开 ✓' : '关'}
+                  </button>
+                </div>
+                <div className="skin-row">
                   <span>猫猫（右下角粒子猫，可拖动）</span>
                   <button
                     className={`skin-btn${skinEngine.catVisible ? ' active' : ''}`}
@@ -507,20 +543,23 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
         </div>
 
         <div className="skin-footer">
-          <button
-            className={`skin-btn danger${confirmReset ? ' active' : ''}`}
-            onClick={() => {
-              if (!confirmReset) {
-                setConfirmReset(true);
-                setTimeout(() => setConfirmReset(false), 2500);
-                return;
-              }
-              skinEngine.resetAll();
-            }}
-          >
-            {confirmReset ? '再点一次确认恢复默认' : '一键恢复默认'}
-          </button>
-          <span>仰天大笑 × 孑孓羽然 共同开发 · 外观灵感源自 dsh-dream-skin / Aqua（MIT）</span>
+          {section !== 'model' && (
+            <button
+              className={`skin-btn danger${confirmReset ? ' active' : ''}`}
+              onClick={() => {
+                if (!confirmReset) {
+                  setConfirmReset(true);
+                  setTimeout(() => setConfirmReset(false), 2500);
+                  return;
+                }
+                handleReset();
+              }}
+            >
+              {confirmReset
+                ? (section === 'appearance' ? '再点一次确认恢复外观默认' : '再点一次确认恢复功能默认（含关闭自启与远程）')
+                : (section === 'appearance' ? '恢复外观默认' : '恢复功能默认')}
+            </button>
+          )}
         </div>
         <SkillsPanel open={skillsOpen} onClose={() => setSkillsOpen(false)} />
         {exportAllOpen && (

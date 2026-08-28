@@ -24,6 +24,14 @@ function formatRecentTime(ts) {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
 
+/** 创建时间格式化：从年精确到分（YYYY-MM-DD HH:MM）。 */
+function formatCreatedTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /**
  * 单个会话项：点击切换 / 双击改名 / 悬浮删除（两次确认）/
  * 第二行右侧显示最近对话时间（悬浮看完整时间）。
@@ -68,8 +76,6 @@ export default function SessionItem({
     onRemove(session.id);
   };
 
-  const modelShort = (session.model ?? '').replace(/^deepseek-/, '');
-
   return (
     <li
       className={`session-item${active ? ' active' : ''}${session.pinned ? ' pinned' : ''}${manageMode ? ' manage' : ''}`}
@@ -109,7 +115,7 @@ export default function SessionItem({
           </span>
         )}
         <div className="session-item-sub">
-          <span className="session-item-model">{modelShort}</span>
+          <span className="session-item-created" title="创建时间">{formatCreatedTime(session.createdAt)}</span>
           <span
             className="session-item-time"
             title={session.updatedAt ? new Date(session.updatedAt).toLocaleString() : undefined}

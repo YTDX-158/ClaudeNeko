@@ -30,6 +30,8 @@ export const api = {
   getSession: (id) => request(`/sessions/${id}`),
   // 取消该会话正在进行的生成（停止按钮；后端杀 claude 进程并释放锁）
   cancelGeneration: (id) => request(`/sessions/${id}/cancel`, { method: 'POST' }),
+  // 手动压缩上下文（上下文横幅「一键 /compact」）：向常驻 claude 提交 /compact
+  compactSession: (id) => request(`/sessions/${id}/compact`, { method: 'POST' }),
   patchSession: (id, patch) =>
     request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteSession: (id) => request(`/sessions/${id}`, { method: 'DELETE' }),
@@ -62,9 +64,9 @@ export const api = {
   deleteProfile: (name) => request(`/config/profiles?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
   // ---- 生图生视频模型条目（设置中心「媒体配置」） ----
-  getMediaConfig: (kind) => request(`/media-config?kind=${kind}`),
+  getMediaConfig: () => request('/media-config'),
   saveMediaItem: (body) => request('/media-config', { method: 'PUT', body: JSON.stringify(body) }),
-  deleteMediaItem: (kind, id) => request(`/media-config?kind=${kind}&id=${id}`, { method: 'DELETE' }),
+  deleteMediaItem: (kind, model) => request(`/media-config?kind=${kind}&model=${model}`, { method: 'DELETE' }),
   testMedia: (body) => request('/media-config/test', { method: 'POST', body: JSON.stringify(body) }),
 
   // ---- 技能包：生成媒体（POST 用自定义提取友好 message） ----

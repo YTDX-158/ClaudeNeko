@@ -3,6 +3,7 @@ import MediaPicker from './MediaPicker.jsx';
 import RefImagePicker from './RefImagePicker.jsx';
 import SkillBar from './SkillBar.jsx';
 import { uploadToMedia } from '../utils/upload.js';
+import { readConfirmMedia } from '../utils/mediaConfirm.js';
 import { api } from '../api.js';
 
 /**
@@ -84,6 +85,17 @@ const Composer = forwardRef(function Composer({
           opts.refMode = genOpts.refMode || 'ref'; // 挂了图但没选方式 → 默认参考素材
           opts.refImages = imgs.map((a) => a.id);
         }
+      }
+      // 生成前确认（设置→功能页开关，默认关）：防误触白白消耗 API 额度
+      if (readConfirmMedia()) {
+        const what = skill === 'video' ? '🎬 视频' : '🖼 图片';
+        const lines = [
+          `即将生成${what}`,
+          `模型：${genOpts.model}`,
+          `分辨率：${genOpts.resolution || '默认'}`,
+        ];
+        if (skill === 'video') lines.push(`时长：${opts.duration || '默认'}s`);
+        if (!window.confirm(lines.join('\n') + '\n\n确认生成？')) return; // 取消=保留输入，可继续编辑
       }
       onGenSend(opts);
       onChange('');

@@ -17,6 +17,9 @@ import { wsChannel } from '../ws.js';
 // 已重放（打字机）的 assistant claudeMessageId 集合：防切会话回来重复播放
 const replayedSet = new Set();
 
+// claude 对【系统记录】的机械确认（只认"已记录"类）→ 标 isSystem，WS 即时不渲染（防"已记录"刷屏）
+const SYSTEM_CONFIRM = /^(好的?，?)?已记录?[，。！!~～\s]*$/i;
+
 export function useChatStream(sessionId, onModelUpdate) {
   const [messages, setMessages] = useState([]);
   const [messagesSessionId, setMessagesSessionId] = useState(null); // 当前 messages 数组属于哪个会话（搜索跳转判定用）
@@ -106,6 +109,7 @@ export function useChatStream(sessionId, onModelUpdate) {
               claudeMessageId: ev.claudeMessageId,
               replay: true, // 触发打字机
               streaming: false,
+              ...(SYSTEM_CONFIRM.test(String(ev.text || '').trim()) ? { isSystem: true } : {}), // 系统记录确认即时过滤
             };
             if (idx >= 0) {
               const copy = [...prev];

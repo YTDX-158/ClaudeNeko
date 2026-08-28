@@ -42,6 +42,22 @@ const STORAGE_NIANG_POS = 'dsw-dream-skin:niang-pos';
 const STORAGE_NIANG_SIZE = 'dsw-dream-skin:niang-size';
 const STORAGE_NIANG_FLIP = 'dsw-dream-skin:niang-flip';
 
+/** 功能开关键（猫猫/claude娘/生成确认）：与外观设置不同类，一键恢复默认时分开管辖。
+ *  - resetAll('appearance') 会保留这些键（删除时跳过）
+ *  - resetAll('functions')  只删这些键（包含法）
+ * 思考档位键（claudeneko:default-effort）由前端 utils/effort.js 管理，不归本引擎；
+ * 生成确认开关（claudeneko:confirm-media）由 utils/mediaConfirm.js 读写，键归这里管（恢复功能默认一并清）。
+ */
+const FUNCTION_KEYS = new Set([
+  STORAGE_CAT_VISIBLE,
+  STORAGE_CAT_POS,
+  STORAGE_NIANG_VISIBLE,
+  STORAGE_NIANG_POS,
+  STORAGE_NIANG_SIZE,
+  STORAGE_NIANG_FLIP,
+  'claudeneko:confirm-media',
+]);
+
 /** 流体预设：一组「滑块值」组合。点预设 = 把 6 个滑块一次性设成这套值（所见即所得）。 */
 const FLUID_PRESETS = {
   ocean: { hue: 205, saturation: 75, brightness: 60, speed: 35, swirl: 25, colorCount: 3 }, // 海洋·蓝
@@ -612,18 +628,23 @@ export const skinEngine = {
     },
   },
 
-  /* ---- 一键恢复默认：清空全部皮肤设置，刷新页面回初始状态 ---- */
-  resetAll() {
+  /* ---- 一键恢复默认：按管辖范围分开（外观 vs 功能开关）。只清 localStorage，刷新由调用方做（便于功能恢复先调服务端 API） ---- */
+  resetAll(kind = 'appearance') {
     try {
       for (let i = localStorage.length - 1; i >= 0; i--) {
         const k = localStorage.key(i);
-        if (k && k.startsWith('dsw-dream-skin:')) localStorage.removeItem(k);
+        if (!k) continue;
+        if (kind === 'functions') {
+          // 功能：只删猫猫/claude娘 开关（包含法）
+          if (FUNCTION_KEYS.has(k)) localStorage.removeItem(k);
+        } else if (k.startsWith('dsw-dream-skin:') && !FUNCTION_KEYS.has(k)) {
+          // 外观：删全部皮肤键但保留功能开关（排除法）→ 未来新增外观键天然被覆盖
+          localStorage.removeItem(k);
+        }
       }
     } catch {
       /* localStorage 禁用时忽略 */
     }
-    // 刷新页面让所有皮肤状态（主题/壁纸/透明度/磨砂/强调色/流体）回到默认
-    window.location.reload();
   },
 
   /* ---- 订阅：UI 变化时调用，React 组件用它刷新 ---- */

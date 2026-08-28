@@ -710,6 +710,27 @@ body {
   margin: 8px 0;
 }
 
+/* 上下文使用率警告横幅（≥80% 提示压缩） */
+.ctx-banner {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  margin: 8px 0;
+  max-width: 90%;
+  flex-wrap: wrap;
+}
+.ctx-banner-actions {
+  display: flex;
+  gap: 6px;
+}
+
 /* ============ 输入区 ============ */
 .composer {
   position: absolute;
@@ -1197,6 +1218,11 @@ body {
   justify-content: space-between;
 }
 .session-item-model {
+  font-size: 11px;
+  color: var(--muted-2);
+  font-family: var(--font-mono);
+}
+.session-item-created {
   font-size: 11px;
   color: var(--muted-2);
   font-family: var(--font-mono);

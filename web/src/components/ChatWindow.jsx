@@ -8,6 +8,24 @@ import ExportDialog from './ExportDialog.jsx';
 import { api } from '../api.js';
 import { EFFORT_LEVELS } from '../utils/effort.js';
 
+// —— 上下文使用率计算（横幅提示用）：最新 assistant 的 usage.input_tokens ÷ 模型窗口（[1m]→100万）——
+function parseContextWindow(model) {
+  const m = String(model || '').match(/\[(\d+(?:\.\d+)?)([km])\]/i);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  return m[2].toLowerCase() === 'm' ? n * 1e6 : n * 1e3;
+}
+function computeContextUsage(messages, model) {
+  let inputTokens = 0;
+  for (let i = (messages || []).length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg && msg.role === 'assistant' && msg.usage?.input_tokens) { inputTokens = msg.usage.input_tokens; break; }
+  }
+  if (!inputTokens) return null;
+  const win = parseContextWindow(model) || 1000000;
+  return Math.round((inputTokens / win) * 100);
+}
+
 /**
  * 右侧聊天窗口：标题栏 + 消息流 + 输入区。
  * 输入框文本与「引用条」状态都提升到这里：
@@ -23,6 +41,26 @@ export default function ChatWindow({ session, model, chat, onBranch, onEffortCha
   const composerRef = useRef(null);
   const [dropActive, setDropActive] = useState(false);
   const dropCounter = useRef(0);
+
+  // 上下文使用率横幅（≥80% 提示 + 一键 /compact）：本会话「知道了」后不再弹，compact 后重置
+  const ctxDismissKey = (id) => `claudeneko:ctx-dismiss:${id}`;
+  const [ctxDismissed, setCtxDismissed] = useState(() => (session?.id ? localStorage.getItem(ctxDismissKey(session.id)) === '1' : false));
+  useEffect(() => {
+    if (session?.id) setCtxDismissed(localStorage.getItem(ctxDismissKey(session.id)) === '1');
+  }, [session?.id]);
+  const ctxPct = computeContextUsage(chat.messages, model);
+  const ctxShow = ctxPct != null && ctxPct >= 80 && !ctxDismissed;
+  const dismissCtx = () => {
+    if (session?.id) { try { localStorage.setItem(ctxDismissKey(session.id), '1'); } catch {} }
+    setCtxDismissed(true);
+  };
+  const handleCompact = async () => {
+    if (session?.id) {
+      try { await api.compactSession(session.id); } catch {}
+      try { localStorage.removeItem(ctxDismissKey(session.id)); } catch {}
+    }
+    setCtxDismissed(false);
+  };
 
   // 聊天区拖放：拖到 .chat 任意位置 → 加附件（转发给输入框 addFiles）
   useEffect(() => {
@@ -124,11 +162,15 @@ export default function ChatWindow({ session, model, chat, onBranch, onEffortCha
       const attachments = extra.mediaId
         ? [{ id: extra.mediaId, name: req.skill === 'image' ? '生成图片' : '生成视频', kind: req.skill === 'image' ? 'image' : 'video' }]
         : [];
-      if (session?.id && attachments.length) {
-        api.appendMediaMessage(session.id, { text: resultText, attachments }).catch(() => {});
-      }
       const resultMsg = { id: `gen-${Date.now()}`, role: 'assistant', text: resultText, ts: Date.now(), streaming: false, ...(attachments.length ? { attachments } : {}) };
-      if (chat.replaceMessage) chat.replaceMessage(pid, resultMsg);
+      if (session?.id && attachments.length) {
+        // 落盘返回 id → 用它替换占位：前端占位与后端落盘 key 对齐，轮询合并去重（修"图片显示两次"）
+        api.appendMediaMessage(session.id, { text: resultText, attachments })
+          .then((r) => { if (chat.replaceMessage && r?.id) chat.replaceMessage(pid, { ...resultMsg, id: r.id }); })
+          .catch(() => { if (chat.replaceMessage) chat.replaceMessage(pid, resultMsg); }); // 落盘失败仍显示本地
+      } else if (chat.replaceMessage) {
+        chat.replaceMessage(pid, resultMsg);
+      }
     };
     // 失败：占位替换为错误（streaming:false 必须显式，否则 replaceMessage 合并保留占位的流式态）
     const fail = (error) => {
@@ -288,6 +330,17 @@ export default function ChatWindow({ session, model, chat, onBranch, onEffortCha
       {chat.recovering && (
         <div className="recovering-banner">
           ⏳ 上一条回复仍在后台生成中，完成后会自动显示……
+        </div>
+      )}
+
+      {/* 上下文使用率横幅：≥80% 提示压缩（新消息后刷新） */}
+      {ctxShow && (
+        <div className="ctx-banner">
+          <span>⚠️ 上下文已用 <b>{ctxPct}%</b>，建议压缩后继续，避免影响回复质量。</span>
+          <div className="ctx-banner-actions">
+            <button className="skin-btn" onClick={handleCompact}>一键 /compact</button>
+            <button className="skin-btn" onClick={dismissCtx}>知道了</button>
+          </div>
         </div>
       )}
 

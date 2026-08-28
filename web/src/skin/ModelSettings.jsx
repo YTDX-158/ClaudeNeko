@@ -1,8 +1,9 @@
 // ModelSettings.jsx — 设置中心「模型配置」分区
 // ============================================
-// 三个 tab：对话模型 / 生图 / 生视频
+// 四个 tab：对话模型 / 生图 / 生视频 / 视觉理解
 // - 对话模型：当前配置 + 档案（切换/存/删）+ 表单（供应商/模型/key）+ 测试连通
-// - 生图/生视频：模型条目列表（每项完整接入）+ 增删改 + 可达性测试
+// - 生图/生视频：固定预设清单（baseUrl 预填火山 + key），填什么生成时用什么；没配生成时提示
+// - 视觉理解：独立配置项（baseUrl + key + model），AI 看附件用
 // 复用 SkinSettings 的 skin-* 样式类。
 
 import { useEffect, useState } from 'react';
@@ -179,79 +180,139 @@ function ChatConfig({ onModelChanged }) {
   );
 }
 
-// ---------------- 生图/生视频 模型条目 ----------------
+// ---------------- 生图/生视频 预设清单 ----------------
 function MediaConfig({ kind, title }) {
-  const [items, setItems] = useState(null);
-  const [form, setForm] = useState({ id: null, name: '', provider: '', baseUrl: '', model: '', apiKey: '' });
+  const [rows, setRows] = useState(null); // [{id,label,baseUrl,apiKey(掩码),baseUrlDraft,keyDraft}]
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
   const load = () => {
-    api.getMediaConfig(kind).then((r) => setItems(r.items)).catch(() => setItems([]));
+    api.getMediaConfig().then((r) => {
+      const list = r[kind] || [];
+      setRows(list.map((it) => ({ ...it, baseUrlDraft: it.baseUrl || '', keyDraft: '' })));
+    }).catch(() => setRows([]));
   };
   useEffect(() => { load(); }, [kind]);
 
-  const resetForm = () => setForm({ id: null, name: '', provider: '', baseUrl: '', model: '', apiKey: '' });
+  const patchRow = (id, patch) => setRows((prev) => (prev || []).map((x) => (x.id === id ? { ...x, ...patch } : x)));
 
-  const doSave = async () => {
-    const { id, name, provider, baseUrl, model, apiKey } = form;
-    if (!name || !baseUrl || !model || !apiKey) { setMsg({ type: 'err', text: '需要 name + baseUrl + 模型 + key' }); return; }
+  const doSave = async (row) => {
+    if (!row.keyDraft.trim()) { setMsg({ type: 'err', text: 'API key 不能为空' }); return; }
     setBusy(true); setMsg(null);
     try {
-      await api.saveMediaItem({ kind, id: id || undefined, name, provider: provider || 'custom', baseUrl, model, apiKey });
-      setMsg({ type: 'ok', text: id ? '条目已更新' : '条目已添加' });
-      resetForm(); load();
+      await api.saveMediaItem({ kind, model: row.id, baseUrl: row.baseUrlDraft.trim() || undefined, apiKey: row.keyDraft.trim() });
+      setMsg({ type: 'ok', text: `「${row.label}」已保存` });
+      load();
     } catch (e) { setMsg({ type: 'err', text: e.message || '保存失败' }); }
     setBusy(false);
   };
 
-  const doDelete = async (id) => {
-    if (!confirm('删除该模型条目？')) return;
-    setBusy(true);
-    try { await api.deleteMediaItem(kind, id); load(); } catch (e) { setMsg({ type: 'err', text: e.message }); }
+  const doDelete = async (row) => {
+    if (!confirm(`清除「${row.label}」配置？`)) return;
+    setBusy(true); setMsg(null);
+    try { await api.deleteMediaItem(kind, row.id); load(); } catch (e) { setMsg({ type: 'err', text: e.message }); }
     setBusy(false);
   };
 
-  const doTest = async (item) => {
+  const doTest = async (row) => {
+    const baseUrl = row.baseUrlDraft.trim();
+    if (!baseUrl) { setMsg({ type: 'err', text: '先填 baseUrl 再测试' }); return; }
     setBusy(true); setMsg(null);
     try {
-      const r = await api.testMedia({ baseUrl: item.baseUrl });
-      setMsg(r.ok ? { type: 'ok', text: `「${item.name}」${r.note}（HTTP ${r.httpStatus}）` } : { type: 'err', text: `「${item.name}」不可达：${r.error}` });
+      const r = await api.testMedia({ baseUrl });
+      setMsg(r.ok ? { type: 'ok', text: `「${row.label}」${r.note}（HTTP ${r.httpStatus}）` } : { type: 'err', text: `「${row.label}」不可达：${r.error}` });
     } catch (e) { setMsg({ type: 'err', text: e.message }); }
+    setBusy(false);
+  };
+
+  if (!rows) return <div className="skin-hint">加载中…</div>;
+  return (
+    <div className="skin-section">
+      <div className="skin-hint" style={{ marginBottom: 8 }}>填 baseUrl + key，生成时就用填的；没填的模型生成时会提示去配置。</div>
+      {rows.map((row) => (
+        <div key={row.id} className="skin-card" style={{ marginBottom: 8, padding: 10 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>
+            {row.label}{' '}
+            {row.apiKey
+              ? <span style={{ color: '#2ecc71', fontSize: 12, fontWeight: 400 }}>✅ 已配置 {row.apiKey}</span>
+              : <span style={{ color: '#e74c3c', fontSize: 12, fontWeight: 400 }}>未配置</span>}
+          </div>
+          <div className="skin-row">
+            <span className="skin-label">baseUrl</span>
+            <input className="skin-input" value={row.baseUrlDraft} onChange={(e) => patchRow(row.id, { baseUrlDraft: e.target.value })} placeholder="留空=火山默认" />
+          </div>
+          <div className="skin-row">
+            <span className="skin-label">API Key</span>
+            <input className="skin-input" type="password" value={row.keyDraft} onChange={(e) => patchRow(row.id, { keyDraft: e.target.value })} placeholder={row.apiKey ? '已配置，重填覆盖' : 'sk-…'} />
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <Btn onClick={() => doSave(row)} disabled={busy}>💾 保存</Btn>
+            <Btn onClick={() => doTest(row)} disabled={busy}>🧪 测试连通</Btn>
+            {row.apiKey && <Btn onClick={() => doDelete(row)} disabled={busy}>🗑 清除配置</Btn>}
+          </div>
+        </div>
+      ))}
+      {msg && <div className="skin-hint" style={{ color: msg.type === 'ok' ? '#2ecc71' : '#e74c3c', marginTop: 8 }}>{msg.text}</div>}
+    </div>
+  );
+}
+
+// ---------------- 视觉理解（独立配置项） ----------------
+function VisionConfig() {
+  const [form, setForm] = useState({ baseUrl: '', apiKey: '', model: '' });
+  const [hasKey, setHasKey] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const load = () => {
+    api.getMediaConfig().then((r) => {
+      const v = r.vision || {};
+      setHasKey(!!v.apiKey);
+      setForm({ baseUrl: v.baseUrl || '', apiKey: '', model: v.model || '' });
+    }).catch(() => {});
+  };
+  useEffect(() => { load(); }, []);
+
+  const doSave = async () => {
+    if (!form.apiKey.trim()) { setMsg({ type: 'err', text: 'API key 不能为空' }); return; }
+    setBusy(true); setMsg(null);
+    try {
+      await api.saveMediaItem({ kind: 'vision', baseUrl: form.baseUrl.trim() || undefined, apiKey: form.apiKey.trim(), model: form.model.trim() || undefined });
+      setMsg({ type: 'ok', text: '视觉理解已保存' });
+      load();
+    } catch (e) { setMsg({ type: 'err', text: e.message || '保存失败' }); }
+    setBusy(false);
+  };
+
+  const doDelete = async () => {
+    if (!confirm('清除视觉理解配置？')) return;
+    setBusy(true); setMsg(null);
+    try { await api.deleteMediaItem('vision', ''); load(); } catch (e) { setMsg({ type: 'err', text: e.message }); }
     setBusy(false);
   };
 
   return (
     <div className="skin-section">
-      {items && items.length > 0 && (
-        <div className="skin-card">
-          <div className="skin-label">📦 {title}模型条目（每个模型可独立 API）</div>
-          {items.map((it) => (
-            <div key={it.id} style={{ padding: '6px 0', borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <b>{it.name}</b>
-                <span style={{ fontSize: 12, color: '#888' }}>{it.model} · {it.provider} · key {it.apiKey}</span>
-                <Btn onClick={() => setForm({ id: it.id, name: it.name, provider: it.provider, baseUrl: it.baseUrl, model: it.model, apiKey: '' })} disabled={busy}>编辑</Btn>
-                <Btn onClick={() => doTest(it)} disabled={busy}>测试</Btn>
-                <Btn onClick={() => doDelete(it.id)} disabled={busy}>删除</Btn>
-              </div>
-              <div style={{ fontSize: 12, color: '#bbb', wordBreak: 'break-all' }}>{it.baseUrl}</div>
-            </div>
-          ))}
-        </div>
-      )}
-      {items && items.length === 0 && <div className="skin-hint">还没有{title}模型条目（默认用 VISION_API_KEY）</div>}
-
       <div className="skin-card">
-        <div className="skin-label">{form.id ? `✏️ 编辑 ${title}条目` : `➕ 新增 ${title}模型条目`}</div>
-        <div className="skin-row"><span className="skin-label">名称</span><input className="skin-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如 Seedance 2.5" /></div>
-        <div className="skin-row"><span className="skin-label">供应商</span><input className="skin-input" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} placeholder="如 volcengine / 中转名" /></div>
-        <div className="skin-row"><span className="skin-label">baseUrl</span><input className="skin-input" value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} placeholder="API 端点" /></div>
-        <div className="skin-row"><span className="skin-label">模型</span><input className="skin-input" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder="模型名" /></div>
-        <div className="skin-row"><span className="skin-label">API Key</span><input className="skin-input" type="password" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder={form.id ? '留空=不改' : 'sk-…'} /></div>
+        <div className="skin-label">
+          🤖 视觉理解（AI 读图/读视频/读文档用，跟生成模型分开）
+          {hasKey && <span style={{ color: '#2ecc71', fontSize: 12, marginLeft: 8 }}>✅ 已配置</span>}
+        </div>
+        <div className="skin-row">
+          <span className="skin-label">baseUrl</span>
+          <input className="skin-input" value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} placeholder="留空=火山默认" />
+        </div>
+        <div className="skin-row">
+          <span className="skin-label">API Key</span>
+          <input className="skin-input" type="password" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder={hasKey ? '已配置，重填覆盖' : 'sk-…'} />
+        </div>
+        <div className="skin-row">
+          <span className="skin-label">模型</span>
+          <input className="skin-input" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder="如 doubao-1-5-vision-pro" />
+        </div>
         <div style={{ marginTop: 8 }}>
-          <Btn onClick={doSave} disabled={busy}>{form.id ? '💾 保存修改' : '➕ 添加'}</Btn>
-          {form.id && <Btn onClick={resetForm} disabled={busy}>取消</Btn>}
+          <Btn onClick={doSave} disabled={busy}>💾 保存</Btn>
+          {hasKey && <Btn onClick={doDelete} disabled={busy}>🗑 清除配置</Btn>}
         </div>
         {msg && <div className="skin-hint" style={{ color: msg.type === 'ok' ? '#2ecc71' : '#e74c3c', marginTop: 8 }}>{msg.text}</div>}
       </div>
@@ -259,13 +320,14 @@ function MediaConfig({ kind, title }) {
   );
 }
 
-// ---------------- 主组件：三个 tab ----------------
+// ---------------- 主组件：四个 tab ----------------
 export default function ModelSettings({ onModelChanged }) {
   const [tab, setTab] = useState('chat');
   const TABS = [
     { id: 'chat', label: '💬 对话模型' },
     { id: 'image', label: '🖼 生图' },
     { id: 'video', label: '🎬 生视频' },
+    { id: 'vision', label: '🤖 视觉理解' },
   ];
   return (
     <div className="skin-section">
@@ -277,6 +339,7 @@ export default function ModelSettings({ onModelChanged }) {
       {tab === 'chat' && <ChatConfig onModelChanged={onModelChanged} />}
       {tab === 'image' && <MediaConfig kind="image" title="生图" />}
       {tab === 'video' && <MediaConfig kind="video" title="生视频" />}
+      {tab === 'vision' && <VisionConfig />}
     </div>
   );
 }

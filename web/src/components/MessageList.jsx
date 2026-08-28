@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react';
 import MessageBubble from './MessageBubble.jsx';
 
+// 方案A：claude 对系统记录（媒体生成记忆）的机械确认回复不渲染。
+// 只匹配"已记录"类（已记录 / 好的，已记录…），不误伤"好的/收到"等正常简短回复。
+const SYSTEM_CONFIRM = /^(好的?，?)?已记录?[，。！!~～\s]*$/i;
+
 export default function MessageList({ messages, error, onQuote, onBranch, sessionId }) {
   const endRef = useRef(null);
   const listRef = useRef(null);
@@ -66,12 +70,20 @@ export default function MessageList({ messages, error, onQuote, onBranch, sessio
         </div>
       )}
 
-      {messages.map((m, index) => (
-        // 所有消息挂 msg-{index} 锚点（搜索跳转/📑 目录定位）
-        <div key={m.id ?? m.ts} id={`msg-${index}`}>
-          <MessageBubble message={m} onQuote={onQuote} onBranch={onBranch} />
-        </div>
-      ))}
+      {/* 系统记录（媒体生成记忆）与其确认回复都不渲染：isSystem user + 紧跟其后的短确认 assistant */}
+      {messages
+        .filter((m, i) => {
+          if (m.isSystem) return false; // 系统记录 user（命令/回填）
+          const prev = messages[i - 1];
+          if (m.role === 'assistant' && prev?.isSystem && SYSTEM_CONFIRM.test(String(m.text || '').trim())) return false; // 机械确认
+          return true;
+        })
+        .map((m, index) => (
+          // 所有消息挂 msg-{index} 锚点（搜索跳转/📑 目录定位）
+          <div key={m.id ?? m.ts} id={`msg-${index}`}>
+            <MessageBubble message={m} onQuote={onQuote} onBranch={onBranch} />
+          </div>
+        ))}
 
       {error && <div className="msg-error">{error}</div>}
 
