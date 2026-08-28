@@ -5,9 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig } from './lib/settings.js';
 import { SessionStore } from './lib/sessionStore.js';
-import { createClaudeRunner } from './lib/claudeRunner.js';
+// （maybeStartMediaClaude 已退役：媒体生成命令改为经 pty 提交进 claude 会话，见 routes/media.js）
 import { createBusyLock } from './lib/busyLock.js';
 import { createMediaService } from './lib/mediaGen.js';
+import { setVisionConfigProvider } from './lib/vision.js';
 import { pruneMedia } from './lib/mediaStore.js';
 import { createPtyHost } from './lib/ptyHost.js';
 import { createEventBus } from './lib/bus.js';
@@ -32,7 +33,20 @@ import * as pairing from './lib/remote/pairing.js';
 
 const config = resolveConfig();
 const mediaConfigService = createMediaConfig({ dataDir: config.dataDir }); // 生图生视频模型条目（设置中心「媒体配置」）
-const media = createMediaService({ ...config.media, dataDir: config.dataDir, mediaConfig: mediaConfigService }); // dataDir 供任务落盘 gen_tasks.json
+const media = createMediaService({
+  ...config.media,
+  dataDir: config.dataDir,
+  mediaConfig: mediaConfigService,
+  // 视频任务完成 → 按 sid 回填 claude 会话（记忆完整；异步回调执行时 ptyHost 已初始化）
+  onTaskSettled: ({ sid, status, error, model }) => {
+    if (!sid || !ptyHost) return;
+    const text = status === 'done'
+      ? `【系统记录】上述视频已生成（媒体库可查看，模型 ${model || ''}）。`
+      : `【系统记录】上述视频生成失败：${error || '未知原因'}。`;
+    ptyHost.submit(sid, text);
+  },
+}); // dataDir 供任务落盘 gen_tasks.json
+setVisionConfigProvider(() => mediaConfigService.getVision()); // 视觉理解只认配置页（mediaConfig.vision）
 // 媒体库自动清理（审查⑤）：启动清一次 + 每 24h 清一次（TTL 30 天 / 总量上限 2GB）
 pruneMedia();
 setInterval(() => { try { pruneMedia(); } catch (e) { console.error('[media] 定时清理失败:', e.message); } }, 24 * 3600 * 1000).unref?.();
@@ -82,9 +96,9 @@ const DIST_DIR = path.join(SERVER_DIR, '..', 'web', 'dist');
 const APP_VERSION = JSON.parse(fs.readFileSync(path.join(SERVER_DIR, '..', 'package.json'), 'utf8')).version || '1.3.0';
 const modelConfig = createModelConfig({ dataDir: config.dataDir });
 const configRouter = configHandler({ modelConfig, configService, detectEnv, readBody, ptyHost, store, busyLock, media });
-const mediaConfigRouter = mediaConfigHandler({ mediaConfig: mediaConfigService, readBody });
+const mediaConfigRouter = mediaConfigHandler({ mediaConfig: mediaConfigService, readBody, imageModels: config.media.imageModels, videoModels: config.media.videoModels });
 const systemRouter = systemHandler({ config, appVersion: APP_VERSION, getAutoStartEnabled, setAutoStart, readBody });
-const mediaRouter = mediaHandler({ media, mediaConfig: mediaConfigService, store, maybeStartMediaClaude, isLocalRequest });
+const mediaRouter = mediaHandler({ media, mediaConfig: mediaConfigService, store, ptyHost, isLocalRequest });
 const sessionsRouter = sessionsHandler({ store, config, busyLock, media, isLocalRequest, ptyHost, transcript, terminal });
 const statsRouter = statsHandler({ store, isLocalRequest }); // 成本统计（独立路由）
 const searchRouter = searchHandler({ store, isLocalRequest }); // 消息搜索（独立路由）
@@ -173,33 +187,7 @@ async function setAutoStart(enabled) {
 
 /** 每会话生成媒体首次拉 claude：确认 + 留痕（claude 记住本会话在干媒体生成）。
  *  并行不阻塞生成；失败静默降级（仍标记，不反复拉）。 */
-function maybeStartMediaClaude(session, skill, prompt) {
-  if (!session || session.mediaClaudeInited) return;
-  // 只落盘（store.update 会替换对象引用，直接改内存引用是冗余/无效）
-  store.update(session.id, { mediaClaudeInited: true });
-  const mediaClaudeCwd = path.join(config.dataDir, 'mediaClaude');
-  try { fs.mkdirSync(mediaClaudeCwd, { recursive: true }); } catch { /* 尽力而为 */ }
-  const cPrompt = `用户在生成媒体：${skill === 'image' ? '生图' : '生视频'}「${prompt}」。你只需回复一句简短的确认（例如"好的，正在生成"）。不要展开、不要记录、不要执行任何操作、不要写记忆。`;
-  const runner = createClaudeRunner({
-    claudeBin: config.claudeBin,
-    prompt: cPrompt,
-    // 不传 model：claude 统一走全局 env（改模型=全局生效）
-    // ⚠ 修正点4：不传 claudeSessionId（独立会话）——只是一句确认，不需要上下文，
-    // 也避免与常驻 pty 同时写同一 jsonl 冲突。claudeSessionId 归属权只由 transcript 写（修正点2）。
-    // M1：cwd 用独立目录（mediaClaude），其 jsonl 建在别处，不干扰会话目录的 transcript 探测
-    cwd: mediaClaudeCwd,
-    onEvent: (evt) => {
-      if (evt.type === 'assistant' && evt.message?.id) {
-        const text = (evt.message.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-        if (text) {
-          store.appendMessage(session.id, { role: 'assistant', text, ts: Date.now(), claudeMessageId: evt.message.id });
-        }
-      }
-    },
-    onError: () => {}, // 静默：拉 claude 失败不影响生成
-  });
-  // 不 await，后台跑；结果由 onEvent 落盘
-}
+// （maybeStartMediaClaude 已删除：媒体生成命令改为经 pty 提交进 claude 会话，见 routes/media.js）
 
 /** 分支历史注入阈值：早期压缩成摘要，近期保留全量（防长会话分支后 claude 被全量历史拖慢） */
 
@@ -207,6 +195,8 @@ function maybeStartMediaClaude(session, skill, prompt) {
 /** 分支会话创建后：后台生成早期历史摘要（fire-and-forget，不阻塞分支创建），完成存 session.earlySummary。 */
 
 /* ---------- transcript 事件 → store 镜像 + WS 推送 ---------- */
+/** 系统记录确认词：claude 对【系统记录】的机械确认（只认"已记录"类，不误伤"好的/收到"等正常回复）。 */
+const SYSTEM_CONFIRM = /^(好的?，?)?已记录?[，。！!~～\s]*$/i;
 /** 新会话首次探测到 claudeSessionId（transcript 扫描 jsonl 得到）→ 回写 store（修正点2：归属权只由这里写） */
 function onSessionIdDiscovered({ sid, claudeSessionId }) {
   // ⚠ Phase2 适配：bus 订阅收的是 payload 对象（{sid, claudeSessionId}），
@@ -228,6 +218,15 @@ function handleAssistantEvent({ sid, ev }) {
     // 去重：jsonl 同 message.id 多次轮询（emitted 已挡，但跨轮询兜底）
     const msgs = store.readMessages(sid);
     if (msgs.some((m) => m.claudeMessageId === ev.claudeMessageId)) return;
+    // 系统记录确认：从后往前找「最近一条 user」——若是 isSystem（命令/回填），且本回复是短确认词 →
+    // 标 isSystem（前端不渲染，防"已记录"刷屏）。
+    // ⚠ 不能用「上一条」：生图结果（assistant）可能先落盘，claude 的确认回复晚到，上一条就变成结果而非系统记录。
+    // 在后端标（而非前端判顺序）→ 刷新/轮询合并都能稳定过滤
+    let lastUser = null;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'user') { lastUser = msgs[i]; break; }
+    }
+    const isSystemConfirm = !!lastUser?.isSystem && SYSTEM_CONFIRM.test(String(ev.text || '').trim());
     store.appendMessage(sid, {
       role: 'assistant',
       text: ev.text,
@@ -235,6 +234,7 @@ function handleAssistantEvent({ sid, ev }) {
       usage: normalizeUsage(ev.usage) || undefined,
       ts: ev.ts ?? Date.now(),
       claudeMessageId: ev.claudeMessageId,
+      ...(isSystemConfirm ? { isSystem: true } : {}),
     });
     // H3 修复：busyLock.release 内建清 5min 超时器（防旧 timer 到期误删下一轮新锁）
     busyLock.release(sid);
@@ -275,8 +275,10 @@ function claimPendingUser(sid, ev) {
       return;
     }
   }
-  // 没有 pendingJsonl（终端直接打的）→ append 新用户消息
-  store.appendMessage(sid, { role: 'user', text: ev.text, ts: ev.ts ?? Date.now(), claudeMessageId: ev.claudeMessageId });
+  // 没有 pendingJsonl（终端直接打的）→ append 新用户消息。
+  // 系统记录命令（媒体生成的 claude 记忆）以【系统记录】开头 → 标 isSystem，前端渲染跳过（不刷屏）
+  const isSystem = typeof ev.text === 'string' && ev.text.startsWith('【系统记录】');
+  store.appendMessage(sid, { role: 'user', text: ev.text, ts: ev.ts ?? Date.now(), claudeMessageId: ev.claudeMessageId, ...(isSystem ? { isSystem: true } : {}) });
 }
 
 async function routeApi(req, res, url) {

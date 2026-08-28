@@ -36,7 +36,7 @@ export class ApiError extends Error {
 }
 
 /**
- * @param {{ doubaoKey:string, imageModels:any[], videoModels:any[], ratios:string[], imageResolutions:any[], transcribeEnabled:boolean, dataDir?:string }} cfg
+ * @param {{ imageModels:any[], videoModels:any[], ratios:string[], imageResolutions:any[], transcribeEnabled:boolean, dataDir?:string, mediaConfig?:object, onTaskSettled?:Function }} cfg
  */
 /** 生图尺寸计算：目标像素档 × 比例 → clamp 边长≤4096 + 校验≥下限（Seedream 5.0）。
  *  标签是档位不是精确像素：非 1:1 的 4K = 该比例下 clamped 的最大合法尺寸。 */
@@ -72,24 +72,23 @@ function calcImageSize(ratio, resolution) {
 }
 
 export function createMediaService(cfg) {
-  const { doubaoKey, imageModels, videoModels, ratios, imageResolutions, transcribeEnabled, mediaConfig } = cfg;
+  const { imageModels, videoModels, ratios, imageResolutions, transcribeEnabled, mediaConfig, onTaskSettled } = cfg;
   const tasks = new Map(); // taskId -> {status, mediaId?, error?, ts, resolution, failCount, claimedBy?, claimedAt?, lastWatchAt?}
   let active = 0;
   const dataDir = cfg.dataDir || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data');
   const tasksFile = path.join(dataDir, 'gen_tasks.json');
 
-  // ---- 按模型条目取接入配置（P1d）：条目优先 → 默认 ARK_BASE/doubaoKey 兜底 ----
+  // ---- 按模型取接入配置（预设式）：只认配置页填的 baseUrl/apiKey，没配直接抛「请去配置」----
   function resolveEndpoint(model, kind) {
-    const items = mediaConfig?.listItems(kind) || [];
-    const hit = items.find((it) => it.model === model);
-    if (hit) return { baseUrl: hit.baseUrl, apiKey: hit.apiKey, model: hit.model };
-    return { baseUrl: ARK_BASE, apiKey: doubaoKey, model };
+    const conf = mediaConfig?.getConfig(kind, model);
+    if (conf?.apiKey) return { baseUrl: conf.baseUrl || ARK_BASE, apiKey: conf.apiKey, model };
+    throw new ApiError('MODEL_NOT_CONFIGURED', `模型「${model}」未配置，请到 设置→模型配置 填写 baseUrl / API key`);
   }
 
   async function arkFetch(path, opts) {
-    // 支持按条目覆盖 baseUrl/apiKey（P1d）：不传则默认 ARK_BASE + doubaoKey
+    // baseUrl 默认火山；apiKey 必传（生成路径 resolveEndpoint 已解析，无全局兜底）
     const baseUrl = opts?.baseUrl || ARK_BASE;
-    const apiKey = opts?.apiKey || doubaoKey;
+    const apiKey = opts.apiKey;
     const res = await fetch(`${baseUrl}${path}`, {
       ...opts,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
@@ -103,13 +102,14 @@ export function createMediaService(cfg) {
     return j;
   }
 
-  function requireKey(apiKey = doubaoKey) {
+  function requireKey(apiKey) {
     if (!apiKey) {
-      throw new ApiError('NO_KEY', '未配置生成 key（DOUBAO_API_KEY 或媒体配置条目），请在设置里配置');
+      throw new ApiError('NO_KEY', '未配置生成 key，请在设置→模型配置 填写');
     }
   }
-  const isImageModel = (id) => imageModels.some((m) => m.id === id) || (mediaConfig?.listItems('image') || []).some((it) => it.model === id);
-  const isVideoModel = (id) => videoModels.some((m) => m.id === id) || (mediaConfig?.listItems('video') || []).some((it) => it.model === id);
+  // 预设固定：配置里的模型必来自预设（老条目已迁移清除），按预设判断即可
+  const isImageModel = (id) => imageModels.some((m) => m.id === id);
+  const isVideoModel = (id) => videoModels.some((m) => m.id === id);
   const isValidRatio = (r) => ratios.includes(r);
 
   // ---- 任务落盘（gen_tasks.json，原子写；状态变化时调用） ----
@@ -246,7 +246,7 @@ export function createMediaService(cfg) {
   }
 
   // ---- 生视频（异步任务：后端自轮询盯梢 + 前端轮询看进度）----
-  async function generateVideo({ prompt, model, ratio, duration, resolution, refMode, refImages }) {
+  async function generateVideo({ prompt, model, ratio, duration, resolution, refMode, refImages, sid }) {
     const ep = resolveEndpoint(model, 'video');
     requireKey(ep.apiKey);
     if (!isVideoModel(model)) throw new ApiError('MODEL_UNAVAILABLE', `当前 key 未开通此模型：${model}`);
@@ -299,6 +299,7 @@ export function createMediaService(cfg) {
         ts: Date.now(),
         resolution: res,
         model,
+        sid, // 任务归属会话（onTaskSettled 回填用）
         baseUrl: ep.baseUrl, // 查任务用提交时的 key/baseUrl（P1d：自定义条目任务不能用默认 key 查）
         apiKey: ep.apiKey,
         ratio,
@@ -375,12 +376,14 @@ export function createMediaService(cfg) {
           t.failCount = 0;
           releaseLock(t);
           persistTasks();
+          onTaskSettled?.({ sid: t.sid, taskId, status: 'done', mediaId, model: t.model });
         } else if (st === 'failed' || st === 'cancelled') {
           t.status = 'error';
           t.error = j?.error?.message || `生成${st}`;
           t.ts = Date.now();
           releaseLock(t);
           persistTasks();
+          onTaskSettled?.({ sid: t.sid, taskId, status: 'error', error: t.error, model: t.model });
         } else {
           t.failCount = 0; // 火山正常 running → 清零连续失败计数
         }
@@ -392,6 +395,7 @@ export function createMediaService(cfg) {
           t.ts = Date.now();
           releaseLock(t);
           persistTasks();
+          onTaskSettled?.({ sid: t.sid, taskId, status: 'error', error: t.error, model: t.model });
           return t;
         }
         // 网络/超时类：连续失败计数，≥FAIL_LIMIT 判"查询失败"（释放锁；记录保留可重试）
@@ -427,7 +431,7 @@ export function createMediaService(cfg) {
 
   /** 前端渲染选项用：模型全列（可用性运行时判定），含比例/时长/是否配了 key */
   function getConfig() {
-    return { imageModels, videoModels, imageResolutions, ratios, hasKey: !!doubaoKey, transcribeEnabled };
+    return { imageModels, videoModels, imageResolutions, ratios, hasKey: mediaConfig?.hasAnyKey?.() ?? false, transcribeEnabled };
   }
 
   /** 强制结束：清空全部生成任务并释放并发锁（并发 1，一次一个任务，清全部 = 清当前）。同步清落盘防重启复活。 */

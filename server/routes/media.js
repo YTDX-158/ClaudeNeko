@@ -5,12 +5,47 @@ import { sendJson, readBody, readRawBody, serveMediaFile } from '../lib/util.js'
 import { ApiError } from '../lib/mediaGen.js';
 import { createZip } from '../lib/zip.js';
 
+/** 生成命令 → claude 会话系统记录（记忆/连贯）。固定前缀【系统记录】，前端渲染时过滤不显示。 */
+function buildMediaCommand(kind, body) {
+  const isImg = kind === 'image';
+  const lines = [
+    `【系统记录】用户通过 ClaudeNeko 提交了${isImg ? '图片' : '视频'}生成请求，系统正在自动处理：`,
+    `- 提示词：${body.prompt}`,
+    `- 模型：${body.model}`,
+    `- 比例：${body.ratio}`,
+  ];
+  if (isImg) {
+    lines.push(`- 分辨率：${body.resolution || '默认'}`);
+  } else {
+    lines.push(`- 时长：${body.duration || '默认'}s`);
+    lines.push(`- 分辨率：${body.resolution || '默认'}`);
+    if (body.refImages?.length) lines.push(`- 参考图：已附加 ${body.refImages.length} 张（${body.refMode || '参考素材'}）`);
+  }
+  lines.push('本消息仅为上下文记录。禁止调用任何工具、禁止执行生成。请简短回复"已记录"。');
+  return lines.join('\n');
+}
+
+/** 提交系统记录命令到常驻 claude（有 pty 才记录；无则跳过，纯后端生成） */
+function recordMediaCommand(ctx, gsess, kind, body) {
+  if (!gsess?.id || !ctx.ptyHost) return;
+  ctx.ptyHost.submit(gsess.id, buildMediaCommand(kind, body));
+}
+
+/** 生成结果回填（成功/失败都告知 claude，记忆完整） */
+function recordMediaResult(ctx, gsess, kind, { ok, error, model }) {
+  if (!gsess?.id || !ctx.ptyHost) return;
+  const kindLabel = kind === 'image' ? '图片' : '视频';
+  const text = ok
+    ? `【系统记录】上述${kindLabel}已生成（媒体库可查看，模型 ${model || ''}）。`
+    : `【系统记录】上述${kindLabel}生成失败：${error || '未知原因'}。`;
+  ctx.ptyHost.submit(gsess.id, text);
+}
+
 export function mediaHandler(ctx) {
   return async (req, res, url) => {
     const { pathname } = url;
     const method = req.method;
     const media = ctx.media;
-    const mediaConfig = ctx.mediaConfig; // 设置中心配置的媒体条目（并入模型列表）
 
     const genErr = (e) =>
       e instanceof ApiError
@@ -83,11 +118,8 @@ export function mediaHandler(ctx) {
     // 技能包：生成媒体 / 下载视频（必须在 mm 文件匹配之前，否则 /api/media/config 会被当成文件 id）
     if (method === 'GET' && pathname === '/api/media/config') {
       if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
-      const cfg = media.getConfig();
-      // 并入 mediaConfig 条目模型（设置中心配置的条目，前端选择器能选到）
-      const imageModels = [...(cfg.imageModels || []), ...mediaConfig.listItems('image').map((it) => ({ id: it.model, label: it.name }))];
-      const videoModels = [...(cfg.videoModels || []), ...mediaConfig.listItems('video').map((it) => ({ id: it.model, label: it.name }))];
-      return sendJson(res, 200, { ...cfg, imageModels, videoModels });
+      // 预设固定（settings.js MEDIA），无自定义条目拼接
+      return sendJson(res, 200, media.getConfig());
     }
 
     if (method === 'POST' && pathname === '/api/media/generate') {
@@ -98,15 +130,21 @@ export function mediaHandler(ctx) {
       const gsess = body.sessionId ? ctx.store.get(String(body.sessionId)) : null;
       try {
         if (body.kind === 'image') {
-          if (gsess) ctx.maybeStartMediaClaude(gsess, 'image', prompt);
-          return sendJson(res, 200, await media.generateImage({ prompt, model: body.model, ratio: body.ratio, resolution: body.resolution }));
+          // 命令进 claude 会话（记忆/连贯）；有常驻 pty 才记录，无则纯后端生成
+          recordMediaCommand(ctx, gsess, 'image', body);
+          const r = await media.generateImage({ prompt, model: body.model, ratio: body.ratio, resolution: body.resolution });
+          recordMediaResult(ctx, gsess, 'image', { ok: true, model: body.model });
+          return sendJson(res, 200, r);
         }
         if (body.kind === 'video') {
-          if (gsess) ctx.maybeStartMediaClaude(gsess, 'video', prompt);
-          return sendJson(res, 200, await media.generateVideo({ prompt, model: body.model, ratio: body.ratio, duration: body.duration, resolution: body.resolution, refMode: body.refMode, refImages: body.refImages }));
+          recordMediaCommand(ctx, gsess, 'video', body);
+          // sid 传入任务记录：onTaskSettled 完成时按 sid 回填结果（视频异步，不能同步回填）
+          return sendJson(res, 200, await media.generateVideo({ prompt, model: body.model, ratio: body.ratio, duration: body.duration, resolution: body.resolution, refMode: body.refMode, refImages: body.refImages, sid: gsess?.id }));
         }
         return sendJson(res, 400, { error: 'BAD_KIND', message: 'kind 需为 image 或 video' });
       } catch (e) {
+        // 失败回填：告知 claude 这次生成失败（记忆不留悬案）
+        recordMediaResult(ctx, gsess, body?.kind, { ok: false, error: e?.message || e?.error || '生成失败', model: body?.model });
         return genErr(e);
       }
     }

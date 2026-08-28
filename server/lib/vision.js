@@ -1,46 +1,28 @@
 import https from 'node:https';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import crypto from 'node:crypto';
 import { Jimp } from 'jimp';
 
 /**
  * vision.js — 图片转文字描述（给纯文本主模型"看图"）
- * 面向市场：多后端视觉链（BYOK，任意 OpenAI 兼容视觉 API）。
- * 配置（~/.claude/settings.json env 或环境变量）：
- *   VISION_API_KEY / VISION_MODEL  → 第一后端（必需）
- *   VISION_2_API_KEY / VISION_2_MODEL 等 → 第二/三后端（可选，按序回退）
- *   VISION_BASE_URL（默认火山方舟）
+ * 视觉理解配置只认「设置→模型配置→视觉理解」（mediaConfig.vision 注入），
+ * 不再读 env（VISION_ 系列已退役）。没配 → 提示去配置页填写。
  */
 
 const DEF_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
 const MAX_VISION_BYTES = 500 * 1024; // 超过 500KB 先压缩，避免视觉 API 对超大图超时
 const MAX_DIM = 1024;
 
-/** 收集所有配置的视觉后端（按序：VISION_ → VISION_2_ → VISION_3_…）。 */
+/** 视觉理解配置注入点（server.js 装配时喂 mediaConfig.getVision） */
+let visionConfigProvider = null;
+export function setVisionConfigProvider(fn) {
+  visionConfigProvider = fn;
+}
+
+/** 收集视觉后端：只读配置页的 vision（无 env 兜底，填什么用什么）。 */
 function readVisionBackends() {
-  let env = {};
-  try {
-    env = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf8')).env || {};
-  } catch {
-    // 无 settings.json
-  }
-  const backends = [];
-  const read = (prefix) => {
-    const key = process.env[`${prefix}API_KEY`] || env[`${prefix}API_KEY`];
-    const model = process.env[`${prefix}MODEL`] || env[`${prefix}MODEL`];
-    if (key && model) {
-      backends.push({
-        baseUrl: process.env[`${prefix}BASE_URL`] || env[`${prefix}BASE_URL`] || DEF_BASE_URL,
-        apiKey: key,
-        model,
-      });
-    }
-  };
-  read('VISION_');
-  for (let i = 2; i <= 5; i++) read(`VISION_${i}_`);
-  return backends;
+  const v = visionConfigProvider ? visionConfigProvider() : null;
+  if (!v || !v.apiKey) return [];
+  return [{ baseUrl: v.baseUrl || DEF_BASE_URL, apiKey: v.apiKey, model: v.model }];
 }
 
 // 转译结果缓存（按"模型:图片哈希"隔离，不同模型不串结果）
@@ -126,7 +108,7 @@ function callBackend(cfg, cb, cm, cacheKey) {
 export async function describeImage(buf, mime) {
   const backends = readVisionBackends();
   if (!backends.length) {
-    return { ok: false, error: '未配置视觉 API（请在 ~/.claude/settings.json 加 VISION_API_KEY / VISION_MODEL）' };
+    return { ok: false, error: '未配置视觉理解 key（请到 设置→模型配置→视觉理解 填写 baseUrl / API key / 模型）' };
   }
   const { buf: cb, mime: cm } = await maybeCompress(buf, mime);
   const h = hashImage(cb);

@@ -1,13 +1,13 @@
-// server/routes/mediaConfig.js — 生图生视频模型条目端点（设置中心「生图/生视频」）
+// server/routes/mediaConfig.js — 模型配置（生图/生视频预设 + 视觉理解）端点
 // =====================================================================
-// GET    /api/media-config?kind=image|video   列出条目（key 脱敏）
-// PUT    /api/media-config                    增改条目 { kind, id?, name, provider, baseUrl, model, apiKey }
-// DELETE /api/media-config?kind=x&id=y        删除条目
-// POST   /api/media-config/test               可达性测试 { baseUrl, apiKey, model }
+// GET    /api/media-config              返回预设清单 + 已填配置（key 脱敏）
+// PUT    /api/media-config              保存 { kind: image|video|vision, model?, baseUrl, apiKey, model? }
+// DELETE /api/media-config?kind=x&model=y   清空某配置（vision 无 model）
+// POST   /api/media-config/test         可达性测试 { baseUrl }
 //
 // 说明：
-// - 条目 = 完整接入配置，支持「每个模型不同 API」（供应商/baseUrl/模型/key 独立）
-// - 测试连通 = 轻量可达性（fetch baseUrl 看网络通），非真实生成测试（各供应商差异大）
+// - 固定预设（与 settings.js MEDIA 对应），用户只填 baseUrl/apiKey，填什么生成时用什么
+// - 视觉理解（vision）额外有 model 字段（用户自己填视觉模型名）
 // - 安全：写操作走 isLocalRequest 校验；返回 key 一律脱敏
 
 import { sendJson } from '../lib/util.js';
@@ -32,49 +32,55 @@ async function testReachability({ baseUrl }) {
 }
 
 export function mediaConfigHandler(ctx) {
+  const { mediaConfig, readBody, imageModels = [], videoModels = [] } = ctx;
   return async (req, res, url) => {
     const { pathname } = url;
     const method = req.method;
-    const { mediaConfig, readBody } = ctx;
 
-    // ---- 列出条目（脱敏） ----
+    // ---- 预设清单 + 已填配置（key 脱敏；label 来自 settings.js MEDIA 预设） ----
     if (method === 'GET' && pathname === '/api/media-config') {
-      const kind = url.searchParams.get('kind');
-      if (kind !== 'image' && kind !== 'video') {
-        return sendJson(res, 400, { error: 'kind 必须是 image 或 video' });
-      }
-      const items = mediaConfig.listItems(kind).map((it) => ({
-        ...it,
-        apiKey: mask(it.apiKey), // key 只显示掩码
-      }));
-      return sendJson(res, 200, { items });
+      const merge = (presets, kind) => presets.map((m) => {
+        const conf = mediaConfig.getConfig(kind, m.id);
+        return { id: m.id, label: m.label, baseUrl: conf?.baseUrl || '', apiKey: conf ? mask(conf.apiKey) : null };
+      });
+      const vision = mediaConfig.getVision();
+      return sendJson(res, 200, {
+        image: merge(imageModels, 'image'),
+        video: merge(videoModels, 'video'),
+        vision: vision
+          ? { baseUrl: vision.baseUrl, apiKey: mask(vision.apiKey), model: vision.model }
+          : { baseUrl: '', apiKey: null, model: '' },
+      });
     }
 
-    // ---- 增改条目（有 id = 更新；无 id = 新增） ----
+    // ---- 保存配置（vision 用 body.model 存视觉模型名；生成模型用 model=预设id） ----
     if (method === 'PUT' && pathname === '/api/media-config') {
       const body = await readBody(req);
-      const { kind, id, name, provider, baseUrl, model, apiKey } = body || {};
-      if (kind !== 'image' && kind !== 'video') return sendJson(res, 400, { error: 'kind 必须是 image 或 video' });
-      if (!name || !baseUrl || !model || !apiKey) {
-        return sendJson(res, 400, { error: '需要 name + baseUrl + model + apiKey' });
+      const { kind, model, baseUrl, apiKey } = body || {};
+      if (kind === 'vision') {
+        mediaConfig.setVision({ baseUrl: baseUrl || '', apiKey: apiKey || '', model: model || '' });
+        return sendJson(res, 200, { ok: true });
       }
-      if (id) {
-        const ok = mediaConfig.updateItem(kind, id, { name, provider: provider || 'custom', baseUrl, model, apiKey });
-        if (!ok) return sendJson(res, 404, { error: '条目不存在' });
-        return sendJson(res, 200, { ok: true, id });
+      if ((kind !== 'image' && kind !== 'video') || !model) {
+        return sendJson(res, 400, { error: '需要 kind(image|video) + model' });
       }
-      const item = mediaConfig.addItem(kind, { name, provider: provider || 'custom', baseUrl, model, apiKey });
-      return sendJson(res, 200, { ok: true, id: item.id });
+      if (!apiKey) return sendJson(res, 400, { error: 'apiKey 不能为空' });
+      mediaConfig.setConfig(kind, model, { baseUrl: baseUrl || '', apiKey });
+      return sendJson(res, 200, { ok: true });
     }
 
-    // ---- 删除条目 ----
+    // ---- 清空某配置 ----
     if (method === 'DELETE' && pathname === '/api/media-config') {
       const kind = url.searchParams.get('kind');
-      const id = url.searchParams.get('id');
-      if ((kind !== 'image' && kind !== 'video') || !id) {
-        return sendJson(res, 400, { error: '需要 kind(image|video) + id' });
+      if (kind === 'vision') {
+        mediaConfig.setVision({ apiKey: '' });
+        return sendJson(res, 200, { ok: true });
       }
-      mediaConfig.removeItem(kind, id);
+      const model = url.searchParams.get('model');
+      if ((kind !== 'image' && kind !== 'video') || !model) {
+        return sendJson(res, 400, { error: '需要 kind(image|video) + model' });
+      }
+      mediaConfig.setConfig(kind, model, { apiKey: '' });
       return sendJson(res, 200, { ok: true });
     }
 

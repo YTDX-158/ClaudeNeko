@@ -116,6 +116,9 @@ export function messageToEvents(j, acc) {
     // ⚠ 过滤 claude --resume 自动注入的系统消息（"Continue from where you left off."）：
     // 它是 claude 恢复会话时自己写的，不是用户真实输入，落盘会污染对话（8-27 修复）
     if (text.trim() === 'Continue from where you left off.') return [];
+    // ⚠ 过滤 claude compact 注入的上下文摘要（"This session is being continued..."）：
+    // 压缩时 claude 把旧对话摘要作为 user 消息注入，transcript 会当用户消息显示（8-28 修复）
+    if (/^This session is being continued from a previous conversation that ran out of context\./i.test(text.trim())) return [];
     // user 无 message.id，用行 uuid 作唯一标识（认领/去重用）
     const claudeMessageId = j.uuid || `user-${j.timestamp ?? ''}-${text.length}`;
     if (text.trim()) return [{ kind: 'user', text, claudeMessageId, ts: j.timestamp ? j.timestamp * 1000 : Date.now() }];

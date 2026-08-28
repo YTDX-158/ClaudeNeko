@@ -35,19 +35,7 @@ function resolveDefaultCwd() {
 }
 const DEFAULT_WORK_CWD = resolveDefaultCwd();
 
-/* ---------- 媒体生成配置（BYOK：豆包 key 从 env / ~/.claude/settings.json 读，不硬编码） ---------- */
-// 豆包账号级 key：优先 DOUBAO_API_KEY，VISION_API_KEY 兜底（同账号视觉 key 可调 Seedream/Seedance，零额外配置）
-function readDoubaoKey() {
-  const keys = ['DOUBAO_API_KEY', 'VISION_API_KEY'];
-  for (const k of keys) if (process.env[k]) return process.env[k];
-  try {
-    const env = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf8')).env || {};
-    for (const k of keys) if (env[k]) return env[k];
-  } catch {
-    // 忽略，返回空
-  }
-  return '';
-}
+/* ---------- 媒体生成配置（预设模型 + 用户填 baseUrl/key，见 mediaConfig.js；无全局 key 兜底） ---------- */
 
 /** 生成媒体模型/参数（可用性由运行时动态判定，不写死；未开通模型点了给明确提示） */
 const MEDIA = {
@@ -60,7 +48,7 @@ const MEDIA = {
     { id: 'doubao-seedance-2-5-260628', label: 'Seedance 2.5', durationRange: { min: 4, max: 30 }, resolutions: ['480P', '720P', '1080P'] },
     { id: 'doubao-seedance-2-0-mini-260615', label: 'Seedance 2.0 Mini', durationRange: { min: 4, max: 15 }, resolutions: ['480P', '720P'] },
     { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0', durationRange: { min: 4, max: 15 }, resolutions: ['480P', '720P', '1080P', '4K'] },
-    { id: 'doubao-seedance-2-0-fast-260128', label: 'Seedance Fast', durationRange: { min: 4, max: 15 }, resolutions: ['480P', '720P'] },
+    { id: 'doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast', durationRange: { min: 4, max: 15 }, resolutions: ['480P', '720P'] },
   ],
   ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
   // 生图分辨率档位（Seedream 5.0：目标像素，最终尺寸由 mediaGen 按比例+clamp 计算）
@@ -117,6 +105,6 @@ export function resolveConfig() {
     defaultCwd: DEFAULT_WORK_CWD,
     dataDir,
     port: Number(process.env.PORT) || DEFAULT_PORT,
-    media: { ...MEDIA, doubaoKey: readDoubaoKey() },
+    media: { ...MEDIA },
   };
 }

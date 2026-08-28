@@ -277,12 +277,22 @@ export function sessionsHandler(ctx) {
       const text = String(body.text ?? '').trim();
       const attachments = Array.isArray(body.attachments) ? body.attachments.filter((a) => a && a.id) : [];
       if (!text && !attachments.length) return sendJson(res, 400, { error: '内容为空' });
-      store.appendMessage(sid, { role, text, attachments, ts: Date.now() });
+      // 落盘带稳定 id 并返回：前端用它替换占位 → 轮询合并去重 key 对齐（修"图片显示两次"）
+      const msgId = `med-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      store.appendMessage(sid, { id: msgId, role, text, attachments, ts: Date.now() });
       if (role === 'user' && session.title === '新会话') {
         const nameSource = text || attachments[0]?.name || '生成';
         store.update(sid, { title: nameSource.slice(0, 15) });
       }
-      return sendJson(res, 201, { ok: true });
+      return sendJson(res, 201, { ok: true, id: msgId });
+    }
+
+    // 手动压缩上下文：向常驻 claude 提交 /compact（上下文横幅「一键压缩」触发）
+    const cm = pathname.match(/^\/api\/sessions\/([^/]+)\/compact$/);
+    if (cm && method === 'POST') {
+      if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
+      const ok = ctx.ptyHost?.submit(cm[1], '/compact') ?? false;
+      return sendJson(res, 200, { ok });
     }
 
     const m = pathname.match(/^\/api\/sessions\/([^/]+)(\/messages)?$/);
