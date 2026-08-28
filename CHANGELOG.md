@@ -1,5 +1,23 @@
 # 更新日志
 
+## v2.1.1（2026-08-29）—— claude娘 性能优化 + 代码拆分 🚀
+
+### 🆕 优化
+- **claude娘 手机卡顿修复**：图片 1026px/661KB → 320px/94KB（降 86%）· 拖拽简单化（去吸附/Q弹/DOM 直改 left-top，同小猫）· `memo` + status 节流（打字中气泡不闪）· resize clamp（窗口缩小拉回视口）
+- **代码拆分**：终端(xterm)/设置/媒体库 `React.lazy` 懒加载 → 首屏主包 701KB → **389KB（降 44%）**
+- **窄屏 header**：隐藏导出/id/⛔文字，模型 CSS 截断（hover 看全名，通用不猜前缀）
+
+### 🐛 修复
+- `chat-sid` 桌面样式缺失（id 按钮底座恢复，共用 chat-model）
+- lazy 缺 ErrorBoundary（chunk 加载失败白屏）→ 新增 ErrorBoundary 兜底
+- 死样式清理（`session-item-model` / `claude-q-pop`）
+- 颜文字数组共享（`utils/kaomoji.js`，猫 + claude娘 统一维护）
+
+### 📦 封装
+- commit `33a6d81` · zip `ClaudeNeko_v2.1.1_20260829.zip`（117 文件 2.3MB）
+
+---
+
 ## v2.1.0（2026-08-28）—— 模型配置预设化 + 生成记忆进 claude 会话 🧠⚙️
 
 ### 🆕 新增
