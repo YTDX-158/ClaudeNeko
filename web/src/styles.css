@@ -237,11 +237,6 @@ body {
   border-radius: 4px;
   outline: none;
 }
-.session-item-model {
-  font-size: 11px;
-  color: var(--muted-2);
-  font-family: var(--font-mono);
-}
 
 .session-item-del {
   flex-shrink: 0;
@@ -297,7 +292,7 @@ body {
   gap: 8px;
   flex-shrink: 0;
 }
-.chat-model {
+.chat-model, .chat-sid {
   font-size: 12px;
   color: var(--muted);
   font-family: var(--font-mono);
@@ -317,7 +312,7 @@ body {
   border: 1px solid var(--border);
   cursor: pointer;
 }
-.chat-export {
+.chat-export, .chat-export-btn {
   font-size: 12px;
   flex-shrink: 0;
   padding: 3px 10px;
@@ -329,7 +324,7 @@ body {
   font-family: var(--font-ui);
   transition: all 0.15s var(--ease);
 }
-.chat-export:hover {
+.chat-export:hover, .chat-export-btn:hover {
   color: var(--text);
   border-color: var(--accent);
   background: var(--panel-3);
@@ -1155,9 +1150,7 @@ body {
 
 /* ============ claude娘 挂件（v1.3 移植，与小猫平级共存） ============ */
 .claude-niang {
-  position: fixed; /* 跟小猫同参照系（视口），初始右下角组合位 */
-  right: 26px;
-  bottom: 96px;
+  position: fixed; /* 跟小猫同参照系（视口），位置由组件 state left/top 管（8-29 简单拖） */
   z-index: 998;
   opacity: 0.78;
   pointer-events: auto;
@@ -1170,13 +1163,6 @@ body {
 .claude-niang-body {
   position: relative;
   transition: transform 0.2s var(--ease);
-}
-.claude-niang-body.claude-q-pop { animation: claude-q-pop 0.3s var(--ease); }
-@keyframes claude-q-pop {
-  0% { transform: scale(1); }
-  40% { transform: scale(1.1) rotate(-2deg); }
-  70% { transform: scale(0.96) rotate(1deg); }
-  100% { transform: scale(1); }
 }
 .claude-niang-img {
   display: block;
@@ -1216,11 +1202,6 @@ body {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-}
-.session-item-model {
-  font-size: 11px;
-  color: var(--muted-2);
-  font-family: var(--font-mono);
 }
 .session-item-created {
   font-size: 11px;
@@ -1596,7 +1577,10 @@ body {
   /* 聊天区：窄屏全宽，不再被侧栏挤压 */
   .chat { width: 100%; }
   .chat-header { padding: 12px 14px 10px; }
-  .chat-model { display: none; } /* 手机上隐藏模型标签，省空间 */
+  .chat-model { display: inline-block; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* 窄屏模型截断（hover 看全名，通用不猜前缀）*/
+  .chat-export-btn { display: none; } /* 窄屏隐藏导出（操作让位给模型/id 信息）*/
+  .chat-sid { display: none; }        /* 窄屏隐藏 claude 会话 ID */
+  .chat-stop-text { display: none; }  /* 窄屏 ⛔ 只留符号 */
 
   /* 顶部给汉堡留位 */
   .chat-header { padding-left: 56px; }

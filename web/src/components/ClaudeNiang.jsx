@@ -4,18 +4,17 @@
  *  - 点击 → 冒气泡（颜文字 → DeepSeek 余额 两段式）；**点击优先级最高**：任意时刻点击都先完整播完，
  *    结束后再恢复当前状态气泡（思考中/回答中/打字中）
  *  - 状态气泡：thinking「正在努力思考ing...」/ responding「想出来了！」/ typing「偷窥ing...」
- *  - 挂件交互（只作用 claude娘）：拖拽移动（边缘自动吸附）/ 滚轮缩放 / 右键水平镜像 / 拖完 Q 弹
+ *  - 挂件交互：拖拽移动（简单拖，同小猫）/ 滚轮缩放 / 右键水平镜像
+ *  - ⚠ 性能（8-29 手机卡顿修复）：拖拽用 React state 简单拖（去吸附/Q弹/DOM 直改 left-top）；
+ *    组件 memo 化（父级重渲染不带动）+ status 节流（打字中气泡不闪烁）；图片已 1026→320px 减肥 86%
  */
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { skinEngine } from '../skin/skinEngine.js';
 import claudeNiang from '../assets/claude-niang-widget-transparent.png';
+import { KAOMOJI } from '../utils/kaomoji.js';
 
-const BUBBLES = [
-  '(=^･ω･^=)', 'ฅ^•ﻌ•^ฅ', '(=^‥^=)', '(=｀ω´=)', '(=^-ω-^=)',
-  '(=ＴェＴ=)', '(=ↀωↀ=)', '(=^◡^=)', '(=^･ｪ･^=)', '(=•ω•=)',
-  '(=^･ᴥ･^=)', '(^・ω・^)', 'ฅ(^・ω・^ฅ)', 'ฅ(=•̫•=)ฅ', '( ฅ•ᴥ•ฅ )',
-  '(=＾● ⋏ ●＾=)', '(^≖ω≖^)', 'ᓚᘏᗢ', '(=^♡ω♡^=)', '✦ 思考中…',
-];
+// 共享颜文字 + claude娘 专属"思考中"（点击气泡用）
+const BUBBLES = [...KAOMOJI, '✦ 思考中…'];
 
 // 状态气泡文字：思考中 / 回答中 / 打字中
 const STATUS_TEXT = {
@@ -29,17 +28,16 @@ const BALANCE_MS = 2500; // 阶段2：余额停留时长（气泡总时长 = 两
 const BASE_W = 150; // 图片显示宽度
 const MIN_W = 70;
 const MAX_W = 320;
-const SNAP = 48; // 距边缘小于此值触发吸附
-const EDGE = 20; // 吸附后的贴边间距
+const DRAG_THRESHOLD = 6; // 位移超过 6px 算拖拽，否则算点击（同小猫）
 
 // 持久化键（沿用 dsw-dream-skin: 前缀，一键恢复默认会一并清掉）
 const NIANG_POS_KEY = 'dsw-dream-skin:niang-pos';
 const NIANG_SIZE_KEY = 'dsw-dream-skin:niang-size';
 const NIANG_FLIP_KEY = 'dsw-dream-skin:niang-flip';
 
-// 初始组合位：右下角（跟原小猫的位置一致，底部留出输入框区域）
-const EDGE_RIGHT = 26; // 距视口右边距
-const EDGE_BOTTOM = 96; // 距视口底边距（原小猫底边位置）
+// 初始组合位：右下角（底部留出输入框区域）
+const EDGE_RIGHT = 26;
+const EDGE_BOTTOM = 96;
 
 function readStore(key) {
   try {
@@ -57,17 +55,57 @@ function writeStore(key, value) {
   }
 }
 
-export default function ClaudeNiang({ status = 'idle' }) {
+/** 初始位置：有记录用记录，无则右下角组合位。 */
+function loadPos() {
+  try {
+    const raw = localStorage.getItem(NIANG_POS_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (typeof p.x === 'number' && typeof p.y === 'number') return { x: p.x, y: p.y };
+    }
+  } catch {
+    /* 解析失败回落默认 */
+  }
+  return {
+    x: Math.max(0, window.innerWidth - BASE_W - EDGE_RIGHT),
+    y: Math.max(0, window.innerHeight - BASE_W - EDGE_BOTTOM),
+  };
+}
+
+/** 位置钳制在视口内（w/h = 当前挂件宽高）。 */
+function clampPos(x, y, w, h) {
+  return {
+    x: Math.min(Math.max(0, x), Math.max(0, window.innerWidth - w)),
+    y: Math.min(Math.max(0, y), Math.max(0, window.innerHeight - h)),
+  };
+}
+
+function ClaudeNiang({ status = 'idle' }) {
   const [bubble, setBubble] = useState(null);
   const [size, setSize] = useState(BASE_W);
   const [flip, setFlip] = useState(false);
-  const wrapRef = useRef(null); // 外层容器 .claude-niang
-  const dragRef = useRef(null); // 拖动过程状态
+  const [pos, setPos] = useState(loadPos); // 简单拖拽位置（state，同小猫）
+  const [visible, setVisible] = useState(() => skinEngine.niangVisible); // 功能页开关（默认关）
+  const wrapRef = useRef(null);
+  const sizeRef = useRef(BASE_W); // clamp 用的当前宽（size 变化同步）
+  const dragRef = useRef(null); // { startX, startY, origX, origY }
   const draggedRef = useRef(false); // 本次按下是否真拖过（区分点击/拖拽）
   const bubbleTimerRef = useRef(null); // 气泡两阶段定时器（颜文字 → 余额）
   const statusRef = useRef('idle'); // 最新 status，供点击流程收尾时恢复状态气泡
+  const lastStatusRef = useRef({ st: null, ts: 0 }); // status 节流：防打字中气泡闪烁
   const clickingRef = useRef(false); // 点击流程进行中（颜文字 → 余额），状态气泡让位
-  const [visible, setVisible] = useState(() => skinEngine.niangVisible); // 功能页开关（默认关）
+
+  useEffect(() => { sizeRef.current = size; }, [size]);
+
+  // 窗口变化时把 claude娘 clamp 回可视区（同小猫：防缩小窗口后跑出界）
+  useEffect(() => {
+    const onResize = () => {
+      const s = sizeRef.current;
+      setPos((p) => clampPos(p.x, p.y, s, s));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // 功能页「claude娘」开关实时生效（关掉整个隐藏）
   useEffect(() => {
@@ -75,36 +113,10 @@ export default function ClaudeNiang({ status = 'idle' }) {
     return unsub;
   }, []);
 
-  // 打开/挂载时还原位置、大小、镜像：有记录用记录，无记录回落初始组合位（右下角）。
-  // 关闭开关时 skinEngine 已清掉记录 → 重新打开 = 回到初始组合位，且下次刷新也回初始。
+  // 打开/挂载时还原位置、大小、镜像：有记录用记录，无记录回落初始组合位（右下角）
   useEffect(() => {
     if (!visible) return;
-    const el = wrapRef.current;
-    if (!el) return;
-    const savedPos = readStore(NIANG_POS_KEY);
-    let x, y;
-    if (savedPos) {
-      try {
-        const p = JSON.parse(savedPos);
-        if (typeof p.x === 'number' && typeof p.y === 'number') {
-          x = p.x;
-          y = p.y;
-        }
-      } catch {
-        /* 解析失败回落默认 */
-      }
-    }
-    if (typeof x !== 'number') {
-      // 初始组合位：右下角（跟小猫初始同一块区域，底部留出输入框）
-      x = Math.max(0, window.innerWidth - BASE_W - EDGE_RIGHT);
-      y = Math.max(0, window.innerHeight - BASE_W - EDGE_BOTTOM);
-    }
-    el.style.left = `${x}px`;
-    el.style.top = `${y}px`;
-    el.style.right = 'auto';
-    el.style.bottom = 'auto';
-    el.dataset.dragged = '1'; // 已固化为 left/top 定位，之后拖动直接走 left/top
-
+    setPos(loadPos());
     const savedSize = Number(readStore(NIANG_SIZE_KEY));
     if (savedSize >= MIN_W && savedSize <= MAX_W) setSize(savedSize);
     if (readStore(NIANG_FLIP_KEY) === 'true') setFlip(true);
@@ -141,71 +153,42 @@ export default function ClaudeNiang({ status = 'idle' }) {
     }, EMOJI_MS);
   };
 
-  // —— 拖拽移动（边缘自动吸附） ——
+  // —— 简单拖拽（同小猫：state 位置 + 钳制 + 位移阈值区分点击） ——
   const handlePointerDown = (e) => {
     if (e.button !== 0) return; // 仅左键拖动
-    const el = wrapRef.current;
-    const parent = el.offsetParent;
-    const pRect = parent ? parent.getBoundingClientRect() : { left: 0, top: 0 };
-    const rect = el.getBoundingClientRect();
-    // 首次拖动：把 right/bottom 定位固化为 left/top（相对父容器），之后才能自由移动
-    if (!el.dataset.dragged) {
-      el.style.left = `${rect.left - pRect.left}px`;
-      el.style.top = `${rect.top - pRect.top}px`;
-      el.style.right = 'auto';
-      el.style.bottom = 'auto';
-      el.dataset.dragged = '1';
-    }
-    dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      baseLeft: parseFloat(el.style.left),
-      baseTop: parseFloat(el.style.top),
-    };
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
     draggedRef.current = false;
-    el.setPointerCapture?.(e.pointerId);
+    e.currentTarget.setPointerCapture?.(e.pointerId);
     e.preventDefault();
   };
 
   const handlePointerMove = (e) => {
-    const el = wrapRef.current;
     const d = dragRef.current;
     if (!d) return;
     const dx = e.clientX - d.startX;
     const dy = e.clientY - d.startY;
-    if (!draggedRef.current && Math.abs(dx) + Math.abs(dy) < 4) return;
+    if (!draggedRef.current && Math.hypot(dx, dy) < DRAG_THRESHOLD) return; // 阈值内算点击
     draggedRef.current = true;
-    el.style.left = `${d.baseLeft + dx}px`;
-    el.style.top = `${d.baseTop + dy}px`;
+    const s = sizeRef.current;
+    setPos(clampPos(d.origX + dx, d.origY + dy, s, s));
   };
 
-  const handlePointerUp = () => {
-    const el = wrapRef.current;
+  const handlePointerUp = (e) => {
     const d = dragRef.current;
     dragRef.current = null;
-    if (!d || !draggedRef.current) return; // 纯点击交给 onClick
-    // 拖完：边缘吸附 + Q 弹（viewport 坐标判断，算完转回父容器相对坐标）
-    const rect = el.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const parent = el.offsetParent;
-    const pRect = parent ? parent.getBoundingClientRect() : { left: 0, top: 0 };
-    let left = rect.left;
-    let top = rect.top;
-    if (left < SNAP) left = EDGE;
-    else if (vw - (left + rect.width) < SNAP) left = vw - rect.width - EDGE;
-    if (top < SNAP) top = EDGE;
-    else if (vh - (top + rect.height) < SNAP) top = vh - rect.height - EDGE;
-    el.style.left = `${left - pRect.left}px`;
-    el.style.top = `${top - pRect.top}px`;
-    // 记住位置（相对父容器，加载时原样还原）
-    writeStore(NIANG_POS_KEY, JSON.stringify({ x: left - pRect.left, y: top - pRect.top }));
-    const body = el.querySelector('.claude-niang-body');
-    if (body) {
-      body.classList.remove('claude-q-pop');
-      void body.offsetWidth; // 强制重排以重触发动画
-      body.classList.add('claude-q-pop');
+    if (!d) return;
+    try {
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+    } catch {
+      // 指针可能已丢失，忽略
     }
+    if (draggedRef.current) {
+      const s = sizeRef.current;
+      const final = clampPos(d.origX + (e.clientX - d.startX), d.origY + (e.clientY - d.startY), s, s);
+      setPos(final);
+      writeStore(NIANG_POS_KEY, JSON.stringify(final)); // 记住位置
+    }
+    draggedRef.current = false;
   };
 
   // 组件卸载时清掉气泡定时器，避免卸载后 setState
@@ -214,17 +197,18 @@ export default function ClaudeNiang({ status = 'idle' }) {
   }, []);
 
   // 状态驱动气泡：thinking/responding/typing 常驻显示对应文字，回到 idle 清空。
-  // 点击流程进行中不覆盖（点击优先级最高），结束后由 finishClick 恢复当前状态气泡。
+  // 节流：状态快速切换（打字中）<300ms 不重复 setBubble（防闪烁）；点击流程中让位。
   useEffect(() => {
     statusRef.current = status;
     if (clickingRef.current) return; // 点击流程进行中，让位给点击气泡
+    const now = Date.now();
+    if (status === lastStatusRef.current.st && now - lastStatusRef.current.ts < 300) return;
+    lastStatusRef.current = { st: status, ts: now };
     window.clearTimeout(bubbleTimerRef.current);
     setBubble(status === 'idle' ? null : STATUS_TEXT[status]);
   }, [status]);
 
   // —— 滚轮缩放（原生 addEventListener + passive:false，避免滚轮时页面跟着滚） ——
-  // 依赖 [visible]：默认关闭时组件 return null、DOM 未挂载（wrapRef 为 null），
-  // 若依赖 [] 则监听器永不挂上、之后打开 claude娘滚轮缩放失效。visible 变 true 时重挂。
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -269,6 +253,7 @@ export default function ClaudeNiang({ status = 'idle' }) {
       role="button"
       tabIndex={0}
       title="点我看余额 · 拖拽移动 · 滚轮缩放 · 右键镜像"
+      style={{ left: pos.x, top: pos.y }}
       onClick={handleClick}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -310,3 +295,5 @@ export default function ClaudeNiang({ status = 'idle' }) {
     </div>
   );
 }
+
+export default memo(ClaudeNiang);

@@ -1,13 +1,15 @@
-import { useEffect, useState, useCallback } from 'react';
+import { lazy, Suspense, useEffect, useState, useCallback } from 'react';
 import { api } from './api.js';
 import { useSessions } from './hooks/useSessions.js';
+import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { useChatStream } from './hooks/useChatStream.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
-import SkinSettings from './skin/SkinSettings.jsx';
+// 懒加载「打开才用」的大组件（瘦身：终端 xterm / 设置 / 媒体库 不进首屏，点开才下载）
+const SkinSettings = lazy(() => import('./skin/SkinSettings.jsx'));
 import FluidCanvas from './skin/FluidCanvas.jsx';
-import MediaLibrary from './components/MediaLibrary.jsx';
-import TerminalView from './components/TerminalView.jsx';
+const MediaLibrary = lazy(() => import('./components/MediaLibrary.jsx'));
+const TerminalView = lazy(() => import('./components/TerminalView.jsx'));
 import { readDefaultEffort } from './utils/effort.js';
 
 export default function App() {
@@ -114,9 +116,13 @@ export default function App() {
           无法连接后端（127.0.0.1:4000）——请双击桌面「启动ClaudeNeko.bat」启动服务
         </div>
       )}
-      <SkinSettings open={skinOpen} onClose={() => setSkinOpen(false)} onModelChanged={refreshModel} />
-      <MediaLibrary open={mediaOpen} onClose={() => setMediaOpen(false)} />
-      <TerminalView open={terminalOpen} onClose={() => setTerminalOpen(false)} sessionId={terminalSessionId} />
+      <ErrorBoundary>
+        <Suspense fallback={null}>
+          <SkinSettings open={skinOpen} onClose={() => setSkinOpen(false)} onModelChanged={refreshModel} />
+          <MediaLibrary open={mediaOpen} onClose={() => setMediaOpen(false)} />
+          <TerminalView open={terminalOpen} onClose={() => setTerminalOpen(false)} sessionId={terminalSessionId} />
+        </Suspense>
+      </ErrorBoundary>
     </div>
   );
 }

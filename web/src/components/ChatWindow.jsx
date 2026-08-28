@@ -297,9 +297,9 @@ export default function ChatWindow({ session, model, chat, onBranch, onEffortCha
           {userMessages.length > 0 && (
             <button className="chat-export" onClick={() => setNavOpen(true)} title="跳转到某条用户提问（对话导航）">📑</button>
           )}
-          <button className="chat-export" onClick={() => setExportOpen(true)} title="导出当前对话（文本/数据）">导出</button>
-          <button className="chat-export" onClick={handleForceStop} title="强制结束当前对话任务（杀 claude + 取消生成，聊天卡住或生视频太久时用）">⛔ 结束</button>
-          {model && <span className="chat-model">{model}</span>}
+          <button className="chat-export-btn" onClick={() => setExportOpen(true)} title="导出当前对话（文本/数据）">导出</button>
+          <button className="chat-export" onClick={handleForceStop} title="强制结束当前对话任务（杀 claude + 取消生成，聊天卡住或生视频太久时用）">⛔<span className="chat-stop-text"> 结束</span></button>
+          {model && <span className="chat-model" title={model}>{model}</span>}
           {session?.id && (
             <select
               className="chat-effort"
@@ -317,7 +317,7 @@ export default function ChatWindow({ session, model, chat, onBranch, onEffortCha
           )}
           {sid && (
             <button
-              className="chat-model"
+              className="chat-sid"
               onClick={() => navigator.clipboard.writeText(sid).catch(() => {})}
               title={`Claude 会话 ID：${sid}（点击复制，可在 claude CLI 用 --resume 接续）`}
             >

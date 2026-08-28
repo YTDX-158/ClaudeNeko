@@ -7,13 +7,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { skinEngine } from '../skin/skinEngine.js';
-
-const CAT_KAOMOJI = [
-  '(=^･ω･^=)', 'ฅ^•ﻌ•^ฅ', '(=^‥^=)', '(=｀ω´=)', '(=^-ω-^=)',
-  '(=ＴェＴ=)', '(=ↀωↀ=)', '(=^◡^=)', '(=^･ｪ･^=)', '(=•ω•=)',
-  '(=^･ᴥ･^=)', '(^・ω・^)', 'ฅ(^・ω・^ฅ)', 'ฅ(=•̫•=)ฅ', '( ฅ•ᴥ•ฅ )',
-  '(=＾● ⋏ ●＾=)', '(^≖ω≖^)', '/ᐠ｡ꞈ｡ᐟ\\', 'ᓚᘏᗢ', '(=^♡ω♡^=)',
-];
+import { KAOMOJI } from '../utils/kaomoji.js';
 
 const BUBBLE_MS = 2000;
 const DRAG_THRESHOLD = 6; // 位移超过 6px 算拖拽，否则算点击
@@ -127,7 +121,7 @@ export default function CatMascot() {
 
   const handleBubble = () => {
     if (locked) return;
-    const pick = CAT_KAOMOJI[Math.floor(Math.random() * CAT_KAOMOJI.length)];
+    const pick = KAOMOJI[Math.floor(Math.random() * KAOMOJI.length)];
     setBubble(pick);
     setLocked(true);
     window.clearTimeout(bubbleTimerRef.current);
