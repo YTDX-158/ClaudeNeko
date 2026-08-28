@@ -43,15 +43,17 @@
 
 ### 📎 AI 读附件（文档 / 图片 / 视频 / 音频）
 - **文档**：txt / pdf / docx 自动抽文字——纯文本模型也能"读"到内容
-- **图片**：视觉模型把图转成文字描述喂给主模型（**BYOK 多后端**，豆包 / 智谱 GLM / 千问 / OpenAI 任一 Key 可换）
+- **图片**：视觉模型把图转成文字描述喂给主模型（**设置→模型配置→视觉理解** 填 Key，豆包 / 智谱 / 千问 / OpenAI 任一兼容端点）
 - **视频 / 音频**：本地抽帧 + 转写，AI 理解画面与语音（可选，需 python）
 - 没配视觉 / 缺依赖 → **优雅降级**：明确提示原因，不报错不装懂
 
 ### 🎨 技能包（生图 / 生视频）
 输入框下方一排技能，选中即切换输入模式：
-- **生图**：选 Seedream 模型 + 比例 → 输入提示词出图
-- **生视频**：选 Seedance 模型 + 比例 + 时长（时长跟随所选模型）→ 输入镜头描述生成视频（异步轮询）
-- 生成走**豆包 / 火山方舟**（BYOK 自己的 Key）；未开通的模型点了给明确提示，可用性由运行时判定
+- **生图**：选 Seedream 模型 + 比例 + 分辨率 → 输入提示词出图
+- **生视频**：选 Seedance 模型 + 比例 + 时长（时长跟随所选模型）+ 分辨率 → 输入镜头描述生成视频（异步轮询）
+- 生成走**豆包 / 火山方舟**（**设置→模型配置** 填 baseUrl/Key，填什么用什么，支持中转）；未开通的模型点了给明确提示
+- **生成确认弹窗**（设置→功能页开关，默认开）：生成前确认一次，防误触白白消耗额度
+- **生成记忆进 claude 会话**：每次生成的提示词与结果 claude 都会记住，后续对话连贯
 
 ### 🔒 隐私与安全
 - **100% 本地运行**：会话记录仅存本地，无任何云端上传
@@ -82,36 +84,20 @@
 
 > 想换模型/端点？修改 `ANTHROPIC_BASE_URL` 与 `ANTHROPIC_AUTH_TOKEN` 即可，支持任意 Anthropic 兼容服务。模型由 Claude Code CLI 系统默认决定，界面内不另作选择。
 
-### 视觉模型配置（可选 · 让 AI 看图）
-发图片给 AI，AI 会先让**视觉模型**把图转成文字描述再理解。需配一个 **OpenAI 兼容的视觉 API**（豆包 / 智谱 GLM / 阿里 Qwen / OpenAI / Gemini 任一，看你手上有什么 Key）：
+### 视觉理解配置（可选 · 让 AI 看图）
+发图片给 AI，AI 会先让**视觉模型**把图转成文字描述再理解。在 **设置 → 模型配置 → 🤖 视觉理解** 填入：
+- **baseUrl**：OpenAI 兼容端点（留空 = 火山默认 `https://ark.cn-beijing.volces.com/api/v3`）
+- **API Key**：豆包 / 智谱 / Qwen / OpenAI 任一视觉 Key
+- **模型**：视觉模型 ID（如 `doubao-seed-2-0-mini-260428`）
 
-```json
-{
-  "env": {
-    "VISION_API_KEY": "你的视觉模型 Key",
-    "VISION_MODEL": "doubao-seed-2-0-mini-260428 或任意视觉模型 ID",
-    "VISION_BASE_URL": "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
-  }
-}
-```
+> 没配视觉理解 → 发图片 AI 会礼貌说明"看不了图"，不影响其他功能。
 
-支持**多后端回退**：可再配 `VISION_2_API_KEY` / `VISION_2_MODEL`、`VISION_3_API_KEY` / `VISION_3_MODEL`…第一个失败自动换下一个。
-
-> 没配视觉模型 → 发图片 AI 会礼貌说明"看不了图"，不影响其他功能。
-
-### 生成媒体配置（可选 · 技能包生图/生视频）
-技能包的生图 / 生视频走**豆包 / 火山方舟**。可直接复用上面的视觉 Key（同一豆包账号），也可单独配：
-
-```json
-{
-  "env": {
-    "DOUBAO_API_KEY": "你的豆包 / 火山方舟 API Key"
-  }
-}
-```
-
-- 不配 → 技能包提示"未配置生成 key"，其余功能不受影响
-- 已开通的模型能用；未开通的点了给明确提示（"当前 key 未开通此模型"），到火山方舟开通后即用
+### 生成媒体配置（可选 · 生图 / 生视频）
+在 **设置 → 模型配置** 给每个预设模型填 **baseUrl**（留空 = 火山默认）+ **API Key**，**填什么生成时用什么**（支持中转 baseUrl）：
+- 🖼 生图：Seedream 5.0 Lite / Pro
+- 🎬 生视频：Seedance 2.5 / 2.0 Mini / 2.0 / 2.0 Fast
+- 没填的模型生成时会提示去配置页填（不静默用其他 key）
+- 已开通的模型能用；未开通的给明确提示（"当前 key 未开通此模型"），到火山方舟开通后即用
 - 转录需 python + faster-whisper（同下面的媒体理解依赖）
 
 ### 媒体理解依赖（可选 · 视频/音频理解）
@@ -195,7 +181,7 @@ A: 默认仅本机。想从手机访问：设置 → 功能 → 开启「远程�
 
 ## 致谢
 
-外观设计令牌移植自 [dsh-dream-skin](https://www.npmjs.com/package/dsh-dream-skin)（MIT），WebGL 流体引擎移植自 [dsh-client-ui-aqua](https://www.npmjs.com/package/dsh-client-ui-aqua)（MIT）。
+外观设计令牌移植自 [dsh-dream-skin](https://www.npmjs.com/package/dsh-dream-skin)（MIT），WebGL 流体引擎移植自 [dsh-client-ui-aqua](https://www.npmjs.com/package/dsh-client-ui-aqua)（MIT），常驻终端（pty）与 jsonl 转录引擎移植自 [@inksnow/c2web](https://www.npmjs.com/package/@inksnow/c2web)（MIT）。
 
 ## License
 

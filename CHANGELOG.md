@@ -1,5 +1,78 @@
 # 更新日志
 
+## v2.1.0（2026-08-28）—— 模型配置预设化 + 生成记忆进 claude 会话 🧠⚙️
+
+### 🆕 新增
+- **模型配置页预设化**：生图/生视频改为固定预设清单（Seedream×2 + Seedance×4），每项填 baseUrl/key，填什么用什么（支持中转）；新增第四 tab「🤖 视觉理解」独立配置（baseUrl + key + model）
+- **生成记忆进 claude 会话**：生成前把「【系统记录】命令」经 pty 提交给 claude，生成后回填结果 → claude 记住每次生成（对话连贯）；独立确认句进程退役
+- **生成确认弹窗**（设置→功能页开关，默认开）：生成前确认一次，防误触白白消耗 API 额度
+
+### 🐛 修复
+- 图片显示两次（media-message 落盘 id 与前端占位对齐去重）
+- 用户消息重复（命令进 claude 后不再双 append）
+- 系统记录 / 确认回复刷屏（isSystem 标记 + 渲染过滤；只滤"已记录"类，不误伤正常回复）
+- 恢复默认分流：外观 / 功能分开管辖，模型配置页无恢复按钮
+
+### 🧹 清理
+- 独立确认句进程（maybeStartMediaClaude）退役删除 · mediaClaude 目录清理 · doubaoKey 冗余传递移除 · README 配置指引改为「模型配置页」方式
+
+---
+
+## v2.0.0（2026-08-28）—— 设置中心：模型配置管理 ⚙️
+
+### 🆕 新增
+- **设置面板「模型配置」分区**（三个 tab）
+  - 💬 对话模型：当前生效配置卡片 + 我的档案（存/应用/删）+ 配置表单（供应商/模型档/baseUrl/key）+ 连通测试
+  - 🖼🎬 生图 / 生视频：模型条目管理（每个模型独立 baseUrl/key，增删改 + 可达性测试），媒体生成按条目取配置（条目优先 → VISION_API_KEY 兜底）
+- **模型配置 × ClaudeInstall 联动契约**：配置读写接口 A + 环境检测接口 B（`--detect-json` ↔ `/api/env`）对齐
+
+### 🐛 修复（模型显示/切换根因链）
+- **`*_MODEL_NAME` 残留覆盖 MODEL**：claude 实际调用优先认 `ANTHROPIC_DEFAULT_*_MODEL_NAME`，旧 settings 残留 flash 导致配置 pro 实际跑 flash → writeEnv 同步写 NAME 系列键
+- **会话级 model 废弃**：claude 统一走全局 env（不再传 `--model`），配置保存后 killAll 重启 pty 生效
+- **detectEnv 误用卡顿**：GET /api/config 误调 spawnSync 全环境检测阻塞 2s+ → 改纯读 settings（毫秒级）
+- **busy 保护**：有任务在跑拒绝切换模型，提示先「⛔ 结束」
+
+### 🔧 涉及改动
+- `server/routes/config.js` / `server/lib/configService.js` / `server/lib/modelConfig.js` / `server/lib/mediaConfig.js` / `server/lib/dataStore.js` / `server/lib/mediaGen.js`
+- `web/src/skin/ModelSettings.jsx` / `SkinSettings.jsx` / `web/src/App.jsx` / `ChatWindow.jsx` / `web/src/api.js`
+- `server/routes/terminal.js` / `sessions.js`（去会话级 model 传参）
+
+### 📦 封装
+- commit `9f5e33e`（17 文件）· zip `ClaudeNeko_v2.0.0_20260828.zip`（95 文件 1.74MB）
+
+---
+
+## v1.9.3（2026-08-28）—— 全项目审查 10 项清零 🔍
+
+### 🎯 变更
+- 2-agent 全面审查，10 项问题全部修复：
+  - 断连保护（客户端断开不崩服务）
+  - docx 解压 bomb 防护（超大/畸形文档拒绝解压）
+  - cancel 并发写会话冷却
+  - 媒体库 TTL 清理（超时任务释放）
+  - 超长 prompt 走 `-p` 路径兜底
+  - memo 相关收尾
+- 副产品修复：No response resume、Phase2 bus 订阅签名回归
+
+### ✅ 结果
+- 回归脚本全绿 · commit `e45ea08` · 封装 zip 1.81MB
+
+---
+
+## v1.9.2（2026-08-27）—— TUI 就绪修复 + busyLock 收敛 + 路由拆分 🔧
+
+### 🎯 变更
+- **TUI 就绪修复三保险**：pty ready 状态判定多重兜底 + 回车延迟优化
+- **busyLock 收敛**：新建 `server/lib/busyLock.js` 模块，4 处调用点统一改用
+- **Phase1 路由拆分**：server.js 按功能拆分为独立路由
+- **Phase2 事件总线**：`server/lib/bus.js` 事件订阅发布，transcript/ptyHost 改走总线
+- 回归脚本（`npm run regression`）· sticky scroll（终端/聊天黏底跟随）
+
+### 📦 封装
+- commit `a024500`
+
+---
+
 ## v1.9.1（2026-08-27）—— 移除「下载视频」功能 🗑️
 
 ### 🎯 变更
