@@ -21,6 +21,40 @@ const KEY_SEQ = {
   tab: '\t',
 };
 
+// —— 列宽就绪（8-29 列宽根治①） ——
+const MIN_COLS = 20; // 就绪阈值：fit 后低于此值 = 容器还没布局完
+const MIN_ROWS = 5;
+const FIT_MAX_WAIT_MS = 500; // 等列宽就绪的超时上限，超时用当前值兜底
+
+/** attach 前确保列宽就绪。
+ * 终端页是懒加载，首次打开时全屏 overlay 可能还在渲染，容器 div 没布局完成，
+ * fit.fit() 会量出极小列宽（1~3 列）。把错误尺寸 attach 出去 → 服务端把常驻 pty
+ * 挤成 1 列 → claude TUI 重绘错乱（屏幕「单色背景+c」，刷新/重开才恢复）。
+ * 策略：fit 后列宽过小则 requestAnimationFrame 等一帧重试，最多等 FIT_MAX_WAIT_MS；
+ * 超时用当前值兜底（后端 MIN_COLS 下钳是第二道保险，不会真挤爆）。 */
+function ensureFitReady(term, fit, maxWait = FIT_MAX_WAIT_MS) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const tryFit = () => {
+      try {
+        fit.fit();
+      } catch {
+        // 容器未就绪，继续等下一帧
+      }
+      if (term.cols >= MIN_COLS && term.rows >= MIN_ROWS) {
+        resolve();
+        return;
+      }
+      if (Date.now() - started >= maxWait) {
+        resolve(); // 超时兜底：用当前值（不阻塞 attach，后端下钳接着兜）
+        return;
+      }
+      requestAnimationFrame(tryFit);
+    };
+    tryFit();
+  });
+}
+
 export default function TerminalView({ open, onClose, sessionId }) {
   const termRef = useRef(null); // 挂 xterm 的容器 div
   const termReadyRef = useRef(false);
@@ -78,30 +112,53 @@ export default function TerminalView({ open, onClose, sessionId }) {
       },
     });
 
-    // 连接 + attach（带当前列宽：服务端 resize pty 让 TUI 用客户端尺寸重绘，防列宽错乱——c2web 方式）
+    // 连接 + attach（带当前列宽：服务端 resize pty 让 TUI 用客户端尺寸重绘，防列宽错乱——c2web 方式）。
+    // ⚠ 8-29 列宽根治①：attach 前先等列宽就绪（容器布局完，fit 量到 ≥MIN_COLS），
+    // 防首次打开把 1~3 列的错尺寸发出去挤爆常驻 pty。就绪后再 attach。
+    let cancelled = false;
     wsChannel.connect(sessionId);
-    wsChannel.attach(term.cols, term.rows);
+    ensureFitReady(term, fit).then(() => {
+      if (cancelled) return; // 等待期间终端页已关（cleanup 已 detach），放弃 attach
+      wsChannel.attach(term.cols, term.rows);
+    });
 
     // 尺寸变化 → fit + 同步 pty。
     // ⚠ 卡顿修复：不再用 ResizeObserver 观察容器（fit.fit() 会改 xterm 尺寸 → 反触发 RO → 循环，
     // 每次循环都 send resize → claude TUI 全量重绘 → 输入卡顿）。只监听 window resize + 防抖。
+    // ⚠ 8-29 治本修复：doResize 也做「列宽就绪」检查——容器未布局时 fit 会量出 1~3 列，
+    // 直接 send {t:'r', c:1} 会把常驻 pty 挤爆（单色+c / 输入框折叠三行，手机先进终端必现）。
+    // 列宽未就绪（< MIN_COLS）不 send，等下一帧重试；超过 FIT_MAX_WAIT_MS 放弃（pty 保持 attach 尺寸）。
     let resizeTimer = null;
+    let resizeTries = 0;
     const doResize = () => {
+      if (cancelled) return; // 组件已卸载
       try {
         fit.fit();
-        wsChannel.send({ t: 'r', c: term.cols, r: term.rows });
       } catch {
-        // 容器未就绪
+        return; // 容器未就绪，本次放弃（下次 window resize / 打开重进再试）
       }
+      if (term.cols >= MIN_COLS && term.rows >= MIN_ROWS) {
+        resizeTries = 0;
+        wsChannel.send({ t: 'r', c: term.cols, r: term.rows });
+        return;
+      }
+      if (resizeTries * 16 >= FIT_MAX_WAIT_MS) {
+        resizeTries = 0; // 超时兜底：不发错误尺寸（pty 保持 attach 时的就绪尺寸）
+        return;
+      }
+      resizeTries += 1;
+      requestAnimationFrame(doResize); // 等一帧重试（容器可能马上布局完）
     };
     const onWinResize = () => {
       clearTimeout(resizeTimer);
+      resizeTries = 0;
       resizeTimer = setTimeout(doResize, 200); // 防抖：窗口连续变化只同步一次
     };
     window.addEventListener('resize', onWinResize);
     setTimeout(doResize, 100); // 打开后做一次初始 fit
 
     return () => {
+      cancelled = true; // 中断等待中的 attach（防卸载后误 attach）
       clearTimeout(resizeTimer);
       window.removeEventListener('resize', onWinResize);
       wsChannel.detach();

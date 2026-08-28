@@ -17,6 +17,18 @@ import { WebSocketServer } from 'ws';
 
 const TERM_BUF_MAX = 2 * 1024 * 1024; // 回放缓冲上限（最近 2MB 原始字节，够滚回看多次生成的完整输出；原 64KB 太小）
 const SYNC_WINDOW_MS = 200; // attach 同步窗：200ms 内 drop 实时流，等快照稳定再发（tmux-web 默认值）
+// —— 死锁自愈（8-29 单色+c 根治）：claude 偶发「TUI 渲染死锁」——
+// 取证实锤：claude 进程活着（启动输出>1KB 触发就绪、内存 300MB），但当前画面 termBuf 只有 1 字节"C"，
+// 回放给前端即「单色+c」。attach+resize 80 列也不唤醒（已实测），只能 kill 重启（用户验证「重开就好」）。
+// 判据 = termBuf 实质长度：正常 TUI 画面远超 200B，死锁只有"C"。
+// ⚠ 8-29 实测发现：死锁可发生在「attach 后」任意时刻（手机 attach → 清 termBuf → claude 重绘崩），
+// 单次检测（spawn 后 25s 查一次）覆盖不了 → 改为**周期检测**（每 30s 检查活跃会话，清缓冲后 10s 宽限防误杀）。
+const HEAL_INTERVAL_MS = 30 * 1000; // 周期检测间隔
+const HEAL_CLEAR_GRACE_MS = 10 * 1000; // 清缓冲/attach 后宽限期（等 claude 重绘，防误杀）
+const STARTUP_MIN_TERMBUF = 200; // termBuf 长度下限（低于 = TUI 未画出/死锁）
+const MAX_STARTUP_RETRIES = 2; // 自愈重启最多重试次数（共 3 次尝试）
+const WAKE_CHECK_MS = 3 * 1000; // attach 后快速唤醒检查：3s 内 TUI 未画出 → 宽列 resize 唤醒（秒级，不用 kill 重启）
+const WAKE_COLS = 80; // 唤醒列宽：claude Ink 在宽列重绘正常（实测 attach 80 列即恢复），窄列才崩
 
 /**
  * 创建终端 WS 通道。
@@ -30,6 +42,8 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
   const clients = new Set(); // 所有 ws 连接（ws.sid, ws.wantTerm）
   const termBufs = new Map(); // sid -> 最近 64KB 原始字节（attach 回放）
+  const healState = new Map(); // sid -> { retries, lastClear }（死锁自愈检测状态）
+  const wakeTimers = new Map(); // sid -> setTimeout（attach 后快速唤醒检查）
 
   // M14 心跳（流量检测版）：不依赖 ping/pong（实测前端可能不回 pong 导致误杀）。
   // 改为看连接「消息活动」：每次收发消息刷新 lastActivity，5 分钟无任何流量才 close。
@@ -93,6 +107,66 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
     return termBufs.get(sid) || '';
   }
 
+  /** 登记死锁自愈检测（8-29）：attach/新 pty 时调用。更新 lastClear 给 claude 重绘宽限期（防误杀）。 */
+  function trackHeal(sid) {
+    const st = healState.get(sid) || { retries: 0 };
+    st.lastClear = Date.now(); // attach/清缓冲后宽限，等 claude 重绘完
+    healState.set(sid, st);
+  }
+
+  /** attach 后快速唤醒检查（8-29 单色+c 根治）：手机 attach 窄列会触发 claude Ink 渲染崩（termBuf 只有"C"）。
+   *  WAKE_CHECK_MS 后 termBuf 仍 < 阈值 → 宽列 resize 唤醒（claude Ink 宽列重绘正常，实测 attach 80 列秒恢复）。
+   *  比周期检测（kill 重启 40s）快得多，且不杀进程、不丢状态。 */
+  function scheduleWakeCheck(sid) {
+    if (wakeTimers.has(sid)) clearTimeout(wakeTimers.get(sid)); // 防频繁 attach 叠定时器
+    const t = setTimeout(() => {
+      wakeTimers.delete(sid);
+      if (!ptyHost.isRunning(sid)) return; // pty 没了
+      const bufLen = getTermBuffer(sid).length;
+      if (bufLen >= STARTUP_MIN_TERMBUF) return; // TUI 已正常画出
+      console.error(`[terminal] 会话 ${sid} attach 后 termBuf 仅 ${bufLen}B（疑似窄列渲染崩/单色+c），宽列 ${WAKE_COLS} 列 resize 唤醒`);
+      ptyHost.resize(sid, WAKE_COLS, 30);
+    }, WAKE_CHECK_MS);
+    wakeTimers.set(sid, t);
+  }
+
+  // 周期死锁检测（8-29）：每 HEAL_INTERVAL_MS 检查活跃会话 termBuf，过小且超宽限 → 判死锁 → 重启。
+  // 覆盖「attach 后任意时刻死锁」（单次检测只在 spawn 后查一次，覆盖不了）。
+  const healTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [sid, st] of healState) {
+      if (!ptyHost.isRunning(sid)) {
+        healState.delete(sid); // pty 没了，撤检测
+        continue;
+      }
+      if (now - st.lastClear < HEAL_CLEAR_GRACE_MS) continue; // 清缓冲/attach 宽限期，等重绘
+      const bufLen = getTermBuffer(sid).length;
+      if (bufLen >= STARTUP_MIN_TERMBUF) {
+        healState.delete(sid); // TUI 正常画出了
+        continue;
+      }
+      if (st.retries >= MAX_STARTUP_RETRIES) {
+        console.error(`[terminal] 会话 ${sid} termBuf 持续仅 ${bufLen}B（疑似 TUI 死锁/单色+c），重试 ${st.retries} 次仍失败，放弃自愈`);
+        healState.delete(sid);
+        continue;
+      }
+      const retries = st.retries + 1;
+      console.error(`[terminal] 会话 ${sid} termBuf 仅 ${bufLen}B < ${STARTUP_MIN_TERMBUF}B（疑似 TUI 渲染死锁/单色+c），第 ${retries}/${MAX_STARTUP_RETRIES} 次自动重启`);
+      ptyHost.kill(sid);
+      clearTermBuffer(sid);
+      const s = store.get(sid);
+      const res = ptyHost.ensure(sid, {
+        cwd: s?.cwd || config.defaultCwd,
+        claudeSessionId: s?.claudeSessionId || undefined,
+        // 不传 model：claude 统一走全局 env
+      });
+      transcript.ensure(sid, { cwd: s?.cwd || config.defaultCwd, claudeSessionId: s?.claudeSessionId || undefined });
+      // 记录重试次数 + 重置宽限（给新 pty 启动/重绘时间）
+      healState.set(sid, { retries, lastClear: now });
+    }
+  }, HEAL_INTERVAL_MS);
+  healTimer.unref?.();
+
   /** WS upgrade 入口：仅 /ws + 有 sid + isLocalRequest 才接管 */
   function upgradeHandler(req, socket, head) {
     let u;
@@ -142,6 +216,8 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
     });
     console.log(`[terminal] pty ensure sid=${sid}: ${JSON.stringify(ptyRes)}`);
     transcript.ensure(sid, { cwd, claudeSessionId: session?.claudeSessionId || undefined });
+    // 死锁自愈：新 pty（冷启动）登记周期检测（30s 查一次 termBuf，TUI 未画出自动重启）
+    if (ptyRes.isNew) trackHeal(sid);
 
     // 回放对话历史：客户端按 claudeMessageId 去重，重连不重复渲染
     // （历史消息由前端 3s 轮询 / listMessages 拉取，这里不重复推全量）
@@ -163,6 +239,9 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
       } else if (m.t === 'attach') {
         ws.wantTerm = true;
         ptyHost.touch(sid);
+        // 死锁自愈：attach 触发 claude 重绘可能崩（窄列/单色+c）。登记周期检测 + 3s 快速唤醒
+        trackHeal(sid);
+        scheduleWakeCheck(sid);
         // 兜底：pty 不在跑（force-stop 杀过 / 空闲回收过）但用户打开了终端页 → 自动重新拉起
         // （resume 原会话，历史还在）。注意：WS 连接可能复用（聊天在用），onConnect 不会重新触发，必须在此 ensure。
         // ⚠ 顺序：ensure 必须在 resize 前（pty 不存在时 resize 无效）。

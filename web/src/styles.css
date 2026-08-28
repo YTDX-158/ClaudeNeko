@@ -1155,6 +1155,8 @@ body {
   opacity: 0.78;
   pointer-events: auto;
   cursor: grab;
+  touch-action: none; /* 8-29 手机拖拽修复：声明触摸手势归 claude娘 自己（同小猫），浏览器不抢——
+                         否则手机拖动被浏览器当成滚动手势掐断，每次只能拖一点点 */
   user-select: none;
   -webkit-user-select: none;
 }
@@ -1348,6 +1350,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* 8-29 手机终端滚动：不加 overscroll-behavior，走浏览器默认滚动链（与聊天页对齐） */
 }
 .terminal-header {
   display: flex;
@@ -1400,6 +1403,12 @@ body {
 .terminal-wrap .xterm-viewport,
 .terminal-wrap .xterm-screen {
   height: 100% !important;
+}
+/* 8-29 手机终端滚动：显式声明 xterm 滚动区为「可滚动容器」——微信 WebView 需识别它才吸收触摸，
+   否则滑动穿透拉页面。配合默认滚动链：滚内容→到头才传外层（与聊天页对齐） */
+.terminal-wrap .xterm-viewport {
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
 }
 .terminal-keys {
   display: flex;

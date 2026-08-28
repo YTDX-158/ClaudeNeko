@@ -16,6 +16,11 @@ import { createRequire } from 'node:module';
 // ESM 加载原生 CommonJS 模块（node-pty）必须用 createRequire
 const require = createRequire(import.meta.url);
 
+/** 同步 sleep（Atomics.wait 短暂阻塞事件循环；仅 force-stop 等低频操作用） */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 /** 尝试加载 node-pty；失败返回 null（调用方降级，不阻塞服务） */
 let pty = null;
 try {
@@ -27,6 +32,14 @@ try {
 const IDLE_REAP_MS = 30 * 60 * 1000; // 空闲 30 分钟回收
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 30;
+const MIN_COLS = 50; // 列宽下钳（8-29 单色+c 源头根治）：claude Ink 在窄列（手机 attach ~40列）渲染崩溃只输出"C"，
+                     // 手机 attach 的窄列必须钳到安全宽度；桌面正常宽度（≥120）不受影响，极窄窗口轻微折行可接受
+const MIN_ROWS = 5;
+// —— force-stop 并发写防护（8-29 审查剩余项修复） ——
+// taskkill 是异步的，旧 claude 进程可能短暂残留写 jsonl；若 force-stop 后立即重开同会话，
+// 新 pty resume 同 jsonl → 新旧并发写可能损坏文件。kill 时同步轮询确认旧进程退出后再放行新 pty。
+const KILL_CONFIRM_MS = 2000; // 确认旧进程退出上限
+const KILL_POLL_MS = 100; // 轮询间隔
 const ENTER_DELAY_MS = 200; // 文本写入后延迟写回车：防 Windows ConPTY「背靠背吞回车」（8-27 修复）
 const QUIET_READY_MS = 800; // 输出安静 800ms = claude 界面稳定，才算就绪（防启动滚动期误判）
 const READY_SETTLE_MS = 300; // markReady（jsonl 信号）后再 settle：探测到 jsonl → 输入框激活
@@ -116,7 +129,8 @@ export function createPtyHost({ claudeBin, bus, onData }) {
       onData?.(sid, d);
     });
     child.onExit(({ exitCode }) => {
-      ptys.delete(sid);
+      // ⚠ 身份检查：只删自己——force-stop/自愈重启后旧进程 onExit 可能晚到，不能误删新 rec
+      if (ptys.get(sid) === rec) ptys.delete(sid);
       bus?.emit('pty:exit', { sid, exitCode });
     });
     return { isNew: true, available: true };
@@ -194,12 +208,17 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     }
   }
 
-  /** 终端尺寸变化 → 同步 pty，保证 TUI 不错位 */
+  /** 终端尺寸变化 → 同步 pty，保证 TUI 不错位。
+   *  ⚠ 下钳（8-29 单色+c 源头根治）：cols<MIN_COLS / rows<MIN_ROWS 一律钳到下限——
+   *  手机 attach 窄列（~40列）会让 claude Ink 渲染崩溃只输出"C"（单色+c），
+   *  钳到 MIN_COLS=50 安全宽度；前端错误小尺寸（1~3列）也被同一道拦下。 */
   function resize(sid, cols, rows) {
     const rec = ptys.get(sid);
     if (!rec) return;
+    const c = Math.max(MIN_COLS, Number.isInteger(cols) && cols > 0 ? cols : DEFAULT_COLS);
+    const r = Math.max(MIN_ROWS, Number.isInteger(rows) && rows > 0 ? rows : DEFAULT_ROWS);
     try {
-      rec.child.resize(cols || DEFAULT_COLS, rows || DEFAULT_ROWS);
+      rec.child.resize(c, r);
       rec.lastActive = Date.now(); // C1：窗口调整也算活跃（防缩放间隙误回收）
     } catch {
       // 已退出
@@ -213,11 +232,25 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     return write(sid, '\x1b');
   }
 
-  /** 强杀某会话 pty（force-stop） */
+  /** 强杀某会话 pty（force-stop）。
+   *  ⚠ 8-29 并发写防护：taskkill 是异步的，旧 claude 可能短暂残留写 jsonl；若 force-stop 后立即重开
+   *  同会话，新 pty resume 同 jsonl → 新旧并发写可能损坏文件。这里同步轮询确认旧进程退出后再删，
+   *  保证后续 ensure（重开）时旧进程已死透。 */
   function kill(sid) {
     const rec = ptys.get(sid);
     if (!rec) return;
-    taskkill(rec.child.pid);
+    const pid = rec.child.pid;
+    taskkill(pid);
+    // 轮询确认退出（process.kill(pid, 0)：进程不存在抛 ESRCH，存在则成功）
+    const deadline = Date.now() + KILL_CONFIRM_MS;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        break; // 已退出
+      }
+      sleepSync(KILL_POLL_MS);
+    }
     ptys.delete(sid);
   }
 
