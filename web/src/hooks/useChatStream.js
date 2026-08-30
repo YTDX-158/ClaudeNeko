@@ -25,6 +25,9 @@ export function useChatStream(sessionId, onModelUpdate) {
   const [messagesSessionId, setMessagesSessionId] = useState(null); // 当前 messages 数组属于哪个会话（搜索跳转判定用）
   const [streaming, setStreaming] = useState(false);
   const [recovering, setRecovering] = useState(false); // 刷新回来时上一条还在后台生成
+  // 回合级"生成中"指示（8-30 方案A）：发消息亮 → 收到 end_turn 灭，零时间兜底（claude 思考再久不闪）。
+  // 兜底：error / force-stop / 切会话 / 发送失败 都显式置 false；"僵尸假死"极罕见且可被 ⛔/新消息救
+  const [thinking, setThinking] = useState(false);
   const [error, setError] = useState(null);
   // 供轮询闭包读取的最新值（避免在 effect 依赖里塞入 streaming/sessionId 导致重建定时器）
   const streamingRef = useRef(false);
@@ -54,6 +57,7 @@ export function useChatStream(sessionId, onModelUpdate) {
     setRecovering(false);
     // 切会话必须重置 streaming：否则旧会话的流式态吞掉新会话发送 + 停止按钮取消错对象
     setStreaming(false);
+    setThinking(false); // 切会话重置"生成中"指示
     replayedSet.clear(); // M16：replayedSet 随会话清理（防只增不减；历史消息靠 replay 标记不重放）
     lastUpdatedAtRef.current = null;
     if (!sessionId) return;
@@ -120,10 +124,14 @@ export function useChatStream(sessionId, onModelUpdate) {
           });
           setStreaming(false);
           streamingRef.current = false;
+          // 方案A：收到 end_turn = 回合真结束 → 熄灭胶囊；否则保持亮（claude 还在干活，不按时限不闪）
+          if (ev.turnEnd) setThinking(false);
+          else setThinking(true);
         } else if (ev.kind === 'error') {
           // A3：pty 异常退出广播的 error 事件 → 清流式态 + 移除空占位 + 显示错误（防永久转圈）
           setStreaming(false);
           streamingRef.current = false;
+          setThinking(false); // 崩溃/异常 → 熄灭"生成中"胶囊
           setError(ev.text || '终端进程已退出');
           setMessages((prev) => prev.filter((m) => !(m.streaming && !m.text)));
         }
@@ -177,7 +185,10 @@ export function useChatStream(sessionId, onModelUpdate) {
                 const key = m.role === 'user' ? `u:${m.text ?? ''}` : (m.claudeMessageId || m.id);
                 if (!seen.has(key)) {
                   seen.add(key);
-                  merged.push(m);
+                  // 修复（8-30）：轮询兜底拉进的新 assistant 也标 replay（与 WS 事件一致）——
+                  // 否则 WS 与轮询竞速时"WS 先到才有打字机、轮询先到则直接显示"，
+                  // 造成"只有第一条打字机、后续（含最终答案）都直接出"的不一致
+                  merged.push(m.role === 'assistant' && !m.isSystem ? { ...m, replay: true } : m);
                 }
               }
               return merged;
@@ -206,6 +217,7 @@ export function useChatStream(sessionId, onModelUpdate) {
       setError(null);
       setStreaming(true);
       streamingRef.current = true; // 立即置位：同渲染周期内第二次点击也能拦住
+      setThinking(true); // 方案A：发消息 → 胶囊亮（直到收到 end_turn 才灭）
 
       const userMsg = {
         id: `tmp-u-${Date.now()}`,
@@ -236,6 +248,7 @@ export function useChatStream(sessionId, onModelUpdate) {
           setError(e.message);
           setStreaming(false);
           streamingRef.current = false;
+          setThinking(false); // 发送失败 → 熄灭胶囊
           setMessages((prev) => prev.filter((m) => m.id !== streamMsg.id)); // 失败移除占位
         }
       }
@@ -250,6 +263,7 @@ export function useChatStream(sessionId, onModelUpdate) {
     if (sessionId) api.cancelGeneration(sessionId).catch(() => {});
     setStreaming(false);
     streamingRef.current = false;
+    setThinking(false); // 停止 → 熄灭"生成中"胶囊
     // M8：移除没等到回复的空占位气泡（text 空 + 原本 streaming）。
     // 技能占位 text 非空（"正在生成中…"）不受影响，只有聊天占位（text ''）被清。
     setMessages((prev) => prev.filter((m) => !(m.streaming && !m.text)));
@@ -265,5 +279,5 @@ export function useChatStream(sessionId, onModelUpdate) {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...newMsg } : m)));
   }, []);
 
-  return { messages, messagesSessionId, streaming, recovering, error, send, stop, addMessage, replaceMessage };
+  return { messages, messagesSessionId, streaming, recovering, thinking, error, send, stop, addMessage, replaceMessage };
 }

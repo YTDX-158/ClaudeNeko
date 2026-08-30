@@ -1,11 +1,93 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import MessageBubble from './MessageBubble.jsx';
 
 // 方案A：claude 对系统记录（媒体生成记忆）的机械确认回复不渲染。
 // 只匹配"已记录"类（已记录 / 好的，已记录…），不误伤"好的/收到"等正常简短回复。
 const SYSTEM_CONFIRM = /^(好的?，?)?已记录?[，。！!~～\s]*$/i;
 
-export default function MessageList({ messages, error, onQuote, onBranch, sessionId }) {
+/**
+ * 回合分组（8-30）：claude 一次回复因工具调用会被拆成多条独立 assistant 记录，
+ * 逐条渲染就成了"N 条气泡"。渲染层把「中间无用户消息、无附件、非 streaming 的连续
+ * assistant」合成一组，显示成"过程段 + 最终答案"一段——中间过程段弱化为灰字注释，
+ * 只突出最终答案。user / 带附件 / streaming 的 assistant 各自独立成组，不参与合并。
+ * ⚠ 数据层/后端/store 一行不动：每条消息仍独立存储、独立锚点（msg-{index} 语义不变），
+ * 只是"怎么看"变了。纯渲染层改动，历史会话打开天然正确、成本统计不漏账。
+ */
+function buildGroups(filtered) {
+  const groups = [];
+  let cur = null;
+  for (const m of filtered) {
+    const solo =
+      m.role === 'user' || (m.role === 'assistant' && (m.attachments?.length > 0 || m.streaming));
+    if (solo) {
+      if (cur) { groups.push(cur); cur = null; }
+      groups.push([m]);
+    } else {
+      if (!cur) cur = [];
+      cur.push(m);
+    }
+  }
+  if (cur) groups.push(cur);
+  return groups;
+}
+
+/**
+ * 组级操作按钮（挂在多段组气泡底部）：复制=整组拼接文本、引用=最终答案、
+ * 分支=从最终答案分叉（需 claudeMessageId）。复用 .msg-action 样式与反馈态。
+ */
+function GroupActions({ group, onQuote, onBranch }) {
+  const [copied, setCopied] = useState(false);
+  const [branched, setBranched] = useState(false);
+  const finalMsg = group[group.length - 1];
+  const fullText = group
+    .map((m) => (m.text || '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+
+  const handleCopy = async () => {
+    if (!fullText) return;
+    try {
+      await navigator.clipboard.writeText(fullText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // 剪贴板不可用静默忽略
+    }
+  };
+
+  const handleBranch = async () => {
+    if (branched || !onBranch || !finalMsg?.claudeMessageId) return;
+    setBranched(true);
+    try {
+      await onBranch(finalMsg);
+      setTimeout(() => setBranched(false), 1600);
+    } catch {
+      setBranched(false);
+    }
+  };
+
+  return (
+    <div className="msg-group-actions">
+      <button className={`msg-action${copied ? ' copied' : ''}`} onClick={handleCopy}>
+        {copied ? '已复制' : '复制'}
+      </button>
+      <button className="msg-action" onClick={() => onQuote?.(finalMsg?.text || '', 'assistant')}>
+        引用
+      </button>
+      {onBranch && finalMsg?.claudeMessageId && (
+        <button
+          className={`msg-action${branched ? ' branched' : ''}`}
+          onClick={handleBranch}
+          title="从这条 AI 回复分叉出新会话，保留此前全部上下文"
+        >
+          {branched ? '已分支 ✓' : '⤴ 从这条分支'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+export default function MessageList({ messages, error, onQuote, onBranch, sessionId, thinking = false }) {
   const endRef = useRef(null);
   const listRef = useRef(null);
   // ⚠ 修复（8-27）：
@@ -60,6 +142,17 @@ export default function MessageList({ messages, error, onQuote, onBranch, sessio
     if (!userScrolledRef.current) scrollToBottom();
   }, [messages, sessionId]);
 
+  // 过滤系统记录 + 回合分组渲染（组内保持 msg-{index} 锚点语义 = 过滤后数组顺序）
+  const filtered = messages.filter((m, i) => {
+    if (m.isSystem) return false; // 系统记录 user（命令/回填）
+    const prev = messages[i - 1];
+    if (m.role === 'assistant' && prev?.isSystem && SYSTEM_CONFIRM.test(String(m.text || '').trim())) return false; // 机械确认
+    return true;
+  });
+  const groups = buildGroups(filtered);
+
+  let msgIndex = -1; // 全局计数：锚点 index = 过滤后数组位置（搜索/📑 导航依赖）
+
   return (
     <div className="message-list" ref={listRef}>
       {messages.length === 0 && (
@@ -70,22 +163,48 @@ export default function MessageList({ messages, error, onQuote, onBranch, sessio
         </div>
       )}
 
-      {/* 系统记录（媒体生成记忆）与其确认回复都不渲染：isSystem user + 紧跟其后的短确认 assistant */}
-      {messages
-        .filter((m, i) => {
-          if (m.isSystem) return false; // 系统记录 user（命令/回填）
-          const prev = messages[i - 1];
-          if (m.role === 'assistant' && prev?.isSystem && SYSTEM_CONFIRM.test(String(m.text || '').trim())) return false; // 机械确认
-          return true;
-        })
-        .map((m, index) => (
-          // 所有消息挂 msg-{index} 锚点（搜索跳转/📑 目录定位）
-          <div key={m.id ?? m.ts} id={`msg-${index}`}>
-            <MessageBubble message={m} onQuote={onQuote} onBranch={onBranch} />
+      {groups.map((group, gi) => {
+        if (group.length === 1) {
+          const m = group[0];
+          msgIndex += 1;
+          return (
+            <div key={m.id ?? m.ts} id={`msg-${msgIndex}`}>
+              <MessageBubble message={m} onQuote={onQuote} onBranch={onBranch} />
+            </div>
+          );
+        }
+        // 多段 assistant 组：整组一个气泡容器；中间段 interim（灰字过程）+ 最后一条 flat 完整（最终答案）；
+        // 组级按钮挂底部（复制=整组拼接 / 引用=最终答案 / 分支=从最终答案）
+        return (
+          <div key={`grp-${gi}`} className="msg-group">
+            {group.map((m, ii) => {
+              msgIndex += 1;
+              const interim = ii < group.length - 1;
+              return (
+                <div key={m.id ?? m.ts} id={`msg-${msgIndex}`} className={interim ? 'msg-group-item' : 'msg-group-final'}>
+                  <MessageBubble message={m} onQuote={onQuote} onBranch={onBranch} interim={interim} flat />
+                </div>
+              );
+            })}
+            <GroupActions group={group} onQuote={onQuote} onBranch={onBranch} />
           </div>
-        ))}
+        );
+      })}
 
       {error && <div className="msg-error">{error}</div>}
+
+      {/* 回合级"生成中"指示（8-30）：段间不静默——已有内容在滚、回合未结束时显示，
+          解决"第一条后、最终答案前"的静默空洞（初始阶段由占位气泡"思考中"覆盖，不重复） */}
+      {thinking && filtered.some((m) => m.role === 'assistant' && m.text && !m.isSystem) && (
+        <div className="msg-stream-status">
+          ⏳ 正在生成
+          <span className="msg-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        </div>
+      )}
 
       <div ref={endRef} />
     </div>

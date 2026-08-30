@@ -158,6 +158,11 @@ export function messageToEvents(j, acc) {
     if (cur.thinking) ev.thinking = cur.thinking;
     if (cur.usage) ev.usage = cur.usage;
     if (j.effort) ev.effort = j.effort;
+    // 8-30 方案A：回合结束权威信号——message.stop_reason 为终止值（end_turn/stop_sequence/stop）
+    // 时标记 turnEnd。前端据此立即熄灭"生成中"胶囊（替代"无活动超时"启发式：claude 思考再久也不闪）
+    if (m.stop_reason === 'end_turn' || m.stop_reason === 'stop_sequence' || m.stop_reason === 'stop') {
+      ev.turnEnd = true;
+    }
     out.push(ev);
   } else {
     acc.set(mid, cur);

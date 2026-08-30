@@ -390,6 +390,93 @@ body {
   border-bottom-left-radius: 4px;
 }
 
+/* 回合分组（8-30 改版）：多段 assistant 回复合成一个气泡容器（整段一个气泡），
+   中间过程段灰字弱化（thinking 保留小号折叠），最后一条 flat 完整显示（最终答案），
+   组级按钮挂底部。数据层不动，纯渲染层展示策略。 */
+.msg-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: min(76%, 720px);
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  background: var(--dsw-specific-assistant-bg, var(--panel));
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+/* 组内消息（过程段/最终段）：flat，不套独立气泡背景，继承组容器外观 */
+.msg-group .msg-body {
+  background: transparent !important;
+  border-color: transparent !important;
+  padding: 0;
+}
+/* 过程段灰字 + 平滑降级动画（新条到达、前条灰字化时过渡，避免跳变） */
+.msg-interim .msg-body {
+  font-size: 12.5px;
+  opacity: 0.62;
+  transition: opacity 0.45s ease, font-size 0.3s ease;
+}
+.msg-interim .md p {
+  margin: 0;
+  line-height: 1.55;
+}
+/* 过程段的思考折叠：小号灰字可展开（数据保留，可看当时推理） */
+.msg-interim .msg-thinking { margin: 2px 0 0; }
+.msg-interim .msg-thinking-summary { font-size: 11px; opacity: 0.65; }
+.msg-interim .msg-thinking-body { font-size: 11.5px; max-height: 120px; }
+/* 组级按钮：挂在气泡底部，顶部分隔线 */
+.msg-group-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+/* 占位空气泡的"思考中…"文字（8-30）：呼吸动画，配合闪烁光标告知 AI 在干活 */
+.msg-thinking-text {
+  color: var(--muted-2);
+  font-size: 12px;
+  margin-left: 4px;
+  animation: msg-thinking-pulse 1.4s ease-in-out infinite;
+}
+@keyframes msg-thinking-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+/* 回合级"⏳ 正在生成"胶囊（8-30 显眼版）：半透明圆角徽章 + 三点依次跳动，段间不静默 */
+.msg-stream-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--dsw-specific-assistant-bg, var(--panel));
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+.msg-stream-status .msg-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+.msg-stream-status .msg-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: msg-dot-bounce 1s ease-in-out infinite;
+}
+.msg-stream-status .msg-dots span:nth-child(2) { animation-delay: 0.2s; }
+.msg-stream-status .msg-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes msg-dot-bounce {
+  0%, 100% { opacity: 0.25; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-2px); }
+}
+
 .msg-text {
   white-space: pre-wrap;
   word-break: break-word;
@@ -1329,19 +1416,6 @@ body {
 .media-nav-btn:disabled { opacity: 0.4; cursor: not-allowed; background: var(--panel); color: var(--muted); border-color: var(--border-strong); }
 
 /* ============ 终端页（c2web 模式：xterm 镜像常驻 claude TUI） ============ */
-.msg-replay-skip {
-  display: inline-block;
-  margin-top: 6px;
-  padding: 3px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--accent);
-  background: var(--accent-dim);
-  color: var(--accent);
-  font-size: 12px;
-  cursor: pointer;
-}
-.msg-replay-skip:hover { background: var(--accent); color: #0b0f17; }
-
 .terminal-box {
   position: relative;
   width: 100%;

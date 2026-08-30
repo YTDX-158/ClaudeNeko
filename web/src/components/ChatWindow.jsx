@@ -350,6 +350,7 @@ export default function ChatWindow({ session, model, chat, onBranch, onEffortCha
         onQuote={handleQuote}
         onBranch={onBranch}
         sessionId={session?.id}
+        thinking={chat.thinking}
       />
 
       {/* 📑 用户消息导航抽屉：列出所有用户提问，点击跳转 */}

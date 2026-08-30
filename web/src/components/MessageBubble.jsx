@@ -22,24 +22,25 @@ function useReplay(text, active) {
     if (textChanged || activeChanged) setShown(active ? 0 : text.length);
   }, [text, active]);
 
-  // 回放推进：active 且未播完 → 定时器逐块累加
+  // 回放推进：active 且未播完 → 定时器逐块累加。
+  // 8-30 定稿：100字/秒基准（有打字感），>800字加速 300字/秒（长答案不煎熬）；
+  // 渲染封顶 MAX_TICKS（step=len/MAX_TICKS）——纯逐字会让长文本重渲染 markdown 卡顿。
+  // 已去掉「跳过」功能（用户决定）：速度有界，短答案 1s 内、长答案 3字/10ms 加速播完
   useEffect(() => {
     if (!active || done) return;
     const len = text.length;
     if (!len) return;
-    // 速度：>1500 字 → 每 16ms 30 字符；否则每 16ms 12 字符；总时长上限 ~6s
-    const chunk = len > 1500 ? 30 : 12;
-    const maxTicks = 375; // 375 * 16ms ≈ 6s
-    const ticksNeeded = Math.ceil(len / chunk);
-    const step = Math.max(1, Math.ceil(ticksNeeded / maxTicks)); // 超长时放大步长保 6s 上限
-    const t = setTimeout(() => setShown((s) => Math.min(len, s + chunk * step)), 16);
+    const MAX_TICKS = 200;
+    const rate = len > 800 ? 300 : 100; // 字/秒
+    const step = Math.max(1, Math.ceil(len / MAX_TICKS));
+    const interval = Math.max(4, Math.round((step * 1000) / rate)); // 每 tick 间隔，保持恒定速率
+    const t = setTimeout(() => setShown((s) => Math.min(len, s + step)), interval);
     return () => clearTimeout(t);
   }, [active, shown, text]);
 
   return {
     displayed: text.slice(0, shown),
     done,
-    skip: () => setShown(text.length),
   };
 }
 
@@ -146,14 +147,15 @@ function renderUserText(text) {
   return html;
 }
 
-function MessageBubble({ message, onQuote, onBranch }) {
+function MessageBubble({ message, onQuote, onBranch, interim = false, flat = false }) {
   const isUser = message.role === 'user';
   const text = message.text ?? '';
   const [copied, setCopied] = useState(false);
   const [branched, setBranched] = useState(false);
-  // 回放打字机：assistant 且带 replay 标记（终端完整答案到达）→ 逐字/逐块显示
-  const replaying = !isUser && message.replay && !message.streaming;
-  const { displayed, done, skip } = useReplay(text, replaying);
+  // 回放打字机：assistant 且带 replay 标记（终端完整答案到达）→ 逐字/逐块显示。
+  // interim（回合过程段）不参与回放——直接全文灰字，避免"正播放一半被顶成灰字"的乱象
+  const replaying = !isUser && message.replay && !message.streaming && !interim;
+  const { displayed, done } = useReplay(text, replaying);
   const displayText = replaying ? displayed : text;
   const isReplayActive = replaying && !done;
 
@@ -185,8 +187,10 @@ function MessageBubble({ message, onQuote, onBranch }) {
     }
   };
 
-  // 生成中不显示操作按钮（等流式结束）；分支按钮只出现在 AI 回复上
-  const actions = message.streaming ? null : (
+  // 生成中不显示操作按钮（等流式结束）；分支按钮只出现在 AI 回复上。
+  // interim（回合过程段）/ flat（组气泡内消息）：也隐藏单条按钮——操作统一由组级按钮（GroupActions）承担，
+  // 避免"组内每条都有按钮 + 组底有按钮"的重复
+  const actions = interim || flat || message.streaming ? null : (
     <div className="msg-actions">
       <button className={`msg-action${copied ? ' copied' : ''}`} onClick={handleCopy}>
         {copied ? '已复制' : '复制'}
@@ -231,11 +235,13 @@ function MessageBubble({ message, onQuote, onBranch }) {
     );
   }
 
-  // assistant：完整 Markdown。代码块复用 .msg-code 样式，链接新窗口打开（urlTransform 默认已过滤危险协议）
+  // assistant：完整 Markdown。代码块复用 .msg-code 样式，链接新窗口打开（urlTransform 默认已过滤危险协议）。
+  // interim（回合中间过程段）：灰字弱化、不显示用量，但思考折叠保留（可展开看当时推理）——数据仍在消息里
+  // flat（组气泡内的消息）：取消自己的气泡背景，继承 .msg-group 容器外观（避免气泡套气泡）
   return (
-    <div className="msg msg-assistant">
+    <div className={`msg msg-assistant${interim ? ' msg-interim' : ''}${flat ? ' msg-flat' : ''}`}>
       <div className="msg-body">
-        {/* DeepSeek 思考过程：默认折叠，点开看 AI 推理；纯文本 <pre> 不解析 markdown 防 XSS */}
+        {/* DeepSeek 思考过程：默认折叠，点开看 AI 推理；纯文本 <pre> 不解析 markdown 防 XSS。过程段也保留（小号折叠可展开） */}
         {message.thinking && (
           <details className="msg-thinking">
             <summary className="msg-thinking-summary">🧠 思考过程</summary>
@@ -267,12 +273,7 @@ function MessageBubble({ message, onQuote, onBranch }) {
             {displayText}
           </ReactMarkdown>
         </div>
-        {/* 回放打字机：未播完显示跳过按钮 + 光标 */}
-        {isReplayActive && (
-          <button className="msg-replay-skip" onClick={skip} title="立即显示完整内容">
-            ⏭ 跳过
-          </button>
-        )}
+        {/* 回放打字机：8-30 起不提供跳过（速度有界，短答案 1s 内 / 长答案加速播完） */}
         {message.attachments?.length > 0 && (
           <div className="msg-attach-row">
             {message.attachments.map((a) => (
@@ -280,8 +281,10 @@ function MessageBubble({ message, onQuote, onBranch }) {
             ))}
           </div>
         )}
+        {/* 占位空气泡（streaming 且无文本）：「思考中…」告知 AI 在干活（8-30 加）；生图/生视频占位文本非空不受影响 */}
+        {message.streaming && !message.text && <span className="msg-thinking-text">思考中</span>}
         {(message.streaming || isReplayActive) && <span className="cursor" aria-hidden="true" />}
-        {!message.streaming && message.usage && (
+        {!message.streaming && message.usage && !interim && (
           <div
             className="msg-usage"
             title={`本轮用量：输入 ${message.usage.input_tokens ?? 0} · 输出 ${message.usage.output_tokens ?? 0} · 思考 ${message.usage.output_tokens_details?.thinking_tokens ?? 0} · 缓存读 ${message.usage.cache_read_input_tokens ?? 0} / 写 ${message.usage.cache_creation_input_tokens ?? 0}（输入含记忆/历史上下文）`}
