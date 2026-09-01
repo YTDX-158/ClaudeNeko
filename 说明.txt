@@ -1,0 +1,6 @@
+ClaudeNeko — AI 聊天前端（自建，活跃）
+
+作用：web 界面 + 常驻 claude 会话 + 终端视图 + 生图生视频技能 + 远程手机访问
+用法：启动ClaudeNeko.bat 启动；看 README.md
+依赖：Node.js；claude CLI；火山引擎API(生图视频)
+最近更新：2026-09-01（当前 v2.3.1；历史备份在 004/ClaudeNeko历史备份）

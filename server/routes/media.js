@@ -122,6 +122,26 @@ export function mediaHandler(ctx) {
       return sendJson(res, 200, media.getConfig());
     }
 
+    // 台账（8-31）：GET 列表 / DELETE 删（ids 选中 or all 清空，delFile 连文件）/ PUT 开关
+    if (method === 'GET' && pathname === '/api/media/log') {
+      if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
+      return sendJson(res, 200, { enabled: ctx.mediaConfig?.getLogEnabled?.() ?? true, records: media.listLog?.() || [], softMax: 5000 });
+    }
+    if (method === 'DELETE' && pathname === '/api/media/log') {
+      if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
+      const body = await readBody(req);
+      const n = media.deleteLog?.({ ids: body?.ids, delFile: body?.delFile, all: body?.all });
+      return sendJson(res, 200, { ok: true, removed: n || 0 });
+    }
+    if (method === 'PUT' && pathname === '/api/media/log-enabled') {
+      if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
+      const body = await readBody(req);
+      if (!ctx.mediaConfig?.setLogEnabled) return sendJson(res, 400, { error: 'UNSUPPORTED', message: '当前版本不支持台账开关' });
+      const on = !!body?.enabled;
+      await ctx.mediaConfig.setLogEnabled(on);
+      return sendJson(res, 200, { ok: true, enabled: on });
+    }
+
     if (method === 'POST' && pathname === '/api/media/generate') {
       const body = await readBody(req);
       if (body && body.__tooLarge) return sendJson(res, 413, { error: '内容超过 1MB 上限，请缩短后重试' });

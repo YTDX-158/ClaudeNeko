@@ -1854,6 +1854,69 @@ body {
   margin-right: auto;
 }
 
+/* ============ 📒 台账（8-31） ============ */
+.media-log-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.media-log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.media-log-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.media-log-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.media-log-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.media-log-item:hover { background: rgba(128,128,128,.08); }
+.media-log-item.selected { background: rgba(128,128,128,.12); border-color: var(--accent); }
+.media-log-item-info { flex: 1; min-width: 0; }
+.media-log-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.media-log-type { font-size: 14px; }
+.media-log-model { font-size: 12px; color: var(--accent); font-family: monospace; }
+.media-log-result { font-size: 11px; padding: 1px 6px; border-radius: 8px; }
+.media-log-result.success { background: rgba(46,160,67,.18); color: #2ea043; }
+.media-log-result.error { background: rgba(248,81,73,.18); color: #f85149; }
+.media-log-time { font-size: 11px; color: var(--muted); margin-left: auto; }
+.media-log-prompt {
+  font-size: 13px;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-all;
+}
+.media-log-params { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
 /* ============ 📑 用户消息导航抽屉 ============ */
 .msg-nav-scrim {
   position: fixed;

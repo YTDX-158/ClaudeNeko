@@ -72,8 +72,7 @@ const FACTORY_DEFAULTS = {
   'dsw-dream-skin:skin': 'mist',
   'dsw-dream-skin:accent': '#4f83f2',
   'dsw-dream-skin:text-color': '#000000',
-  'dsw-dream-skin:wallpaper-kind': 'url',
-  'dsw-dream-skin:wallpaper-url': 'https://picsum.photos/1920/1080',
+  'dsw-dream-skin:wallpaper-kind': 'fluid', // 海洋流体（2026-08-31 改：外链图源不可靠，零外网依赖）
   'dsw-dream-skin:sidebar-opacity': '0.5',
   'dsw-dream-skin:composer-opacity': '0.35',
   'dsw-dream-skin:chat-opacity': '0',
@@ -660,7 +659,9 @@ export const skinEngine = {
     let hasSkinPref = false;
     try {
       for (let i = 0; i < localStorage.length; i++) {
-        if ((localStorage.key(i) || '').startsWith('dsw-dream-skin:')) { hasSkinPref = true; break; }
+        const k = localStorage.key(i) || '';
+        // 与 resetAll 同判据：猫咪/claude娘功能键不算外观设置（否则仅设过功能键时会误判跳过出厂默认注入）
+        if (k.startsWith('dsw-dream-skin:') && !FUNCTION_KEYS.has(k)) { hasSkinPref = true; break; }
       }
     } catch {
       hasSkinPref = true;

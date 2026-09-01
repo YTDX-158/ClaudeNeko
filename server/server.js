@@ -37,6 +37,7 @@ const media = createMediaService({
   ...config.media,
   dataDir: config.dataDir,
   mediaConfig: mediaConfigService,
+  logEnabled: () => mediaConfigService.getLogEnabled(), // 台账记录开关（默认开，可关）
   // 视频任务完成 → 按 sid 回填 claude 会话（记忆完整；异步回调执行时 ptyHost 已初始化）
   onTaskSettled: ({ sid, status, error, model }) => {
     if (!sid || !ptyHost) return;

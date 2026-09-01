@@ -92,5 +92,18 @@ export function createMediaConfig({ dataDir }) {
     return !!(d.vision && d.vision.apiKey);
   }
 
-  return { getConfig, setConfig, getVision, setVision, hasAnyKey };
+  // ---- 台账记录开关（8-31）：默认开，可关。存 mediaConfig.json 顶层（不经过 normalize，单独读写）----
+  function getLogEnabled() {
+    const d = readJson(file, EMPTY);
+    return d.logEnabled !== false; // 默认 true（仅显式 false 才关）
+  }
+  function setLogEnabled(on) {
+    return withFileLock(`${file}.lock`, () => {
+      const d = readJson(file, EMPTY);
+      d.logEnabled = !!on;
+      save(d);
+    });
+  }
+
+  return { getConfig, setConfig, getVision, setVision, hasAnyKey, getLogEnabled, setLogEnabled };
 }

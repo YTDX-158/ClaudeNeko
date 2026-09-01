@@ -11,8 +11,9 @@
 //   - 任务落盘 gen_tasks.json（原子写），启动时认领未完成任务
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { saveMedia, getMedia, getMediaPath } from './mediaStore.js';
+import { saveMedia, getMedia, getMediaPath, deleteMedia } from './mediaStore.js';
 
 const ARK_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
 const MAX_ACTIVE = 1; // 并发：同时只允许一个生成任务，防超并发烧额度
@@ -72,7 +73,7 @@ function calcImageSize(ratio, resolution) {
 }
 
 export function createMediaService(cfg) {
-  const { imageModels, videoModels, ratios, imageResolutions, transcribeEnabled, mediaConfig, onTaskSettled } = cfg;
+  const { imageModels, videoModels, ratios, imageResolutions, transcribeEnabled, mediaConfig, onTaskSettled, logEnabled } = cfg;
   const tasks = new Map(); // taskId -> {status, mediaId?, error?, ts, resolution, failCount, claimedBy?, claimedAt?, lastWatchAt?}
   let active = 0;
   const dataDir = cfg.dataDir || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data');
@@ -121,6 +122,48 @@ export function createMediaService(cfg) {
       fs.renameSync(tmp, tasksFile);
     } catch (e) {
       console.error('[mediaGen] 任务落盘失败:', e.message); // 写盘失败不阻塞主流程
+    }
+  }
+
+  // ---- 台账（8-31）：生成记录，只追加，原子写 + 读容错；受 logEnabled 开关控制 ----
+  const LOG_FILE = path.join(dataDir, 'media_gen_log.json');
+  function readLog() {
+    try {
+      return JSON.parse(fs.readFileSync(LOG_FILE, 'utf8'));
+    } catch {
+      // 损坏/不存在 → 备份损坏文件后重建（账本不能因损坏崩读取）
+      try { if (fs.existsSync(LOG_FILE)) fs.renameSync(LOG_FILE, `${LOG_FILE}.corrupt.${Date.now()}`); } catch { /* 备份失败无所谓 */ }
+      return { v: 1, records: [] };
+    }
+  }
+  function appendLog(entry) {
+    try { if (typeof logEnabled === 'function' && !logEnabled()) return; } catch { /* 开关异常按记 */ }
+    try {
+      const data = readLog();
+      data.records.push({
+        id: entry.id || crypto.randomUUID(),
+        time: entry.time || new Date().toISOString(),
+        type: entry.type || 'unknown',
+        model: entry.model || '',
+        prompt: entry.prompt || '',
+        resolution: entry.resolution || '',
+        duration: entry.duration ?? null,
+        ratio: entry.ratio || '',
+        taskId: entry.taskId || '',
+        result: entry.result || 'success',
+        error: entry.error || '',
+        mediaId: entry.mediaId || '',
+        fileName: entry.fileName || '',
+        sizeMb: entry.sizeMb ?? null,
+        usage: entry.usage ?? null,
+        cost: entry.cost ?? null,
+      });
+      fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+      const tmp = `${LOG_FILE}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+      fs.renameSync(tmp, LOG_FILE); // 原子写（读→追加→原子写回，防并发覆盖）
+    } catch (e) {
+      console.error('[mediaGen] 台账写入失败:', e.message);
     }
   }
 
@@ -200,6 +243,14 @@ export function createMediaService(cfg) {
     } else {
       throw new ApiError('NO_RESULT', '生图返回格式异常');
     }
+    const rec = getMedia(mediaId);
+    appendLog({
+      type: 'image', model: ep.model, prompt, ratio,
+      resolution: size, duration: null, taskId: '',
+      result: 'success', mediaId,
+      fileName: rec?.fileName || '', sizeMb: rec ? Math.round((rec.size || 0) / 1048576 * 100) / 100 : null,
+      usage: j?.usage || null, cost: null,
+    });
     return { mediaId };
     } finally {
       active = Math.max(0, active - 1);
@@ -341,6 +392,12 @@ export function createMediaService(cfg) {
         t.ts = Date.now();
         releaseLock(t);
         persistTasks();
+        appendLog({
+          type: 'video', model: t.model, prompt: t.prompt,
+          resolution: t.resolution, duration: t.duration ?? null, ratio: t.ratio,
+          taskId, result: 'error', error: t.error, mediaId: '',
+          fileName: '', sizeMb: null, usage: null, cost: null,
+        });
         return t;
       }
       try {
@@ -356,6 +413,12 @@ export function createMediaService(cfg) {
             t.ts = Date.now();
             releaseLock(t);
             persistTasks();
+            appendLog({
+              type: 'video', model: t.model, prompt: t.prompt,
+              resolution: t.resolution, duration: t.duration ?? null, ratio: t.ratio,
+              taskId, result: 'error', error: t.error, mediaId: '',
+              fileName: '', sizeMb: null, usage: j?.usage || null, cost: null,
+            });
             return t;
           }
           let mediaId = null;
@@ -368,6 +431,12 @@ export function createMediaService(cfg) {
             t.ts = Date.now();
             releaseLock(t);
             persistTasks();
+            appendLog({
+              type: 'video', model: t.model, prompt: t.prompt,
+              resolution: t.resolution, duration: t.duration ?? null, ratio: t.ratio,
+              taskId, result: 'error', error: t.error, mediaId: '',
+              fileName: '', sizeMb: null, usage: null, cost: null,
+            });
             return t;
           }
           t.status = 'done';
@@ -376,6 +445,16 @@ export function createMediaService(cfg) {
           t.failCount = 0;
           releaseLock(t);
           persistTasks();
+          {
+            const rec = getMedia(mediaId);
+            appendLog({
+              type: 'video', model: t.model, prompt: t.prompt,
+              resolution: t.resolution, duration: t.duration ?? null, ratio: t.ratio,
+              taskId, result: 'success', mediaId,
+              fileName: rec?.fileName || '', sizeMb: rec ? Math.round((rec.size || 0) / 1048576 * 100) / 100 : null,
+              usage: j?.usage || null, cost: null,
+            });
+          }
           onTaskSettled?.({ sid: t.sid, taskId, status: 'done', mediaId, model: t.model });
         } else if (st === 'failed' || st === 'cancelled') {
           t.status = 'error';
@@ -383,6 +462,12 @@ export function createMediaService(cfg) {
           t.ts = Date.now();
           releaseLock(t);
           persistTasks();
+          appendLog({
+            type: 'video', model: t.model, prompt: t.prompt,
+            resolution: t.resolution, duration: t.duration ?? null, ratio: t.ratio,
+            taskId, result: 'error', error: t.error, mediaId: '',
+            fileName: '', sizeMb: null, usage: j?.usage || null, cost: null,
+          });
           onTaskSettled?.({ sid: t.sid, taskId, status: 'error', error: t.error, model: t.model });
         } else {
           t.failCount = 0; // 火山正常 running → 清零连续失败计数
@@ -395,6 +480,12 @@ export function createMediaService(cfg) {
           t.ts = Date.now();
           releaseLock(t);
           persistTasks();
+          appendLog({
+            type: 'video', model: t.model, prompt: t.prompt,
+            resolution: t.resolution, duration: t.duration ?? null, ratio: t.ratio,
+            taskId, result: 'error', error: t.error, mediaId: '',
+            fileName: '', sizeMb: null, usage: null, cost: null,
+          });
           onTaskSettled?.({ sid: t.sid, taskId, status: 'error', error: t.error, model: t.model });
           return t;
         }
@@ -475,5 +566,29 @@ export function createMediaService(cfg) {
   /** 是否有生成任务在跑（切换模型前检查，有则拒绝——避免 kill 打断生成） */
   function hasActive() { return active > 0; }
 
-  return { generateImage, generateVideo, queryTask, getConfig, cancelAll, hasActive };
+  /** 台账读取（供 API/前端展示） */
+  function listLog() {
+    try { return readLog().records || []; } catch { return []; }
+  }
+  /** 台账删除：ids 删选中 / all 清空；delFile=true 时同步删对应媒体文件（文件已不存在则容错跳过） */
+  function deleteLog({ ids, delFile, all } = {}) {
+    try {
+      const d = readLog();
+      if (all) {
+        if (delFile) { for (const r of d.records) { if (r.mediaId) { try { deleteMedia(r.mediaId); } catch { /* 文件已不存在 */ } } } }
+        d.records = [];
+      } else if (Array.isArray(ids) && ids.length) {
+        const idSet = new Set(ids);
+        if (delFile) { for (const r of d.records) { if (idSet.has(r.id) && r.mediaId) { try { deleteMedia(r.mediaId); } catch { /* 文件已不存在 */ } } } }
+        d.records = d.records.filter((r) => !idSet.has(r.id));
+      } else return 0;
+      fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+      const tmp = `${LOG_FILE}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(d, null, 2));
+      fs.renameSync(tmp, LOG_FILE);
+      return 1;
+    } catch (e) { console.error('[mediaGen] 台账删除失败:', e.message); return 0; }
+  }
+
+  return { generateImage, generateVideo, queryTask, getConfig, cancelAll, hasActive, listLog, deleteLog };
 }

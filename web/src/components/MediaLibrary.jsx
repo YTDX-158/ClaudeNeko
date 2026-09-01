@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { uploadToMedia } from '../utils/upload.js';
 import { api } from '../api.js';
 import Lightbox from './Lightbox.jsx';
+import LogPanel from './LogPanel.jsx';
 
 const KINDS = [
   { id: 'all', label: '全部' },
@@ -9,6 +10,7 @@ const KINDS = [
   { id: 'video', label: '视频' },
   { id: 'document', label: '文档' },
   { id: 'audio', label: '音频' },
+  { id: 'log', label: '台账' },
 ];
 
 /**
@@ -145,6 +147,10 @@ export default function MediaLibrary({ open, onClose }) {
           ))}
         </div>
 
+        {kind === 'log' ? (
+          <LogPanel />
+        ) : (
+        <>
         <div className="media-grid">
           {loading && <div className="skin-hint">加载中…</div>}
           {!loading && filtered.length === 0 && <div className="skin-hint">暂无{kind === 'all' ? '' : `「${kind}」`}文件</div>}
@@ -205,6 +211,8 @@ export default function MediaLibrary({ open, onClose }) {
               删除
             </button>
           </div>
+        )}
+        </>
         )}
         {view && <Lightbox media={view} onClose={() => setView(null)} />}
       </div>
