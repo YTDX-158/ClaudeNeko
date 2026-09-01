@@ -1,5 +1,17 @@
 # 更新日志
 
+## 9-01 增量（未升版·四层交付体系 + 远程修复）
+
+### 🐛 远程修复：绿色包内置 cloudflared
+- **根因**：cloudflared 只有本机装过（PATH），绿色包/安装器没带 → 他机远程报"未获取到公网地址，可能 cloudflared 未装"
+- **修复**：`bin/cloudflared.exe` 内置（54M 单文件无依赖）+ `tunnel.js` 先内置后 PATH + green-pack 打包带 bin
+- **实测**：内置 cloudflared 拿到 trycloudflare 公网 URL（远程可用）
+
+### 📦 四层交付体系
+- 源码包 zip / 绿色包 zip / SFX 自解压 exe / **中文安装器 exe**（Inno Setup 6·ChineseSimplified.isl 全中文向导·桌面快捷方式·端口检测提示·免管理员）
+- 自动归档：打包 → 桌面待处理（发人）+ 项目 `交付物\`（D盘家底）双份
+- 历史版本源码包 → `004_归档\ClaudeNeko历史备份\`（回滚用）
+
 ## v2.3.1（2026-08-31）—— 外观默认修复 + 海洋流体背景 🎨
 
 ### 🐛 修复：出厂外观默认从未生效（关键 bug）

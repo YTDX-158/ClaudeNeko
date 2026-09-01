@@ -11,3 +11,5 @@ server/media/
 data_backup_*/
 bin/
 交付物/
+dist_installer/
+__pycache__/
