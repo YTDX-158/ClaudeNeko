@@ -86,10 +86,17 @@ def run_7z(args):
 
 
 def make_7z(green_dir, work):
-    """压成 7z（mx=5 平衡：实测 21M zip → 13M 7z，够小够快）"""
+    """压成 7z（mx=5 平衡：实测 21M zip → 13M 7z，够小够快）。
+    ⚠ cwd 切到父目录压 basename —— 7z 对相对路径会保留父前缀（实测坑：手工那次
+    压 _sfx_work/ClaudeNeko，顶层变成 _sfx_work\\ClaudeNeko，SFX RunProgram 找不到），
+    必须保证 7z 顶层永远是 ClaudeNeko/。"""
     arch = os.path.join(work, "claudeneko.7z")
     print("① 压 7z（-mx=5）…")
-    r = run_7z(["a", "-t7z", "-mx=5", arch, green_dir])
+    r = subprocess.run(
+        [SEVENZ, "a", "-t7z", "-mx=5", arch, os.path.basename(green_dir)],
+        capture_output=True, text=True, errors="replace",
+        cwd=os.path.dirname(green_dir),
+    )
     if r.returncode != 0:
         raise RuntimeError("7z 压缩失败:\n" + (r.stderr or r.stdout)[-400:])
     return arch
