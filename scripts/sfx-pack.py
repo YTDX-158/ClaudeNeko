@@ -44,6 +44,7 @@ for _s in (sys.stdout, sys.stderr):
 SEVENZ = r"C:\Program Files\7-Zip\7z.exe"
 SFX_STUB = r"C:\Program Files\7-Zip\7z.sfx"
 DESKTOP_TMP = os.path.expanduser("~/Desktop/待处理")
+DELIVERY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "交付物")
 
 
 def read_version(green_dir):
@@ -144,6 +145,9 @@ def main():
             dest = os.path.join(target, os.path.basename(exe))
             shutil.copy2(exe, dest)
             print(f"   已交付: {dest}")
+            os.makedirs(DELIVERY_DIR, exist_ok=True)
+            shutil.copy2(exe, os.path.join(DELIVERY_DIR, os.path.basename(exe)))
+            print(f"   归档: {os.path.join(DELIVERY_DIR, os.path.basename(exe))}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

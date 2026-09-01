@@ -33,6 +33,7 @@ except Exception:
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(tempfile.gettempdir(), "claudeneko_green_cache")
 DESKTOP_TMP = os.path.expanduser("~/Desktop/待处理")
+DELIVERY_DIR = os.path.join(PROJECT, "交付物")  # D盘家底：项目交付物目录（打包自动归档）
 # 组装时 server/ 下要剔除的目录与文件（运行时数据 / 媒体 / 日志）
 SERVER_EXCLUDE_DIRS = ("data", "media")
 EXCLUDE_EXT = (".log",)
@@ -156,10 +157,13 @@ def make_zip(dst, version):
 
 
 def deliver(zip_path):
-    """⑥ 放到桌面待处理（不存在则留在构建目录）"""
+    """⑥ 放桌面待处理（发人用）+ 项目交付物目录（D盘家底自动归档）"""
     target = DESKTOP_TMP if os.path.isdir(DESKTOP_TMP) else os.path.dirname(zip_path)
     dest = os.path.join(target, os.path.basename(zip_path))
     shutil.copy2(zip_path, dest)
+    os.makedirs(DELIVERY_DIR, exist_ok=True)
+    shutil.copy2(zip_path, os.path.join(DELIVERY_DIR, os.path.basename(zip_path)))
+    print(f"   归档: {os.path.join(DELIVERY_DIR, os.path.basename(zip_path))}")
     return dest
 
 
