@@ -50,13 +50,17 @@ function ChatConfig({ onModelChanged }) {
   };
   const provModels = PROVIDERS.find((p) => p.id === prov)?.models || []; // 当前供应商预设模型档（下拉用）
 
-  const doSave = async () => {
+  // 存为档案并应用（原「保存并应用」升级：存档案 + 立即生效 + 重启 pty，一个请求原子完成）
+  const doSaveApply = async () => {
     if (!baseUrl || !model || !key) { setMsg({ type: 'err', text: '需要 baseUrl + 模型 + key' }); return; }
+    const name = prompt('档案名称（如 deepseek-flash）:', model.replace(/[^a-zA-Z0-9-]/g, '-'));
+    if (!name) return;
+    if (profiles?.profiles?.includes(name) && !confirm(`档案「${name}」已存在，覆盖？`)) return;
     setBusy(true); setMsg(null);
     try {
-      await api.setConfig({ baseUrl, model, authToken: key });
-      onModelChanged?.(); // 保存后刷新右上角全局模型显示
-      setMsg({ type: 'ok', text: '已保存（全局默认），新会话/重启后生效' });
+      const r = await api.saveApplyProfile({ name, provider: prov, baseUrl, model, authToken: key });
+      onModelChanged?.(); // 生效了 → 刷新右上角全局模型显示
+      setMsg({ type: 'ok', text: `已保存「${r.applied}」并应用（全局默认）` });
       load();
     } catch (e) { setMsg({ type: 'err', text: e.message || '保存失败' }); }
     setBusy(false);
@@ -72,14 +76,32 @@ function ChatConfig({ onModelChanged }) {
     setBusy(false);
   };
 
+  // 存为档案（只存不应用，以后可到档案列表点「应用」切换）
   const doSaveProfile = async () => {
     if (!baseUrl || !model || !key) { setMsg({ type: 'err', text: '需要 baseUrl + 模型 + key' }); return; }
     const name = prompt('档案名称（如 deepseek-flash）:', model.replace(/[^a-zA-Z0-9-]/g, '-'));
     if (!name) return;
+    if (profiles?.profiles?.includes(name) && !confirm(`档案「${name}」已存在，覆盖？`)) return;
     setBusy(true);
     try {
       await api.saveProfile({ name, provider: prov, baseUrl, model, authToken: key });
-      setMsg({ type: 'ok', text: `档案「${name}」已保存` });
+      setMsg({ type: 'ok', text: `档案「${name}」已保存（未应用）` });
+      load();
+    } catch (e) { setMsg({ type: 'err', text: e.message || '保存失败' }); }
+    setBusy(false);
+  };
+
+  // 当前生效配置存为档案（卡片区：把正在用的这套一键存档，不应用不重启）
+  const doSaveCurrent = async () => {
+    if (!cur?.configured) { setMsg({ type: 'err', text: '当前未配置对话模型，无法存为档案' }); return; }
+    const defaultName = (cur?.model || '').replace(/[^a-zA-Z0-9-]/g, '-') || 'current';
+    const name = prompt('档案名称:', defaultName);
+    if (!name) return;
+    if (profiles?.profiles?.includes(name) && !confirm(`档案「${name}」已存在，覆盖？`)) return;
+    setBusy(true); setMsg(null);
+    try {
+      await api.saveCurrentProfile({ name });
+      setMsg({ type: 'ok', text: `当前生效配置已存为档案「${name}」` });
       load();
     } catch (e) { setMsg({ type: 'err', text: e.message || '保存失败' }); }
     setBusy(false);
@@ -113,6 +135,9 @@ function ChatConfig({ onModelChanged }) {
             供应商 {cur.provider || '—'} · 模型 <b>{cur.model || '—'}</b> · key {cur.keyMask || '—'} ·{' '}
             {cur.configured ? <span style={{ color: '#2ecc71' }}>✅ 已配置</span> : <span style={{ color: '#e74c3c' }}>❌ 未配置</span>}
             <div style={{ marginTop: 4 }}>baseUrl: {cur.baseUrl || '—'}</div>
+            <div style={{ marginTop: 8 }}>
+              <Btn onClick={doSaveCurrent} disabled={busy} title="把当前正在生效的配置一键存成档案（不用重填）">📚 将当前生效配置存为档案</Btn>
+            </div>
           </div>
         ) : (
           <div className="skin-hint">加载中…</div>
@@ -170,7 +195,7 @@ function ChatConfig({ onModelChanged }) {
           <input className="skin-input" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="sk-…" />
         </div>
         <div style={{ marginTop: 8 }}>
-          <Btn onClick={doSave} disabled={busy}>💾 保存并应用</Btn>
+          <Btn onClick={doSaveApply} disabled={busy}>💾 存为档案并应用</Btn>
           <Btn onClick={doTest} disabled={busy}>🧪 测试连通</Btn>
           <Btn onClick={doSaveProfile} disabled={busy}>📚 存为档案</Btn>
         </div>

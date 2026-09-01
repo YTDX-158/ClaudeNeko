@@ -20,8 +20,13 @@ export default function App() {
   const [skinOpen, setSkinOpen] = useState(false);
   // 全局当前模型（右上角显示用）：改模型是全局的（写 env），显示也全局统一，不跟会话走
   const [globalModel, setGlobalModel] = useState(null);
+  // 对话模型是否已配置（null=未知/加载中）：未配置 → 顶栏提示先去设置配（引导，不硬拦）
+  const [configured, setConfigured] = useState(null);
   const refreshModel = useCallback(() => {
-    api.getConfig().then((r) => setGlobalModel(r.model || null)).catch(() => {});
+    api.getConfig().then((r) => {
+      setGlobalModel(r.model || null);
+      setConfigured(!!r.configured);
+    }).catch(() => {});
   }, []);
   useEffect(() => { refreshModel(); }, [refreshModel]);
   const [mediaOpen, setMediaOpen] = useState(false);
@@ -114,6 +119,13 @@ export default function App() {
       {serverOk === false && (
         <div className="banner" role="alert">
           无法连接后端（127.0.0.1:4000）——请双击桌面「启动ClaudeNeko.bat」启动服务
+        </div>
+      )}
+      {serverOk !== false && configured === false && (
+        <div className="banner" role="alert">
+          ⚠️ 未检测到对话模型配置——请先到
+          <button className="banner-link" onClick={() => { setSkinOpen(true); closeSidebar(); }}>设置→模型配置</button>
+          填写后再使用
         </div>
       )}
       <ErrorBoundary>

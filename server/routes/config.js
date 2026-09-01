@@ -7,6 +7,8 @@
 // PUT    /api/config/profiles        保存档案 { name, provider, baseUrl, model, authToken }
 // DELETE /api/config/profiles?name=x 删除档案
 // POST   /api/config/profiles/apply  应用档案 { name } → 写 env + 标记 current
+// POST   /api/config/profiles/save-current  当前生效配置存为档案（只存档，不应用/不重启）
+// POST   /api/config/profiles/save-apply    存档案并应用（原子：存档 + 写 env + 标记 current + 重启）
 //
 // 安全：写操作（PUT/POST/DELETE）走 routeApi 前的 isLocalRequest 校验（非本地 403）；
 //       返回一律脱敏（key 只显示掩码），日志不带 key。
@@ -122,6 +124,38 @@ export function configHandler(ctx) {
       modelConfig.setCurrent(name);
       if (ptyHost?.killAll) ptyHost.killAll(); // 应用档案后同样重启 pty
       return sendJson(res, 200, { ok: true, applied: name });
+    }
+    // ---- 存档案：把「当前生效配置」（~/.claude env）一键存成档案，不应用（它本来就在生效） ----
+    if (method === 'POST' && pathname === '/api/config/profiles/save-current') {
+      const env = configService.readSettings(home).env || {};
+      const baseUrl = env.ANTHROPIC_BASE_URL || null;
+      const authToken = env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY || null;
+      const model = env.ANTHROPIC_MODEL || env.ANTHROPIC_DEFAULT_SONNET_MODEL || env.ANTHROPIC_DEFAULT_OPUS_MODEL || null;
+      if (!baseUrl || !authToken) {
+        return sendJson(res, 400, { error: '当前未配置对话模型，无法存为档案' });
+      }
+      const body = await ctx.readBody(req);
+      const name = (body?.name || model || 'current').trim();
+      if (!name) return sendJson(res, 400, { error: '缺档案名称' });
+      modelConfig.saveProfile(name, { provider: detectProvider(baseUrl), baseUrl, model, authToken });
+      return sendJson(res, 200, { ok: true, name });
+    }
+    // ---- 存档案并应用（一个请求原子完成：存档 + 写 env + 标记 current + 重启 pty） ----
+    if (method === 'POST' && pathname === '/api/config/profiles/save-apply') {
+      const hasBusyTask = (store && busyLock && store.list().some((s) => busyLock.has(s.id))) || media?.hasActive?.();
+      if (hasBusyTask) {
+        return sendJson(res, 409, { error: '有任务正在运行，请先「⛔ 结束」停止后再保存' });
+      }
+      const body = await ctx.readBody(req);
+      const { name, baseUrl, model, authToken } = body || {};
+      if (!name || !baseUrl || !authToken || !model) {
+        return sendJson(res, 400, { error: '需要 name + baseUrl + authToken + model' });
+      }
+      modelConfig.saveProfile(name, { provider: body.provider || 'custom', baseUrl, model, authToken });
+      configService.writeEnv(home, { baseUrl, authToken, model });
+      modelConfig.setCurrent(name);
+      if (ptyHost?.killAll) ptyHost.killAll();
+      return sendJson(res, 200, { ok: true, applied: name, keyMask: mask(authToken) });
     }
     if (method === 'DELETE' && pathname === '/api/config/profiles') {
       const name = url.searchParams.get('name');

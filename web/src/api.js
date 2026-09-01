@@ -56,11 +56,12 @@ export const api = {
 
   // ---- 模型配置（设置中心「模型配置」） ----
   getConfig: () => request('/config'),
-  setConfig: (body) => request('/config', { method: 'PUT', body: JSON.stringify(body) }),
   testConfig: (body) => request('/config/test', { method: 'POST', body: JSON.stringify(body) }),
   getProfiles: () => request('/config/profiles'),
   saveProfile: (body) => request('/config/profiles', { method: 'PUT', body: JSON.stringify(body) }),
   applyProfile: (body) => request('/config/profiles/apply', { method: 'POST', body: JSON.stringify(body) }),
+  saveCurrentProfile: (body) => request('/config/profiles/save-current', { method: 'POST', body: JSON.stringify(body) }),
+  saveApplyProfile: (body) => request('/config/profiles/save-apply', { method: 'POST', body: JSON.stringify(body) }),
   deleteProfile: (name) => request(`/config/profiles?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
   // ---- 生图生视频模型条目（设置中心「媒体配置」） ----
