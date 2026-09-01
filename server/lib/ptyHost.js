@@ -144,6 +144,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
       onData?.(sid, d);
     });
     child.onExit(({ exitCode }) => {
+      cancelConfirm(rec); // pty 退出 → 清确认（不再重发/误报失败）
       // ⚠ 身份检查：只删自己——force-stop/自愈重启后旧进程 onExit 可能晚到，不能误删新 rec
       if (ptys.get(sid) === rec) ptys.delete(sid);
       bus?.emit('pty:exit', { sid, exitCode });
@@ -188,6 +189,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
 
   /** 确认超时 → 重发（此时 claude 已就绪，成功率高）；耗尽 → 上报失败（server.js 释放 busy + 广播） */
   function checkConfirm(rec) {
+    if (!ptys.has(rec.sid)) return; // pty 已退出/回收 → 不再重发（onExit/killAll 已清，双保险）
     const c = rec.pendingConfirm;
     if (!c) return;
     if (c.attempts >= CONFIRM_MAX_RETRY) {
@@ -317,6 +319,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
   /** 服务退出时清理全部 */
   function killAll() {
     for (const [sid, rec] of ptys) {
+      cancelConfirm(rec); // 清确认（防 timer 在 pty 已杀后误重发/误报失败）
       taskkill(rec.child.pid);
     }
     ptys.clear();
