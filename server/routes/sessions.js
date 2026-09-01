@@ -266,6 +266,20 @@ export function sessionsHandler(ctx) {
       return sendJson(res, 200, { ok: true });
     }
 
+    // 预启动（9-02）：进入会话时提前拉起 pty + transcript（不 submit），发消息时 claude 已就绪，
+    // 避免首条消息等冷启动 20-40s + 冷启动竞态被吞。空闲 30min 回收兜底，无泄漏。
+    if (method === 'POST' && pathname.endsWith('/prewarm')) {
+      const id = pathname.split('/').slice(-2)[0];
+      const session = store.get(id);
+      if (!session) return sendJson(res, 404, { error: '会话不存在' });
+      const cwd = session.cwd || config.defaultCwd;
+      if (ctx.ptyHost?.available) {
+        ctx.ptyHost.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined });
+        ctx.transcript?.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined });
+      }
+      return sendJson(res, 200, { ok: true });
+    }
+
     // 技能包消息：生成前用户提示词（role=user，触发命名）+ 生成结果 AI 消息（role=assistant 默认）
     const mmsg = pathname.match(/^\/api\/sessions\/([^/]+)\/media-message$/);
     if (mmsg && method === 'POST') {

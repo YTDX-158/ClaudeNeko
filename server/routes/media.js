@@ -28,7 +28,7 @@ function buildMediaCommand(kind, body) {
 /** 提交系统记录命令到常驻 claude（有 pty 才记录；无则跳过，纯后端生成） */
 function recordMediaCommand(ctx, gsess, kind, body) {
   if (!gsess?.id || !ctx.ptyHost) return;
-  ctx.ptyHost.submit(gsess.id, buildMediaCommand(kind, body));
+  ctx.ptyHost.submit(gsess.id, buildMediaCommand(kind, body), { noConfirm: true }); // 媒体记忆：丢了不重发
 }
 
 /** 生成结果回填（成功/失败都告知 claude，记忆完整） */
@@ -38,7 +38,7 @@ function recordMediaResult(ctx, gsess, kind, { ok, error, model }) {
   const text = ok
     ? `【系统记录】上述${kindLabel}已生成（媒体库可查看，模型 ${model || ''}）。`
     : `【系统记录】上述${kindLabel}生成失败：${error || '未知原因'}。`;
-  ctx.ptyHost.submit(gsess.id, text);
+  ctx.ptyHost.submit(gsess.id, text, { noConfirm: true }); // 媒体记忆：丢了不重发
 }
 
 export function mediaHandler(ctx) {

@@ -35,6 +35,9 @@ function handleMessage(raw) {
   }
   if (m.t === 'ev') {
     for (const s of subscribers) if (s.sid === currentSid) s.onChatEvent?.(m.e);
+  } else if (m.t === 'send-fail') {
+    // 9-02：消息确认送达失败（重发耗尽）→ 转成聊天事件，前端清"思考中"占位 + 提示重试
+    for (const s of subscribers) if (s.sid === currentSid) s.onChatEvent?.({ kind: 'send-fail', text: m.text });
   } else if (m.t === 'term') {
     for (const s of subscribers) if (s.sid === currentSid) s.onTermData?.(m.d);
   } else if (m.t === 'term-replay') {

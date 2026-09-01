@@ -44,6 +44,11 @@ const ENTER_DELAY_MS = 200; // 文本写入后延迟写回车：防 Windows ConP
 const QUIET_READY_MS = 800; // 输出安静 800ms = claude 界面稳定，才算就绪（防启动滚动期误判）
 const READY_SETTLE_MS = 300; // markReady（jsonl 信号）后再 settle：探测到 jsonl → 输入框激活
 const INTERRUPT_SETTLE_MS = 600; // cancel 后冷却：等 claude 收尾回到输入态再注入（审查①，防新旧消息写同 jsonl 打架）
+// —— 9-02 就绪主信号 + 确认送达（首条消息被吞修复） ——
+const MARKER_SETTLE_MS = 200;    // bracket 标记（ESC[?2004h）后 settle：取证 marker 746ms / 输入框 820ms（差仅 74ms）
+const MARKER_BUF_LEN = 300;      // marker 检测缓冲：保留最近 300 字节查 \x1b[?2004h（防跨 chunk 切开）
+const CONFIRM_TIMEOUT_MS = 6000; // 确认送达超时：6s 未在 jsonl 确认 → 重发
+const CONFIRM_MAX_RETRY = 2;     // 重发上限（防无限重发）
 
 /**
  * 清洗传给 pty claude 的环境变量。
@@ -109,7 +114,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
       console.error(`[ptyHost] spawn 失败 sid=${sid}:`, e.message);
       return { isNew: false, available: false };
     }
-    const rec = { child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null, lastInterruptAt: 0 };
+    const rec = { sid, child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null, lastInterruptAt: 0, termBuf: '', markerTimer: null, pendingConfirm: null };
     ptys.set(sid, rec);
     // M2 兜底：20s 内无论输出多少都强制就绪（防 claude 卡死/输出异常导致消息永久卡队列）
     setTimeout(() => {
@@ -119,7 +124,17 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     child.onData((d) => {
       rec.lastActive = Date.now();
       rec.outAcc += d.length;
-      // 就绪检测（8-27 修复）：仅「输出超 1KB」不可靠——claude 冷启动会先滚一大片
+      // 就绪主信号（9-02 取证）：claude 开启 bracketed-paste（ESC[?2004h）= 输入态激活。
+      // 比「输出安静」可靠（终端协议，不随版本漂移）、比 jsonl 探测快（不用等 transcript 轮询 20s+）。
+      // 取证：marker 746ms / 输入框 820ms（差 74ms）→ settle 200ms 落在输入框激活后。
+      if (!rec.ready) {
+        rec.termBuf = (rec.termBuf || '') + d;
+        if (rec.termBuf.length > MARKER_BUF_LEN) rec.termBuf = rec.termBuf.slice(-MARKER_BUF_LEN);
+        if (!rec.markerTimer && rec.termBuf.includes('\x1b[?2004h')) {
+          rec.markerTimer = setTimeout(() => { rec.markerTimer = null; becomeReady(sid, rec, 'bracket标记'); }, MARKER_SETTLE_MS);
+        }
+      }
+      // 就绪检测（fallback，8-27）：仅「输出超 1KB」不可靠——claude 冷启动会先滚一大片
       // banner/历史，输入框还没激活。改成「输出超 1KB 且安静 800ms（输出停止=界面稳定）」
       // 才算就绪；另有 markReady（jsonl 信号）与 20s 兜底双保险。
       if (!rec.ready && rec.outAcc > 1000) {
@@ -136,10 +151,13 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     return { isNew: true, available: true };
   }
 
-  /** 注入整条指令（文本 + 回车），供聊天/终端「对话」视图用 */
-  function submit(sid, text) {
+  /** 注入整条指令（文本 + 回车），供聊天/终端「对话」视图用
+   *  @param {object} [opts] — { noConfirm: true } 媒体记忆等：不注册确认送达（丢了不重发，防重复注入） */
+  function submit(sid, text, opts = {}) {
     const rec = ptys.get(sid);
     if (!rec) return false;
+    // 确认送达（9-02）：提交即注册，transcript 在 jsonl 读到该文本 → 确认；6s 未确认 → 重发
+    if (!opts.noConfirm) armConfirm(rec, String(text));
     // M2：pty 未就绪（claude TUI 还在启动）→ 进队列，就绪后自动补发（防消息被吞）
     if (!rec.ready) {
       rec.pendingSubmits.push(String(text));
@@ -147,6 +165,47 @@ export function createPtyHost({ claudeBin, bus, onData }) {
       return true;
     }
     return doSubmit(rec, text);
+  }
+
+  /** 注册确认送达：6s 后未确认（transcript 没在 jsonl 看到该文本）→ 重发；最多 CONFIRM_MAX_RETRY 次 */
+  function armConfirm(rec, text) {
+    if (rec.pendingConfirm) clearTimeout(rec.pendingConfirm.timer);
+    const confirm = { text, attempts: 0, sentTs: Date.now() };
+    rec.pendingConfirm = confirm;
+    confirm.timer = setTimeout(() => checkConfirm(rec), CONFIRM_TIMEOUT_MS);
+  }
+
+  /** 确认送达：transcript 读到 jsonl 有该 user 文本（增量）→ 清，不再重发 */
+  function confirmDelivered(sid, text, evTs) {
+    const rec = ptys.get(sid);
+    const c = rec?.pendingConfirm;
+    if (!c || c.text !== text) return;
+    // 只认「提交之后新出现」的 user 消息（evTs >= sentTs-1s 容差）——防 resume 历史回放误确认（重复提问历史句）
+    if (evTs && c.sentTs && evTs < c.sentTs - 1000) return;
+    clearTimeout(c.timer);
+    rec.pendingConfirm = null;
+  }
+
+  /** 确认超时 → 重发（此时 claude 已就绪，成功率高）；耗尽 → 上报失败（server.js 释放 busy + 广播） */
+  function checkConfirm(rec) {
+    const c = rec.pendingConfirm;
+    if (!c) return;
+    if (c.attempts >= CONFIRM_MAX_RETRY) {
+      rec.pendingConfirm = null;
+      bus?.emit('pty:confirm-fail', { sid: rec.sid, text: c.text });
+      return;
+    }
+    c.attempts++;
+    doSubmit(rec, c.text);
+    c.timer = setTimeout(() => checkConfirm(rec), CONFIRM_TIMEOUT_MS);
+  }
+
+  /** 清确认（cancel/force-stop 时）：用户已停止 → 不再重发，避免打扰 */
+  function cancelConfirm(rec) {
+    if (rec?.pendingConfirm) {
+      clearTimeout(rec.pendingConfirm.timer);
+      rec.pendingConfirm = null;
+    }
   }
 
   /** 真正执行注入：文本写入（cancel 后延迟冷却），回车延迟 ENTER_DELAY_MS 再写。
@@ -225,10 +284,10 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     }
   }
 
-  /** Esc 中断当前生成（对应聊天「停止」按钮）。记录时间供 submit 冷却（审查①） */
+  /** Esc 中断当前生成（对应聊天「停止」按钮）。记录时间供 submit 冷却（审查①）；清确认（用户已停止，不再重发） */
   function interrupt(sid) {
     const rec = ptys.get(sid);
-    if (rec) rec.lastInterruptAt = Date.now();
+    if (rec) { rec.lastInterruptAt = Date.now(); cancelConfirm(rec); }
     return write(sid, '\x1b');
   }
 
@@ -239,6 +298,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
   function kill(sid) {
     const rec = ptys.get(sid);
     if (!rec) return;
+    cancelConfirm(rec); // 杀之前清确认（force-stop = 放弃当前消息，不重发）
     const pid = rec.child.pid;
     taskkill(pid);
     // 轮询确认退出（process.kill(pid, 0)：进程不存在抛 ESRCH，存在则成功）
@@ -288,6 +348,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
 
   return {
     ensure, submit, markReady, write, resize, interrupt, kill, killAll, isRunning, touch, scheduleIdleReap,
+    confirmDelivered, // 确认送达（transcript 读到 jsonl user 文本时调）
     get available() { return pty !== null; },
   };
 }

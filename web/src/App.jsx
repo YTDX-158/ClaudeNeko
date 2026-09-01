@@ -29,6 +29,10 @@ export default function App() {
     }).catch(() => {});
   }, []);
   useEffect(() => { refreshModel(); }, [refreshModel]);
+  // 预启动（9-02）：切到会话 → 后台拉起 claude pty（发消息时已就绪，首条不等 20-40s 冷启动）
+  useEffect(() => {
+    if (activeId) api.prewarmSession(activeId).catch(() => {});
+  }, [activeId]);
   const [mediaOpen, setMediaOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false); // 终端页（c2web 模式）
   const [terminalSessionId, setTerminalSessionId] = useState(null); // 打开终端的会话 id（每个会话独立入口）

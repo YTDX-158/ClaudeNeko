@@ -44,7 +44,7 @@ const media = createMediaService({
     const text = status === 'done'
       ? `【系统记录】上述视频已生成（媒体库可查看，模型 ${model || ''}）。`
       : `【系统记录】上述视频生成失败：${error || '未知原因'}。`;
-    ptyHost.submit(sid, text);
+    ptyHost.submit(sid, text, { noConfirm: true }); // 媒体记忆：丢了不重发（防重复注入）
   },
 }); // dataDir 供任务落盘 gen_tasks.json
 setVisionConfigProvider(() => mediaConfigService.getVision()); // 视觉理解只认配置页（mediaConfig.vision）
@@ -85,9 +85,19 @@ const transcript = createTranscriptService({
 });
 // Phase2：server 订阅 transcript 事件做 store 镜像 / busy 释放 / WS 推送
 bus.on('transcript:sessionId', onSessionIdDiscovered);
-bus.on('transcript:user', ({ sid, ev }) => claimPendingUser(sid, ev));
+bus.on('transcript:user', ({ sid, ev }) => {
+  // 确认送达（9-02）：jsonl 里出现该 user 文本 = 消息真进了 claude → 清 ptyHost 待确认（不再重发）
+  ptyHost?.confirmDelivered?.(sid, ev.text, ev.ts);
+  claimPendingUser(sid, ev);
+});
 bus.on('transcript:assistant', handleAssistantEvent);
 bus.on('transcript:tool', ({ sid, ev }) => terminal.broadcast(sid, { t: 'ev', e: ev }));
+// 确认送达重发耗尽（9-02）：消息确认没进 claude → 释放 busy + 广播失败（前端"思考中"换错误，不再干等 5min 超时）
+bus.on('pty:confirm-fail', ({ sid, text }) => {
+  busyLock.release(sid);
+  terminal.broadcast(sid, { t: 'send-fail', text });
+  console.warn(`[pty] 消息确认送达失败（重发耗尽）sid=${sid}: ${String(text).slice(0, 50)}`);
+});
 
 // 终端 WS 通道（upgrade 挂载在 server.on('upgrade')）
 const terminal = createTerminalChannel({ ptyHost, transcript, store, config, isLocalRequest });

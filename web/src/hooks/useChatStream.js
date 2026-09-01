@@ -134,6 +134,13 @@ export function useChatStream(sessionId, onModelUpdate) {
           setThinking(false); // 崩溃/异常 → 熄灭"生成中"胶囊
           setError(ev.text || '终端进程已退出');
           setMessages((prev) => prev.filter((m) => !(m.streaming && !m.text)));
+        } else if (ev.kind === 'send-fail') {
+          // 9-02：消息确认送达失败（重发耗尽，claude 未响应）→ 清"思考中"占位 + 提示重试
+          setStreaming(false);
+          streamingRef.current = false;
+          setThinking(false);
+          setError('消息发送失败（claude 未响应），请重试');
+          setMessages((prev) => prev.filter((m) => !(m.streaming && !m.text)));
         }
         // tool 事件：可选渲染小徽标（暂不做，保持简洁）
       },

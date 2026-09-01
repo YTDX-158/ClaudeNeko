@@ -45,6 +45,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ parentId, fromMsgId }),
     }),
+  // 预启动（9-02）：切到会话 → 后台拉起 claude pty，发消息时已就绪（不等冷启动）
+  prewarmSession: (id) => request(`/sessions/${id}/prewarm`, { method: 'POST' }),
   getAutostart: () => request('/autostart'),
   setAutostart: (enabled) => request('/autostart', { method: 'POST', body: JSON.stringify({ enabled }) }),
 
