@@ -47,7 +47,7 @@ LAUNCHERS = [
     "start-web.bat", "start-node.bat", "run-node.vbs",
     "launcher.html", "launcher.vbs", "注册neko协议.bat",
 ]
-COPY_DIRS = ["docs", "scripts"]
+COPY_DIRS = ["docs", "scripts", "bin"]  # bin=cloudflared.exe（远程隧道用·免装可分发）
 
 
 def log(msg):

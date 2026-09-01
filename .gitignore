@@ -9,3 +9,4 @@ config.env
 server/log.txt
 server/media/
 data_backup_*/
+bin/

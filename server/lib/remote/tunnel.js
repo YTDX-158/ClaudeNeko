@@ -1,6 +1,13 @@
 // server/lib/remote/tunnel.js — cloudflared quick tunnel（免账号免费）
 // 从 @inksnow/c2web (MIT) 的 src/tunnel.mjs 搬入，逻辑原样。
 import { spawn } from 'child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// cloudflared 查找：绿色包内置 bin/cloudflared.exe 优先（免装可分发），否则用 PATH 里的（用户自装）
+const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
+const BIN_CLOUDFLARED = path.join(SERVER_DIR, '..', '..', '..', 'bin', 'cloudflared.exe');
 
 /**
  * 拉起 cloudflared quick tunnel（免账号免费），解析出公网地址。
@@ -11,8 +18,9 @@ import { spawn } from 'child_process';
 export function startTunnel(port) {
   return new Promise((resolve) => {
     let child;
+    const bin = fs.existsSync(BIN_CLOUDFLARED) ? BIN_CLOUDFLARED : 'cloudflared';
     try {
-      child = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${port}`], {
+      child = spawn(bin, ['tunnel', '--url', `http://localhost:${port}`], {
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true, // 不闪控制台窗口
       });
