@@ -1,19 +1,22 @@
 /**
- * CatMascot.jsx — 粒子猫猫（Aqua 鲸鱼的猫版）
- *  - 一只坐姿猫（SVG 剪影，跟随主题色），**可拖拽**（位置 localStorage 记住，限制在窗口内）
+ * CatMascot.jsx — 粒子小猫（品牌吉祥物，9-02 起换成图标同款粒子小猫高清 PNG）
+ *  - 主体 = assets/cat-mascot-particle.png（GPT 粒子小猫透明图裁边瘦身版，62×75px 显示）
  *  - 背景淡粒子：光点漂浮，纯 CSS 动画（背景装饰，不随猫移动）
+ *  - **可拖拽**（位置 localStorage 记住，限制在窗口内）
  *  - 点击猫（拖动位移 <6px）→ 猫头正上方冒气泡（2 秒），随机猫咪颜文字，气泡消失前不可再点
  *  - 气泡固定清晰（0.95 不透明），字符颜色同步正文
+ *  - ⚠ img 必须 draggable={false} + -webkit-user-drag:none，否则浏览器原生拖图会和指针拖拽打架
  */
 import { useEffect, useRef, useState } from 'react';
 import { skinEngine } from '../skin/skinEngine.js';
 import { KAOMOJI } from '../utils/kaomoji.js';
+import catMascot from '../assets/cat-mascot-particle.png';
 
 const BUBBLE_MS = 2000;
 const DRAG_THRESHOLD = 6; // 位移超过 6px 算拖拽，否则算点击
 const CAT_POS_KEY = 'dsw-dream-skin:cat-pos';
-const CAT_W = 116; // 可点区域约 116px 宽（含内边距）
-const CAT_H = 100;
+const CAT_W = 62; // 粒子小猫 img 显示宽（CSS .cat-mascot-img 高 75、按比例宽 ≈62）
+const CAT_H = 75;
 
 // 初始组合位：猫在 claude娘 正上方（claude娘 初始右下角，见 ClaudeNiang.jsx / styles.css）
 const NIANG_W = 150; // claude娘 初始宽（正方形，高=宽）
@@ -168,38 +171,12 @@ export default function CatMascot() {
             <span className="cat-bubble-tail" />
           </div>
         )}
-        <svg viewBox="0 0 120 100" width="88" height="74" fill="#000000">
-          {/* 尾巴绕到身前 */}
-          <path
-            d="M84 60 Q102 52 99 40 Q98 33 90 34"
-            stroke="#000000"
-            strokeWidth="5"
-            fill="none"
-            strokeLinecap="round"
-          />
-          {/* 身体 */}
-          <ellipse cx="60" cy="72" rx="30" ry="24" />
-          {/* 前腿 */}
-          <ellipse cx="46" cy="94" rx="8" ry="7" />
-          <ellipse cx="74" cy="94" rx="8" ry="7" />
-          {/* 头 */}
-          <circle cx="60" cy="38" r="22" />
-          {/* 耳朵 */}
-          <path d="M42 24 L45 7 L58 20 Z" />
-          <path d="M78 24 L75 7 L62 20 Z" />
-          {/* 眼睛（纯白） */}
-          <circle cx="53" cy="38" r="2.6" fill="#ffffff" />
-          <circle cx="67" cy="38" r="2.6" fill="#ffffff" />
-          {/* 胡须 */}
-          <path
-            d="M38 42 L23 40 M38 46 L24 48 M82 42 L97 40 M82 46 L96 48"
-            stroke="#000000"
-            strokeWidth="1.2"
-            strokeLinecap="round"
-          />
-          {/* 嘴 */}
-          <path d="M58 46 Q60 49 62 46" stroke="#000000" strokeWidth="1.2" fill="none" strokeLinecap="round" />
-        </svg>
+        <img
+          className="cat-mascot-img"
+          src={catMascot}
+          alt="粒子小猫"
+          draggable={false}
+        />
       </div>
     </>
   );

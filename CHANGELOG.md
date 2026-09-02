@@ -1,5 +1,16 @@
 # 更新日志
 
+## v2.4.1（2026-09-02 · 粒子小猫吉祥物同款化）
+> 界面粒子小猫挂件：手画 SVG 简笔猫 → **图标同款高清粒子小猫 PNG**（品牌三统一：图标 = 挂件 = favicon）
+
+### 🎨 吉祥物换装（只换小猫，claude娘 不动）
+- **素材链路**：`assets/图标素材/ClaudeNeko_black_cat_transparent_1024.png` → PIL 按 alpha 裁掉四周 150–260px 留白 + 瘦身 → `web/src/assets/cat-mascot-particle.png`（248×300 @2x · 57.9KB）
+- **CatMascot.jsx**：SVG 简笔猫代码**删净** → `<img>`（draggable={false} + CSS 禁原生拖图，防和指针拖拽打架）；显示 62×75；拖拽/点击气泡/背景 12 粒子/skinEngine 开关全保留
+- **styles.css**：`.cat-mascot-img` 显示规则 + 光晕黑色阴影 → **香草色双层 drop-shadow**（vanilla 原味图背景绿 #CBD5CD 采样，不发青）；**猫本体 opacity 0.65 → 0.85**（高清黑猫更实），hover 同步抬 **0.95**（防基线超过 hover 导致悬停变淡）
+- **冒烟**（playwright DOM 断言）：img 渲染 62×75 ✅ · SVG 残留 0 ✅ · 点击冒颜文字气泡 ✅ · 拖拽移动正常 ✅
+
+---
+
 ## v2.4.0（2026-09-02 · 正式升版）
 > 收编 9-02 全部增量（模型配置按钮重构 / 首条消息被吞修复 / 图标美化接入粒子小猫）+ 升版重新打包
 

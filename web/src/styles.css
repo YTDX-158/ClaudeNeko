@@ -1173,8 +1173,9 @@ body {
   top: 0;
   z-index: 999;
   color: var(--text);
-  opacity: 0.65;
-  filter: drop-shadow(0 0 5px rgba(0, 0, 0, 0.55));
+  opacity: 0.85;
+  /* 香草色光晕（vanilla 原味图背景绿 #CBD5CD；深色皮肤下黑猫轮廓清晰、不发青） */
+  filter: drop-shadow(0 0 7px rgba(203, 213, 205, 0.5)) drop-shadow(0 0 2px rgba(203, 213, 205, 0.45));
   pointer-events: auto;
   cursor: grab;
   touch-action: none;
@@ -1184,7 +1185,7 @@ body {
   transition: opacity 0.15s var(--ease), transform 0.15s var(--ease);
 }
 .cat-mascot:hover {
-  opacity: 0.8;
+  opacity: 0.95; /* 基线 0.85，悬停须更高才不'变淡'（0.95/1） */
 }
 .cat-mascot:active {
   transform: scale(0.96);
@@ -1192,6 +1193,14 @@ body {
 @keyframes cat-breathe {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-3px); }
+}
+/* 粒子小猫 img（品牌图，裁边瘦身版 248×300；显示高 75、宽按比例自动） */
+.cat-mascot-img {
+  display: block;
+  height: 75px;
+  width: auto;
+  user-select: none;
+  -webkit-user-drag: none; /* 禁原生拖图，否则和指针拖拽打架 */
 }
 
 /* 点击猫冒的气泡（猫正上方居中，透明度跟随用户气泡） */
