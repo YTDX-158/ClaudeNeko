@@ -26,16 +26,23 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ; 全中文向导（用 ChineseSimplified.isl，界面按钮/进度/错误全中文）
 ShowLanguageDialog=no
+; ===== 图标美化（9-02 粒子小猫）=====
+SetupIconFile=assets\图标素材\ClaudeNeko_setup.ico
+UninstallDisplayIcon={app}\ClaudeNeko.ico
+WizardImageFile=assets\图标素材\ClaudeNeko_installer_banner_vanilla_164x314.png
+WizardSmallImageFile=assets\图标素材\ClaudeNeko_installer_small_vanilla_55x58.png
 
 [Languages]
 Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Files]
 Source: "installer_src\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 图标素材（粒子小猫）：随安装装上，供快捷方式/卸载引用
+Source: "assets\图标素材\ClaudeNeko.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
+Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\ClaudeNeko.ico"
+Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\ClaudeNeko.ico"
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "立即启动 ClaudeNeko"; Flags: nowait postinstall skipifsilent

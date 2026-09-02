@@ -42,7 +42,10 @@ for _s in (sys.stdout, sys.stderr):
             pass
 
 SEVENZ = r"C:\Program Files\7-Zip\7z.exe"
-SFX_STUB = r"C:\Program Files\7-Zip\7z.sfx"
+# SFX 模块：优先用项目内的粒子小猫图标版（9-02 图标美化），缺失则回退系统默认
+_PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NEKO_SFX = os.path.join(_PROJECT, "assets", "图标素材", "7z_neko.sfx")
+SFX_STUB = NEKO_SFX if os.path.isfile(NEKO_SFX) else r"C:\Program Files\7-Zip\7z.sfx"
 DESKTOP_TMP = os.path.expanduser("~/Desktop/待处理")
 DELIVERY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "交付物")
 

@@ -12,4 +12,5 @@ data_backup_*/
 bin/
 交付物/
 dist_installer/
+installer_src/
 __pycache__/
