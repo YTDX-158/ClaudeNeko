@@ -34,7 +34,13 @@ export function remoteHandler({ pairing, remote }) {
       const urlInfo = await remote.start();
       // 用 isEnabled() 判断真实状态：代理启动失败（如端口被占）时是 false，不误报"已开启"
       const enabled = remote.isEnabled();
-      return sendJson(res, 200, { enabled, publicUrl: enabled ? urlInfo.url : null, pairCode: code });
+      // 失败时把真实原因带给前端（之前笼统提示"可能 cloudflared 未装"误导排查：9-02 QQ占4001实锤）
+      return sendJson(res, 200, {
+        enabled,
+        publicUrl: enabled ? urlInfo.url : null,
+        error: enabled ? null : (urlInfo.error || '远程代理启动失败'),
+        pairCode: code,
+      });
     }
 
     // 关闭远程：停隧道 + 关代理 + 删配对码 + 清空已配对设备（关闭=全部重置）

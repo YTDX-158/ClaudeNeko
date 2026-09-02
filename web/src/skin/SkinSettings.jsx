@@ -110,11 +110,12 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
       setRemote(r);
       // 开启动作但服务端实际没开起来（如代理端口被占）→ 给明确提示，不静默
       if (next && r.enabled === false) {
-        alert('远程开启失败（可能 4001 端口被占用或 cloudflared 未装），请检查后重试');
+        // 服务端带回真实失败原因（9-02 教训：QQ 固定占 4001，曾把"端口被占"误导成"cloudflared 未装"）
+        alert(r.error || '远程开启失败，请检查后重试');
       }
     } catch {
       // 网络/异常失败
-      const e = (remote?.enabled ?? false) ? '关闭失败' : '开启失败（可能 cloudflared 未装）';
+      const e = (remote?.enabled ?? false) ? '关闭失败' : '开启失败，请稍后重试';
       alert(e);
     } finally {
       setRemoteBusy(false);
@@ -476,7 +477,7 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
                       手机浏览器打开公网地址，输入配对码即可（配对一次，之后免输）。
                     </div>
                     <div className="skin-hint" style={{ wordBreak: 'break-all' }}>
-                      📱 {remote.publicUrl || '（未获取到公网地址，可能 cloudflared 未装，远程不可用）'}
+                      📱 {remote.publicUrl || '（未能获取公网地址：cloudflared 未找到/被拦截/网络不通，远程暂不可用）'}
                     </div>
                     <div className="skin-row">
                       <span>配对码：{remote.pairCode ?? '—'}</span>

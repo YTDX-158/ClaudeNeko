@@ -4,8 +4,12 @@ import { spawn } from 'node:child_process';
 import { startRemoteProxy } from './proxy.js';
 import { startTunnel } from './tunnel.js';
 
-/** 远程代理端口（独立于业务端口；cloudflared 指向这里）。环境变量可覆盖。 */
+/** 远程代理起始端口（独立于业务端口；cloudflared 指向实际用到的那个）。环境变量可覆盖。
+ *  ⚠ 不能写死单个端口：QQ（QQNT）固定占用 4001（9-02 实测），写死 4001 → 装 QQ 的机器开远程必失败。
+ *  从起始端口起顺延找空闲，见 PORT_TRIES。 */
 export const REMOTE_PORT = Number(process.env.NEKO_REMOTE_PORT) || 4001;
+/** 端口顺延上限：4001 起最多试 50 个（4001~4050），全被占才报错 */
+const PORT_TRIES = 50;
 
 /**
  * 创建远程管理器。
@@ -28,30 +32,39 @@ export function createRemote(deps) {
       if (_startPromise) return _startPromise;
 
       _startPromise = (async () => {
-        // 1) 起远程代理（监听 127.0.0.1:4001）
-        // 注意：server.listen 的端口冲突（EADDRINUSE）是异步 'error' 事件，
-        // 同步 try/catch 抓不到，所以由 startRemoteProxy 用 Promise 包装：
-        // 返回 { server }（成功）或抛错（失败），失败时正确置 proxy=null。
-        let server;
-        try {
-          const r = await startRemoteProxy({
-            port: REMOTE_PORT,
-            pairing: deps.pairing,
-            targetPort: deps.config?.port ?? 4000, // 业务端口跟随 config，改 PORT 不断链
-          });
-          server = r.server;
-        } catch (err) {
-          console.error('[remote] 代理启动失败:', err.message);
+        // 1) 起远程代理：从起始端口起顺延找空闲（QQ 固定占 4001，写死单端口必冲突）
+        //    端口冲突（EADDRINUSE）是异步 'error' 事件，由 startRemoteProxy 用 Promise 包装：
+        //    成功 resolve { server }，失败 reject → 试下一个端口。
+        let server = null;
+        let usedPort = null;
+        let lastErr = null;
+        for (let p = REMOTE_PORT; p < REMOTE_PORT + PORT_TRIES; p++) {
+          try {
+            const r = await startRemoteProxy({
+              port: p,
+              pairing: deps.pairing,
+              targetPort: deps.config?.port ?? 4000, // 业务端口跟随 config，改 PORT 不断链
+            });
+            server = r.server;
+            usedPort = p;
+            break;
+          } catch (err) {
+            lastErr = err;
+            console.error(`[remote] 代理端口 ${p} 启动失败（试下一个）: ${err.message}`);
+          }
+        }
+        if (!server) {
           proxy = null;
-          return { url: null };
+          const msg = `远程代理端口 ${REMOTE_PORT}~${REMOTE_PORT + PORT_TRIES - 1} 全被占用（常见：QQ 固定占 4001）。请退出占用程序后重试`;
+          return { url: null, error: msg, detail: lastErr?.message || '' };
         }
         proxy = server;
 
-        // 2) 起 cloudflared 隧道（失败/未安装 → 仅局域网可用）
-        const t = await startTunnel(REMOTE_PORT);
+        // 2) 起 cloudflared 隧道指向实际用到的端口（失败/被拦/网络不通 → 仅局域网可用）
+        const t = await startTunnel(usedPort);
         tunnelChild = t.child; // 存子进程，stop 时杀
         publicUrl = t.url;
-        console.log(`[remote] 公网地址: ${publicUrl || '(未获取，仅局域网可用)'}`);
+        console.log(`[remote] 公网地址: ${publicUrl || '(未获取，仅局域网可用)'}（代理端口 ${usedPort}）`);
         return { url: publicUrl };
       })();
 
