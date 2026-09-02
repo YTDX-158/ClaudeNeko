@@ -120,20 +120,33 @@ def make_installer_src(gp):
         shutil.rmtree(build_root, ignore_errors=True)
 
 
-def compile_installer():
-    """④b 调 ISCC 编译安装器（产物进 dist_installer）"""
+def compile_installer(version):
+    """④b 调 ISCC 编译安装器（产物进 dist_installer）。
+
+    注意：ISCC 输出是 GBK 编码，subprocess text=True 会乱码 → **不解析输出**。
+    命名规则固定（.iss 用 {#AppVersion} 拼）：ClaudeNeko安装器_v{version}.exe
+    → 编译后直接按规则指向 dist_installer 里的产物。
+    """
     if not os.path.isfile(ISCC):
         log(f"❌ 找不到 ISCC: {ISCC}（Inno Setup 7 未装？）")
-        return False
-    r = subprocess.run([ISCC, ISS], capture_output=True, text=True, errors="replace")
-    ok = "Successful compile" in (r.stdout or "") or r.returncode == 0
+        return None
+    r = subprocess.run([ISCC, ISS], capture_output=True)
+    ok = r.returncode == 0
     if not ok:
-        log("安装器编译失败:\n" + ((r.stderr or r.stdout)[-600:]))
-        return False
-    # 从编译日志提取产物文件名（.iss 用 {#AppVersion} 拼的）
-    m = re.search(r"Resulting Setup program filename is:\s*(.+)", r.stdout or "")
-    exe = m.group(1).strip() if m else None
-    log(f"安装器编译成功: {os.path.basename(exe) if exe else '?'}")
+        # 输出可能 GBK，try 解码供排查
+        tail = (r.stderr or r.stdout)[-600:]
+        try:
+            tail = tail.decode("gbk", errors="replace")
+        except Exception:
+            pass
+        log("安装器编译失败:\n" + tail)
+        return None
+    # 按命名规则定位产物（不解析编码，避免乱码）
+    exe = os.path.join(DIST_INSTALLER, f"ClaudeNeko安装器_v{version}.exe")
+    if not os.path.isfile(exe):
+        log(f"❌ 编译成功但找不到产物: {exe}")
+        return None
+    log(f"安装器编译成功: {os.path.basename(exe)}")
     return exe
 
 
@@ -185,7 +198,7 @@ def main():
         log("→ 重建 installer_src + 编安装器")
         gp = _load_green_pack()
         make_installer_src(gp)
-        exe = compile_installer()
+        exe = compile_installer(version)
         if not exe:
             sys.exit(1)
         # 安装器产物从 dist_installer 复制到 交付物 + 桌面（与 green-pack 双份一致）
