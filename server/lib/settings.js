@@ -45,10 +45,11 @@ const MEDIA = {
   ],
   videoModels: [
     // 时长范围按火山官方文档逐模型核对（8-23→8-26 改范围）：2.0 支持 4K（独享并发/RPM低/更贵），2.5 支持 1080P（时长4-30s），mini/fast 仅 480/720
-    { id: 'doubao-seedance-2-5-260628', label: 'Seedance 2.5', durationRange: { min: 4, max: 30 }, resolutions: ['480P', '720P', '1080P'] },
+    // 顺序 9-03 调整：Mini / Fast / 2.0 / 2.5（常用靠前），输入区与设置配置页同源于此
     { id: 'doubao-seedance-2-0-mini-260615', label: 'Seedance 2.0 Mini', durationRange: { min: 4, max: 15 }, resolutions: ['480P', '720P'] },
-    { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0', durationRange: { min: 4, max: 15 }, resolutions: ['480P', '720P', '1080P', '4K'] },
     { id: 'doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast', durationRange: { min: 4, max: 15 }, resolutions: ['480P', '720P'] },
+    { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0', durationRange: { min: 4, max: 15 }, resolutions: ['480P', '720P', '1080P', '4K'] },
+    { id: 'doubao-seedance-2-5-260628', label: 'Seedance 2.5', durationRange: { min: 4, max: 30 }, resolutions: ['480P', '720P', '1080P'] },
   ],
   ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
   // 生图分辨率档位（Seedream 5.0：目标像素，最终尺寸由 mediaGen 按比例+clamp 计算）

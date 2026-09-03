@@ -14,6 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { saveMedia, getMedia, getMediaPath, deleteMedia } from './mediaStore.js';
+import { logger } from './logger.js';
 
 const ARK_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
 const MAX_ACTIVE = 1; // 并发：同时只允许一个生成任务，防超并发烧额度
@@ -121,7 +122,7 @@ export function createMediaService(cfg) {
       fs.writeFileSync(tmp, JSON.stringify({ v: 1, tasks: Object.fromEntries(tasks) }, null, 2));
       fs.renameSync(tmp, tasksFile);
     } catch (e) {
-      console.error('[mediaGen] 任务落盘失败:', e.message); // 写盘失败不阻塞主流程
+      logger.error('mediaGen', '任务落盘失败:', e.message); // 写盘失败不阻塞主流程
     }
   }
 
@@ -163,7 +164,7 @@ export function createMediaService(cfg) {
       fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
       fs.renameSync(tmp, LOG_FILE); // 原子写（读→追加→原子写回，防并发覆盖）
     } catch (e) {
-      console.error('[mediaGen] 台账写入失败:', e.message);
+      logger.error('mediaGen', '台账写入失败:', e.message);
     }
   }
 
@@ -194,7 +195,7 @@ export function createMediaService(cfg) {
       tasks.set(id, t);
       active = active + 1;
       claimed++;
-      console.log(`[mediaGen] 启动认领未完成任务: ${id}（${t.model || '?'} ${t.resolution || ''}）`);
+      logger.info('mediaGen', `启动认领未完成任务: ${id}（${t.model || '?'} ${t.resolution || ''}）`);
     }
     if (claimed || removed) persistTasks();
   }
@@ -587,7 +588,7 @@ export function createMediaService(cfg) {
       fs.writeFileSync(tmp, JSON.stringify(d, null, 2));
       fs.renameSync(tmp, LOG_FILE);
       return 1;
-    } catch (e) { console.error('[mediaGen] 台账删除失败:', e.message); return 0; }
+    } catch (e) { logger.error('mediaGen', '台账删除失败:', e.message); return 0; }
   }
 
   return { generateImage, generateVideo, queryTask, getConfig, cancelAll, hasActive, listLog, deleteLog };

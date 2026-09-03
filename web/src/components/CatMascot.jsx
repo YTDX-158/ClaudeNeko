@@ -7,7 +7,7 @@
  *  - 气泡固定清晰（0.95 不透明），字符颜色同步正文
  *  - ⚠ img 必须 draggable={false} + -webkit-user-drag:none，否则浏览器原生拖图会和指针拖拽打架
  */
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { skinEngine } from '../skin/skinEngine.js';
 import { KAOMOJI } from '../utils/kaomoji.js';
 import catMascot from '../assets/cat-mascot-particle.png';
@@ -50,13 +50,32 @@ function clampPos(x, y) {
   };
 }
 
-export default function CatMascot() {
+function CatMascot() {
   const [bubble, setBubble] = useState(null);
   const [locked, setLocked] = useState(false);
   const [pos, setPos] = useState(loadPos);
   const [visible, setVisible] = useState(() => skinEngine.catVisible);
   const dragRef = useRef(null); // { startX, startY, origX, origY, moved }
   const bubbleTimerRef = useRef(null); // 气泡消失定时器（卸载时清理）
+
+  // 背景淡粒子：纯静态装饰（9-03 性能对齐 claude娘）——useMemo 固定一次，
+  // 拖拽高频 setPos / 父组件重渲染都不再连带重建 12 个粒子 span
+  const particles = useMemo(
+    () =>
+      Array.from({ length: 12 }).map((_, i) => (
+        <span
+          key={i}
+          className="cat-particle"
+          style={{
+            left: `${(i * 8.3) % 95 + 2}%`,
+            top: `${(i * 13.7) % 88 + 5}%`,
+            animationDelay: `${(i * 0.7) % 6}s`,
+            animationDuration: `${6 + (i % 4)}s`,
+          }}
+        />
+      )),
+    []
+  );
 
   // 设置里「猫猫」开关实时生效（关掉后连粒子一起消失）
   useEffect(() => {
@@ -140,18 +159,7 @@ export default function CatMascot() {
     <>
       {/* 背景淡粒子（纯背景装饰，不随猫移动） */}
       <div className="cat-particles" aria-hidden="true">
-        {Array.from({ length: 12 }).map((_, i) => (
-          <span
-            key={i}
-            className="cat-particle"
-            style={{
-              left: `${(i * 8.3) % 95 + 2}%`,
-              top: `${(i * 13.7) % 88 + 5}%`,
-              animationDelay: `${(i * 0.7) % 6}s`,
-              animationDuration: `${6 + (i % 4)}s`,
-            }}
-          />
-        ))}
+        {particles}
       </div>
 
       {/* 猫 + 气泡（可拖动；点击冒气泡） */}
@@ -181,3 +189,6 @@ export default function CatMascot() {
     </>
   );
 }
+
+// 9-03 性能对齐 claude娘：memo 化——父级（聊天区）重渲染不带动小猫整棵重渲染
+export default memo(CatMascot);

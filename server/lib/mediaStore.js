@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { logger } from './logger.js';
 
 /**
  * mediaStore.js — 本地媒体库存储（图片/视频/文档）
@@ -146,6 +147,6 @@ export function pruneMedia({ maxAgeMs = DEFAULT_TTL, maxBytes = DEFAULT_MAX_BYTE
   for (const m of toDelete) {
     try { fs.unlinkSync(path.join(MEDIA_DIR, m.fileName)); } catch { /* 已不存在 */ }
   }
-  console.log(`[media] 自动清理 ${removed} 条过期媒体（剩余 ${keep.length} 条）`);
+  logger.info('media', `自动清理 ${removed} 条过期媒体（剩余 ${keep.length} 条）`);
   return removed;
 }

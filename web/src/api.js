@@ -112,4 +112,20 @@ export const api = {
 
   // ---- 搜索 v1.6.0：标题 + 消息全文 ----
   search: (q) => request(`/search?q=${encodeURIComponent(q)}`),
+
+  // ---- 日志面板（9-03）：尾部读取 / 下载完整（仅本机） ----
+  logLines: (lines = 300) => request(`/log?lines=${lines}`),
+  logDownload: async () => {
+    const res = await fetch(BASE + '/log/download');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ClaudeNeko-日志-${Date.now()}.log`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  },
 };

@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { logger } from './logger.js';
 
 /**
  * 组装 claude 非交互参数。
@@ -91,13 +91,9 @@ export function createClaudeRunner({ claudeBin, prompt, model, effort, claudeSes
 
     // stderr 是 claude 的日志/进度，不外发；但落盘到 server/log.txt 便于排查启动/运行错误。
     // stderr 有输出也算"活着"（启动慢/加载长会话时 stdout 可能暂未出事件）
-    const logPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'log.txt');
     child.stderr.on('data', (d) => {
-      try {
-        fs.appendFileSync(logPath, `[claude] ${String(d).trim()}\n`);
-      } catch {
-        // 日志写不了不影响主流程
-      }
+      // 9-03 并入 logger：claude stderr 多为启动/进度输出 → debug 级（LOG_LEVEL=debug 调查时才看，默认不刷屏）
+      logger.debug('claude', String(d).trim());
       armIdleTimer();
     });
 

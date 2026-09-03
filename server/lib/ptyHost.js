@@ -12,6 +12,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { logger } from './logger.js';
 
 // ESM 加载原生 CommonJS 模块（node-pty）必须用 createRequire
 const require = createRequire(import.meta.url);
@@ -26,7 +27,7 @@ let pty = null;
 try {
   pty = require('node-pty');
 } catch (e) {
-  console.warn('[ptyHost] node-pty 加载失败，终端功能不可用:', e.message);
+  logger.warn('ptyHost', 'node-pty 加载失败，终端功能不可用:', e.message);
 }
 
 const IDLE_REAP_MS = 30 * 60 * 1000; // 空闲 30 分钟回收
@@ -41,6 +42,10 @@ const MIN_ROWS = 5;
 const KILL_CONFIRM_MS = 2000; // 确认旧进程退出上限
 const KILL_POLL_MS = 100; // 轮询间隔
 const ENTER_DELAY_MS = 200; // 文本写入后延迟写回车：防 Windows ConPTY「背靠背吞回车」（8-27 修复）
+// —— 9-03 长文本分块写入（根治 ConPTY 单次写入 >~1024 字符丢前段，实证：T1200 丢前 1024 剩后 176） ——
+const DIRECT_LEN = 900;     // 短文本直接单次写（T900 实测完整，<1024 安全区；≤此值不启用分块，保持原语义）
+const WRITE_CHUNK = 500;    // 分块大小（保守 <1024，双保险）
+const CHUNK_DELAY_MS = 50;  // 块间延迟：让 ConPTY 缓冲落稳（claude 消费跟上，防积压再溢出）
 const QUIET_READY_MS = 800; // 输出安静 800ms = claude 界面稳定，才算就绪（防启动滚动期误判）
 const READY_SETTLE_MS = 300; // markReady（jsonl 信号）后再 settle：探测到 jsonl → 输入框激活
 const INTERRUPT_SETTLE_MS = 600; // cancel 后冷却：等 claude 收尾回到输入态再注入（审查①，防新旧消息写同 jsonl 打架）
@@ -96,7 +101,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     }
     // 启动 claude TUI：有会话则 --resume 续接，否则新会话
     const file = claudeBin && existsSync(claudeBin) ? claudeBin : 'claude.cmd';
-    console.log(`[ptyHost] ensure sid=${sid} file=${file} resume=${claudeSessionId || '无'} cwd=${cwd}`);
+    logger.info('ptyHost', `ensure sid=${sid} file=${file} resume=${claudeSessionId || '无'} cwd=${cwd}`);
     const args = [];
     if (claudeSessionId) args.push('--resume', claudeSessionId);
     if (model) args.push('--model', model);
@@ -111,10 +116,10 @@ export function createPtyHost({ claudeBin, bus, onData }) {
         env: childEnv,
       });
     } catch (e) {
-      console.error(`[ptyHost] spawn 失败 sid=${sid}:`, e.message);
+      logger.error('ptyHost', `spawn 失败 sid=${sid}:`, e.message);
       return { isNew: false, available: false };
     }
-    const rec = { sid, child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null, lastInterruptAt: 0, termBuf: '', markerTimer: null, pendingConfirm: null };
+    const rec = { sid, child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null, lastInterruptAt: 0, termBuf: '', markerTimer: null, pendingConfirm: null, writeQueue: [], writing: false };
     ptys.set(sid, rec);
     // M2 兜底：20s 内无论输出多少都强制就绪（防 claude 卡死/输出异常导致消息永久卡队列）
     setTimeout(() => {
@@ -157,6 +162,8 @@ export function createPtyHost({ claudeBin, bus, onData }) {
   function submit(sid, text, opts = {}) {
     const rec = ptys.get(sid);
     if (!rec) return false;
+    // 指纹绑定（9-03 v2.1）：广播提交文本，供 transcript 探测验证 jsonl（防交叉错绑）
+    bus?.emit('pty:submit', { sid, text: String(text) });
     // 确认送达（9-02）：提交即注册，transcript 在 jsonl 读到该文本 → 确认；6s 未确认 → 重发
     if (!opts.noConfirm) armConfirm(rec, String(text));
     // M2：pty 未就绪（claude TUI 还在启动）→ 进队列，就绪后自动补发（防消息被吞）
@@ -210,26 +217,60 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     }
   }
 
-  /** 真正执行注入：文本写入（cancel 后延迟冷却），回车延迟 ENTER_DELAY_MS 再写。
-   *  冷却语义（审查①）：cancel 发 Esc 后 claude 进程还在收尾，立即注入新消息会新旧
-   *  写同 jsonl 打架 → cancel 后 INTERRUPT_SETTLE_MS 内提交先等 claude 回到输入态。 */
+  /** 注入整条指令：入队 → 写队列串行执行（9-03 v2 根治长文本截断）。
+   *  入队而非直接写：队列保证「一条完整 + \r 提交后才放下一条」，防分块/重发/连发交织。 */
   function doSubmit(rec, text) {
-    const sinceInterrupt = rec.lastInterruptAt ? Date.now() - rec.lastInterruptAt : Infinity;
-    const wait = sinceInterrupt < INTERRUPT_SETTLE_MS ? INTERRUPT_SETTLE_MS - sinceInterrupt : 0;
-    const go = () => {
-      try {
-        rec.child.write(String(text));
-        rec.lastActive = Date.now(); // C1：注入成功刷新活跃时间（防空闲误回收）
-        setTimeout(() => {
-          try {
-            rec.child.write('\r');
-            rec.lastActive = Date.now();
-          } catch { /* 已退出 */ }
-        }, ENTER_DELAY_MS);
-      } catch { /* 已退出 */ }
-    };
-    if (wait > 0) setTimeout(go, wait); else go();
+    rec.writeQueue.push(String(text));
+    kickWrite(rec);
     return true;
+  }
+
+  /** 写队列泵：一次只处理一条；cancel 后冷却；超长分块写入（ConPTY 单次 >~1024 丢前段） */
+  function kickWrite(rec) {
+    if (rec.writing || !rec.writeQueue.length) return;
+    // cancel 后冷却（审查①）：claude 收尾未回输入态时延迟启动，避免新旧消息写同 jsonl 打架
+    const sinceInt = rec.lastInterruptAt ? Date.now() - rec.lastInterruptAt : Infinity;
+    if (sinceInt < INTERRUPT_SETTLE_MS) {
+      setTimeout(() => { if (ptys.get(rec.sid) === rec) kickWrite(rec); }, INTERRUPT_SETTLE_MS - sinceInt);
+      return;
+    }
+    rec.writing = true;
+    const text = rec.writeQueue.shift();
+    const afterText = () => {
+      // 回车隔离：下一条必须等这条 \r 发出（否则下一条字符接在未回车输入区后，两条合成一条）
+      setTimeout(() => {
+        try { rec.child.write('\r'); } catch { /* 已退出 */ }
+        rec.lastActive = Date.now();
+        rec.writing = false;
+        kickWrite(rec);
+      }, ENTER_DELAY_MS);
+    };
+    const s = String(text);
+    if (s.length <= DIRECT_LEN) {
+      // 短文本：原样单次写（<1024 实测安全，保持原语义零变化）
+      try { rec.child.write(s); rec.lastActive = Date.now(); } catch { /* 已退出 */ }
+      afterText();
+      return;
+    }
+    // 长文本：码点安全拆块，逐块写 + 块间延迟（让 ConPTY 缓冲落稳，防积压溢出再丢前段）
+    const chunks = splitChunks(s, WRITE_CHUNK);
+    let i = 0;
+    const step = () => {
+      if (ptys.get(rec.sid) !== rec) { rec.writing = false; return; } // pty 被回收/kill → 中止剩余块
+      if (i >= chunks.length) { afterText(); return; }
+      try { rec.child.write(chunks[i]); rec.lastActive = Date.now(); } catch { afterText(); return; }
+      i++;
+      setTimeout(step, CHUNK_DELAY_MS);
+    };
+    step();
+  }
+
+  /** 按 Unicode 码点拆块（Array.from 防 slice 切断 emoji/代理对） */
+  function splitChunks(s, size) {
+    const chars = Array.from(s);
+    const out = [];
+    for (let i = 0; i < chars.length; i += size) out.push(chars.slice(i, i + size).join(''));
+    return out;
   }
 
   /** 就绪后补发积压的 submit（首次消息可能因启动慢被吞） */
@@ -240,7 +281,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
   /** 置就绪（幂等）：任何可靠信号触发都走这里，统一补发积压消息 */
   function becomeReady(sid, rec, why) {
     if (rec.ready) return;
-    console.log(`[ptyHost] 就绪 sid=${sid}（${why}）`);
+    logger.info('ptyHost', `就绪 sid=${sid}（${why}）`);
     rec.ready = true;
     flushPending(rec);
   }
@@ -250,7 +291,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
   function markReady(sid) {
     const rec = ptys.get(sid);
     if (!rec || rec.ready) return;
-    console.log(`[ptyHost] markReady sid=${sid}（jsonl 信号）`);
+    logger.info('ptyHost', `markReady sid=${sid}（jsonl 信号）`);
     setTimeout(() => {
       if (ptys.get(sid) === rec) becomeReady(sid, rec, 'jsonl信号');
     }, READY_SETTLE_MS);
@@ -340,7 +381,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
       const now = Date.now();
       for (const [sid, rec] of ptys) {
         if (now - rec.lastActive > idleMs) {
-          console.log(`[ptyHost] 会话 ${sid} 空闲 ${Math.round(idleMs / 60000)} 分钟，回收 pty`);
+          logger.info('ptyHost', `会话 ${sid} 空闲 ${Math.round(idleMs / 60000)} 分钟，回收 pty`);
           taskkill(rec.child.pid);
           ptys.delete(sid);
         }

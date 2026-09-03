@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 import { startRemoteProxy } from './proxy.js';
 import { startTunnel } from './tunnel.js';
+import { logger } from '../logger.js';
 
 /** 远程代理起始端口（独立于业务端口；cloudflared 指向实际用到的那个）。环境变量可覆盖。
  *  ⚠ 不能写死单个端口：QQ（QQNT）固定占用 4001（9-02 实测），写死 4001 → 装 QQ 的机器开远程必失败。
@@ -50,7 +51,7 @@ export function createRemote(deps) {
             break;
           } catch (err) {
             lastErr = err;
-            console.error(`[remote] 代理端口 ${p} 启动失败（试下一个）: ${err.message}`);
+            logger.warn('remote', `代理端口 ${p} 启动失败（试下一个）: ${err.message}`);
           }
         }
         if (!server) {
@@ -64,7 +65,7 @@ export function createRemote(deps) {
         const t = await startTunnel(usedPort);
         tunnelChild = t.child; // 存子进程，stop 时杀
         publicUrl = t.url;
-        console.log(`[remote] 公网地址: ${publicUrl || '(未获取，仅局域网可用)'}（代理端口 ${usedPort}）`);
+        logger.info('remote', `公网地址: ${publicUrl || '(未获取，仅局域网可用)'}（代理端口 ${usedPort}）`);
         return { url: publicUrl };
       })();
 
@@ -96,7 +97,7 @@ export function createRemote(deps) {
         proxy = null;
       }
       publicUrl = null;
-      console.log('[remote] 远程访问已关闭');
+      logger.info('remote', '远程访问已关闭');
     },
   };
 }

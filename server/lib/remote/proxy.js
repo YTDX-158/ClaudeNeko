@@ -19,6 +19,7 @@ import http from 'node:http';
 import net from 'node:net'; // P2：原始 TCP 管道转发 WebSocket 升级（远程终端）
 import { randomBytes, createHash } from 'node:crypto';
 import { readBody } from '../util.js';
+import { logger } from '../logger.js';
 
 const AUTH_COOKIE = 'neko_auth';
 
@@ -129,7 +130,7 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
         if (pairFails >= MAX_PAIR_FAILS) {
           pairLockUntil = Date.now() + PAIR_LOCK_MS;
           pairFails = 0; // 锁定后重置计数，避免锁定解除后立即再次累计
-          console.warn(`[remote] 配对失败累计 ${MAX_PAIR_FAILS} 次，已锁定 ${PAIR_LOCK_MS / 1000}s 防爆破`);
+          logger.warn('remote', `配对失败累计 ${MAX_PAIR_FAILS} 次，已锁定 ${PAIR_LOCK_MS / 1000}s 防爆破`);
         }
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false }));
@@ -206,7 +207,7 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
     const session = getCookie(req.headers.cookie || '', AUTH_COOKIE);
     const authed = session && pairing.hasSession(sha256(session));
     // 诊断日志（P2 排查用）：WS 升级到没到代理、配对过没过
-    console.log(`[proxy] WS upgrade ${req.url} cookie=${session ? '有' : '无'} 配对=${authed ? '通过' : '拒绝'}`);
+    logger.info('remote', `WS upgrade ${req.url} cookie=${session ? '有' : '无'} 配对=${authed ? '通过' : '拒绝'}`);
     if (!authed) {
       try {
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
@@ -257,7 +258,7 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
     server.once('error', onErr);
     server.listen(port, '127.0.0.1', () => {
       server.removeListener('error', onErr);
-      console.log(`[remote] 远程代理已启动: http://127.0.0.1:${port}（仅配对凭证可过）`);
+      logger.info('remote', `远程代理已启动: http://127.0.0.1:${port}（仅配对凭证可过）`);
       resolve({ server });
     });
   });

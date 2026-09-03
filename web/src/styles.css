@@ -975,6 +975,44 @@ body {
   margin-bottom: 14px;
 }
 .skin-modal-title { font-size: 15px; font-weight: 700; }
+/* 日志面板（9-03）：设置页查看 server/log.txt */
+.log-panel-box {
+  width: min(880px, 94vw);
+  height: min(600px, 84vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.log-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.log-panel-title { font-size: 14px; font-weight: 700; }
+.log-panel-status { flex: 1; font-size: 11px; color: var(--muted-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-panel-btns { display: flex; gap: 6px; }
+.log-panel-body {
+  flex: 1;
+  overflow: auto;
+  margin: 12px 14px;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(0, 0, 0, 0.2));
+  user-select: text;
+}
 /* 标签页 */
 .skin-tabs {
   display: flex;
@@ -1133,6 +1171,27 @@ body {
   font-size: 11px;
   color: var(--muted-2);
   margin-top: 6px;
+}
+
+/* 设置页底部（9-03）：版本号醒目 + 共同开发署名最小低调 */
+.skin-credit-wrap {
+  text-align: center;
+  margin-top: 12px;
+  user-select: none;
+}
+.skin-version {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  opacity: 0.9;
+  letter-spacing: 0.3px;
+}
+.skin-credit {
+  font-size: 9px;
+  color: var(--muted-2);
+  opacity: 0.6;
+  margin-top: 3px;
+  letter-spacing: 0.5px;
 }
 
 /* ============ Aqua 移植：流体背景 ============ */

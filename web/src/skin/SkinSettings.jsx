@@ -9,6 +9,7 @@ import ModelSettings from './ModelSettings.jsx';
 import { downloadText, exportSessionText } from '../utils/export.js';
 import ExportDialog from '../components/ExportDialog.jsx';
 import SkillsPanel from '../components/SkillsPanel.jsx';
+import LogPanel from '../components/LogPanel.jsx';
 import { EFFORT_LEVELS, readDefaultEffort, setDefaultEffort } from '../utils/effort.js';
 import { readConfirmMedia, setConfirmMedia } from '../utils/mediaConfirm.js';
 
@@ -59,16 +60,24 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
   const [confirmReset, setConfirmReset] = useState(false);
   const [autostart, setAutostart] = useState(null); // null=加载中 / true|false=开关状态
   const [skillsOpen, setSkillsOpen] = useState(false); // 已装 Skills 查看面板
+  const [logOpen, setLogOpen] = useState(false); // 日志面板
   const [defaultEffort, setDefEffort] = useState(readDefaultEffort); // 全局默认思考档位（省/标准/强力）
   const [confirmMedia, setConfirmMediaState] = useState(readConfirmMedia); // 生成图片/视频前确认（默认开）
   const [remote, setRemote] = useState(null); // null=加载中 / {enabled, publicUrl, pairCode}
   const [remoteBusy, setRemoteBusy] = useState(false); // 开关切换中（防连点）
+  const [appVersion, setAppVersion] = useState(null); // 底部版本号（后端 /api/health 带，随 package.json 自动更新）
 
   // 打开设置时刷新默认档 / 生成确认开关：组件常驻挂载，运行期 localStorage 可能被改/清，避免显示启动时旧值
   useEffect(() => {
     if (open) {
       setDefEffort(readDefaultEffort());
       setConfirmMediaState(readConfirmMedia());
+    }
+  }, [open]);
+  // 打开设置时拉版本号（9-03：底部版本 + 署名；拿不到就只显示署名，静默不报错）
+  useEffect(() => {
+    if (open) {
+      api.health().then((r) => setAppVersion(r?.version || null)).catch(() => {});
     }
   }, [open]);
   const fileRef = useRef(null);
@@ -528,6 +537,10 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
                   <span>已装 Skills（查看全部技能）</span>
                   <button className="skin-btn" onClick={() => setSkillsOpen(true)}>查看</button>
                 </div>
+                <div className="skin-row">
+                  <span>查看日志（server/log.txt，排雷用）</span>
+                  <button className="skin-btn" onClick={() => setLogOpen(true)}>查看</button>
+                </div>
                 <div className="skin-hint">更多功能开关会陆续加到这里</div>
               </div>
             </div>
@@ -555,7 +568,12 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
             </button>
           )}
         </div>
+        <div className="skin-credit-wrap">
+          {appVersion && <div className="skin-version">ClaudeNeko {appVersion}</div>}
+          <div className="skin-credit">仰天大笑×孑孓羽然 共同开发</div>
+        </div>
         <SkillsPanel open={skillsOpen} onClose={() => setSkillsOpen(false)} />
+        <LogPanel open={logOpen} onClose={() => setLogOpen(false)} />
         {exportAllOpen && (
           <ExportDialog
             title="导出全部会话"

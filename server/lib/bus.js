@@ -1,3 +1,4 @@
+import { logger } from './logger.js';
 // server/lib/bus.js — 最小事件总线（Phase2：模块解耦）
 //
 // 目的：模块（transcript/ptyHost）不再直接依赖 server.js 的回调，改为 emit 事件；
@@ -34,7 +35,7 @@ export function createEventBus() {
       try {
         fn(payload);
       } catch (err) {
-        console.error(`[bus] ${event} 订阅者出错:`, err.message);
+        logger.error('bus', `${event} 订阅者出错:`, err.message);
       }
     }
   }

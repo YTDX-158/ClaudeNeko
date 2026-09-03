@@ -1,3 +1,4 @@
+import { logger } from './logger.js';
 // server/lib/busyLock.js — 会话在途锁（busy）唯一写入口（8-27 收敛）
 //
 // 收敛背景：busy（Set）+ busyTimers（Map·5min 兜底 timer）曾被 5 处直接操作
@@ -25,11 +26,11 @@ export function createBusyLock() {
     if (busy.has(id)) return false;
     busy.add(id);
     const timer = setTimeout(() => {
-      console.log(`[busyLock] 5min 兜底超时，强制释放 sid=${id}`);
+      logger.warn('busyLock', `5min 兜底超时，强制释放 sid=${id}`);
       release(id);
     }, LOCK_TIMEOUT_MS);
     busyTimers.set(id, timer);
-    console.log(`[busyLock] acquire sid=${id}`);
+    logger.info('busyLock', `acquire sid=${id}`);
     return true;
   }
 

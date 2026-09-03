@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, renameSync 
 import { randomInt } from 'crypto';
 import { join } from 'path';
 import { homedir } from 'os';
+import { logger } from '../logger.js';
 
 /** 配置目录：放用户 home 下，避开全局安装/只读目录 */
 const CONFIG_DIR = join(homedir(), '.claudeneko');
@@ -24,7 +25,7 @@ function readConfig() {
       if (Array.isArray(parsed.sessions)) cfg = { sessions: parsed.sessions };
       // 损坏/非预期结构 → 用空 sessions 兜底，不崩进程
     } catch {
-      console.error('[pairing] config.json 解析失败，已重置为空（原文件损坏）');
+      logger.error('pairing', 'config.json 解析失败，已重置为空（原文件损坏）');
     }
   }
   cache = cfg;

@@ -30,6 +30,16 @@ import * as configService from './lib/configService.js';
 import { detectEnv } from './lib/envReport.js';
 import { createRemote } from './lib/remote/index.js';
 import * as pairing from './lib/remote/pairing.js';
+import { logger } from './lib/logger.js';
+
+// 9-03 崩溃日志：未捕获异常/拒绝留 ERROR/WARN（本地排雷最怕悄无声息挂）
+process.on('uncaughtException', (e) => {
+  logger.error('server', '未捕获异常（进程退出）', e);
+  process.exit(1); // 记录后退出，防半死进程
+});
+process.on('unhandledRejection', (reason) => {
+  logger.warn('server', '未处理的 Promise 拒绝', reason instanceof Error ? reason : new Error(String(reason)));
+});
 
 const config = resolveConfig();
 const mediaConfigService = createMediaConfig({ dataDir: config.dataDir }); // 生图生视频模型条目（设置中心「媒体配置」）
@@ -50,7 +60,7 @@ const media = createMediaService({
 setVisionConfigProvider(() => mediaConfigService.getVision()); // 视觉理解只认配置页（mediaConfig.vision）
 // 媒体库自动清理（审查⑤）：启动清一次 + 每 24h 清一次（TTL 30 天 / 总量上限 2GB）
 pruneMedia();
-setInterval(() => { try { pruneMedia(); } catch (e) { console.error('[media] 定时清理失败:', e.message); } }, 24 * 3600 * 1000).unref?.();
+setInterval(() => { try { pruneMedia(); } catch (e) { logger.error('media', '定时清理失败:', e.message); } }, 24 * 3600 * 1000).unref?.();
 const store = new SessionStore(config.dataDir);
 const busyLock = createBusyLock(); // per-session 在途锁（唯一写入口，见 lib/busyLock.js）
 const bus = createEventBus(); // 模块解耦事件总线（Phase2，事件字典见 lib/bus.js）
@@ -71,7 +81,7 @@ const ptyHost = createPtyHost({
 // 注意：不在此释放 transcript（force-stop 后用户会重新发消息 → 重新 ensure，
 // 若释放则 emitted=0 全量回放 → 触发历史重复）。释放只发生在会话删除（见 DELETE handler）。
 bus.on('pty:exit', ({ sid }) => {
-  console.log(`[ptyHost] pty 退出 sid=${sid}`);
+  logger.info('ptyHost', `pty 退出 sid=${sid}`);
   busyLock.release(sid);
   terminal.broadcast(sid, { t: 'ev', e: { kind: 'error', text: '终端进程已退出，请重新发送消息' } });
 });
@@ -96,7 +106,7 @@ bus.on('transcript:tool', ({ sid, ev }) => terminal.broadcast(sid, { t: 'ev', e:
 bus.on('pty:confirm-fail', ({ sid, text }) => {
   busyLock.release(sid);
   terminal.broadcast(sid, { t: 'send-fail', text });
-  console.warn(`[pty] 消息确认送达失败（重发耗尽）sid=${sid}: ${String(text).slice(0, 50)}`);
+  logger.warn('pty', `消息确认送达失败（重发耗尽）sid=${sid}: ${String(text).slice(0, 50)}`);
 });
 
 // 终端 WS 通道（upgrade 挂载在 server.on('upgrade')）
@@ -108,7 +118,7 @@ const APP_VERSION = JSON.parse(fs.readFileSync(path.join(SERVER_DIR, '..', 'pack
 const modelConfig = createModelConfig({ dataDir: config.dataDir });
 const configRouter = configHandler({ modelConfig, configService, detectEnv, readBody, ptyHost, store, busyLock, media });
 const mediaConfigRouter = mediaConfigHandler({ mediaConfig: mediaConfigService, readBody, imageModels: config.media.imageModels, videoModels: config.media.videoModels });
-const systemRouter = systemHandler({ config, appVersion: APP_VERSION, getAutoStartEnabled, setAutoStart, readBody });
+const systemRouter = systemHandler({ config, appVersion: APP_VERSION, getAutoStartEnabled, setAutoStart, readBody, isLocalRequest });
 const mediaRouter = mediaHandler({ media, mediaConfig: mediaConfigService, store, ptyHost, isLocalRequest });
 const sessionsRouter = sessionsHandler({ store, config, busyLock, media, isLocalRequest, ptyHost, transcript, terminal });
 const statsRouter = statsHandler({ store, isLocalRequest }); // 成本统计（独立路由）
@@ -143,12 +153,12 @@ function runPowerShell(script) {
     child.on('close', () => {
       clearTimeout(timer);
       // 注册/注销失败的真实原因（Access denied 等）落日志，排障不再靠猜
-      if (err.trim()) console.error('[autostart] powershell stderr:', err.trim());
+      if (err.trim()) logger.error('autostart', 'powershell stderr:', err.trim());
       resolve(out.trim());
     });
     child.on('error', (e) => {
       clearTimeout(timer);
-      console.error('[autostart] powershell 启动失败:', e.message);
+      logger.error('autostart', 'powershell 启动失败:', e.message);
       resolve(out.trim());
     });
   });
@@ -229,15 +239,11 @@ function handleAssistantEvent({ sid, ev }) {
     // 去重：jsonl 同 message.id 多次轮询（emitted 已挡，但跨轮询兜底）
     const msgs = store.readMessages(sid);
     if (msgs.some((m) => m.claudeMessageId === ev.claudeMessageId)) return;
-    // 系统记录确认：从后往前找「最近一条 user」——若是 isSystem（命令/回填），且本回复是短确认词 →
-    // 标 isSystem（前端不渲染，防"已记录"刷屏）。
-    // ⚠ 不能用「上一条」：生图结果（assistant）可能先落盘，claude 的确认回复晚到，上一条就变成结果而非系统记录。
-    // 在后端标（而非前端判顺序）→ 刷新/轮询合并都能稳定过滤
-    let lastUser = null;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].role === 'user') { lastUser = msgs[i]; break; }
-    }
-    const isSystemConfirm = !!lastUser?.isSystem && SYSTEM_CONFIRM.test(String(ev.text || '').trim());
+    // 系统记录确认：claude 对【系统记录】的机械确认 → 标 isSystem（前端不渲染，防"已记录"刷屏）。
+    // B2（9-03 放宽）：不再要求「最近一条 user 是 isSystem」——媒体系统记录可能夹在用户真实消息之间，
+    // 原条件会漏标（store 实证：'已记录。' 因前文是用户消息而漏滤显示成气泡）。
+    // 放宽为：匹配短确认词（≤30 字符）即标。误吞风险极低——用户正常问答不会产出 ≤30 字符的纯"已记录"式回复。
+    const isSystemConfirm = SYSTEM_CONFIRM.test(String(ev.text || '').trim()) && String(ev.text || '').trim().length <= 30;
     store.appendMessage(sid, {
       role: 'assistant',
       text: ev.text,
@@ -251,7 +257,7 @@ function handleAssistantEvent({ sid, ev }) {
     busyLock.release(sid);
     terminal.broadcast(sid, { t: 'ev', e: ev });
   } catch (err) {
-    console.error(`[transcript] assistant 事件处理失败 sid=${sid}:`, err.message);
+    logger.error('transcript', `assistant 事件处理失败 sid=${sid}:`, err.message);
   }
 }
 
@@ -278,6 +284,14 @@ function claimPendingUser(sid, ev) {
   if (ev.claudeMessageId && msgs.some((m) => m.claudeMessageId === ev.claudeMessageId)) {
     return;
   }
+  const text = typeof ev.text === 'string' ? ev.text : '';
+  // B1（9-03）：系统记录（【系统记录】开头）回读 → 不认领用户 pending（它不是用户消息），
+  // 直接独立落库为 isSystem user。否则系统记录的 id 会认领到用户真实消息上（store 实证），
+  // 导致 claude 的"已记录"确认找不到前置 isSystem → 漏标漏滤。
+  if (text.startsWith('【系统记录】')) {
+    store.appendMessage(sid, { role: 'user', text, ts: ev.ts ?? Date.now(), claudeMessageId: ev.claudeMessageId, isSystem: true });
+    return;
+  }
   // 从后往前找最近一条 pendingJsonl 用户消息（避免误认领终端新打的）
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i];
@@ -287,9 +301,7 @@ function claimPendingUser(sid, ev) {
     }
   }
   // 没有 pendingJsonl（终端直接打的）→ append 新用户消息。
-  // 系统记录命令（媒体生成的 claude 记忆）以【系统记录】开头 → 标 isSystem，前端渲染跳过（不刷屏）
-  const isSystem = typeof ev.text === 'string' && ev.text.startsWith('【系统记录】');
-  store.appendMessage(sid, { role: 'user', text: ev.text, ts: ev.ts ?? Date.now(), claudeMessageId: ev.claudeMessageId, ...(isSystem ? { isSystem: true } : {}) });
+  store.appendMessage(sid, { role: 'user', text, ts: ev.ts ?? Date.now(), claudeMessageId: ev.claudeMessageId });
 }
 
 async function routeApi(req, res, url) {
@@ -355,7 +367,7 @@ const server = http.createServer(async (req, res) => {
       serveStatic(req, res, url, DIST_DIR);
     }
   } catch (err) {
-    console.error('[server] 处理请求出错:', err.message);
+    logger.error('server', '处理请求出错:', err.message);
     if (!res.headersSent) sendJson(res, 500, { error: '服务器内部错误' });
     else res.destroy();
   }
@@ -365,9 +377,9 @@ const server = http.createServer(async (req, res) => {
 server.on('upgrade', terminal.upgradeHandler);
 
 server.listen(config.port, '127.0.0.1', () => {
-  console.log(`[server] ClaudeNeko 后端已启动: http://127.0.0.1:${config.port}`);
-  console.log(`[server] claude.exe: ${config.claudeBin}`);
-  console.log(`[server] 终端页: ${ptyHost.available ? '可用（node-pty 已加载）' : '不可用（node-pty 加载失败，聊天降级）'}`);
+  logger.info('server', `ClaudeNeko 后端已启动: http://127.0.0.1:${config.port}`);
+  logger.info('server', `claude.exe: ${config.claudeBin}`);
+  logger.info('server', `终端页: ${ptyHost.available ? '可用（node-pty 已加载）' : '不可用（node-pty 加载失败，聊天降级）'}`);
 });
 
 /* ---------- 退出清理：杀隧道 + 关远程代理 + 杀 pty 进程树，避免 Windows 下孤儿残留 ---------- */

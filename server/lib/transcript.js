@@ -16,9 +16,25 @@
 //     每行 message.content 是一个块（thinking/text/tool_use），都带同一份 message.usage
 //   - 顶层无 usage/model（model 在 mode 行）
 
-import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
+import { readFileSync, readdirSync, statSync, existsSync, openSync, readSync, closeSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { logger } from './logger.js';
+
+/** 诊断日志时间格式化（毫秒 → HH:MM:SS，仅供排雷日志） */
+const fmtTs = (ms) => (ms ? new Date(ms).toLocaleTimeString('zh-CN', { hour12: false }) : '?');
+
+/**
+ * 把 jsonl 行的 timestamp 解析成 epoch 毫秒。
+ * ⚠ 9-03 修复：jsonl 的 timestamp 实测是 ISO 字符串（"2026-09-02T22:07:04.618Z"），
+ * 旧代码 `j.timestamp * 1000` 得 NaN → 所有事件 ts 变 NaN。数字按秒×1000、字符串走 Date、非法回退 now。
+ */
+function parseTs(j) {
+  const t = j?.timestamp;
+  if (t === undefined || t === null) return Date.now();
+  const ms = typeof t === 'number' ? t * 1000 : new Date(t).getTime();
+  return Number.isFinite(ms) ? ms : Date.now();
+}
 
 /** 把项目绝对路径编码成 ~/.claude/projects 下的目录名（每个非字母数字字符都转 -） */
 export function encodeProjectDir(cwd) {
@@ -42,31 +58,78 @@ function projectDir(cwd) {
  * ⚠ 用 birthtime（创建时间）而非 mtime：当前活跃会话（如 CLI 本会话）的 jsonl mtime 一直在更新，
  *   baseline 过滤挡不住；但它是 ensure 之前就存在的，birthtime < baseline，天然被排除。
  */
-export function findLatestSession(cwd, afterTs, excludeIds) {
+/** 读文件尾部小窗口，查是否含指纹片段（绑定验证用，避免全量读大 jsonl） */
+function fileTailContains(file, fp, tailBytes = 16384) {
+  try {
+    const size = statSync(file).size;
+    if (size < 1) return false;
+    const len = Math.min(size, tailBytes);
+    const fd = openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(len);
+      readSync(fd, buf, 0, len, size - len);
+      return buf.toString('utf8').includes(fp);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 定位本会话的 claude jsonl（9-03 v2.1 指纹绑定版）。
+ * ⚠ 不再「猜最新文件」：未绑定会话必须带「最近提交文本指纹」才探测，
+ *   且只接受「尾部确实含该指纹」的 jsonl —— 多会话并发各找各的，杜绝交叉错绑。
+ * @param {string} cwd 项目目录
+ * @param {number} afterTs ensure 时刻（毫秒）
+ * @param {Set<string>} excludeIds 排除的 claudeSessionId（store 已有会话）
+ * @param {string} fingerprint 最近提交文本前 30 字符；空则不确定，不探测（返回 null）
+ */
+export function findLatestSession(cwd, afterTs, excludeIds, fingerprint, onDiag) {
   const dir = projectDir(cwd);
-  if (!existsSync(dir)) return null;
+  if (!existsSync(dir)) { onDiag?.({ error: '目录不存在', total: 0 }); return null; }
   let files;
   try {
     files = readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
   } catch {
+    onDiag?.({ error: '读取目录失败', total: 0 });
     return null;
   }
-  if (!files.length) return null;
-  let best = null;
+  if (!files.length) { onDiag?.({ error: '无 jsonl', total: 0 }); return null; }
+  const fp = String(fingerprint || '').trim().slice(0, 30);
+  if (!fp) {
+    // 无指纹（还没发消息）→ 不猜不绑（此时本会话的 jsonl 也未必生成）
+    onDiag?.({ error: '无指纹(尚未发消息)不探测', total: files.length });
+    return null;
+  }
+  // 候选：非排除 +（ensure 后新建 或 5s 内活跃写入），按 mtime 降序
+  const candidates = [];
   for (const f of files) {
     const sessionId = f.replace(/\.jsonl$/, '');
-    if (excludeIds?.has(sessionId)) continue; // 排除已知会话
+    const excluded = !!excludeIds?.has(sessionId); // 排除已知会话
+    if (excluded) continue;
     const full = join(dir, f);
     try {
       const st = statSync(full);
-      const bt = st.birthtimeMs || st.ctimeMs; // Windows 有 birthtime；退化用 ctime
-      if (afterTs && bt < afterTs) continue; // 只认 ensure 之后「创建」的（新建会话）
-      if (!best || bt > best.mt) best = { mt: bt, file: full, sessionId };
+      const birth = st.birthtimeMs || st.ctimeMs; // Windows 有 birthtime；退化用 ctime
+      const mtime = st.mtimeMs;
+      const active = !!(afterTs && mtime >= afterTs - 5000); // 5s 内活跃写入 = 正在用
+      if (!active && !(afterTs && birth >= afterTs)) continue; // 既非新建也非活跃 → 跳过
+      candidates.push({ id: sessionId.slice(0, 8), file: full, sessionId, birth, mtime, active });
     } catch {
       // 文件被占/删除，跳过
     }
   }
-  return best;
+  candidates.sort((a, b) => b.mtime - a.mtime);
+  for (const c of candidates) {
+    if (fileTailContains(c.file, fp)) {
+      onDiag?.({ baseline: afterTs, total: files.length, matched: c.id, candidates: candidates.map((x) => `${x.id}(创建${fmtTs(x.birth)}/改${fmtTs(x.mtime)})`) });
+      return { mt: c.mtime, file: c.file, sessionId: c.sessionId };
+    }
+  }
+  onDiag?.({ baseline: afterTs, total: files.length, error: '候选均不含指纹', candidates: candidates.map((x) => `${x.id}(创建${fmtTs(x.birth)}/改${fmtTs(x.mtime)})`) });
+  return null;
 }
 
 /** 由会话 id 拼出 transcript 文件路径（--resume <id> 显式指定时） */
@@ -121,7 +184,7 @@ export function messageToEvents(j, acc) {
     if (/^This session is being continued from a previous conversation that ran out of context\./i.test(text.trim())) return [];
     // user 无 message.id，用行 uuid 作唯一标识（认领/去重用）
     const claudeMessageId = j.uuid || `user-${j.timestamp ?? ''}-${text.length}`;
-    if (text.trim()) return [{ kind: 'user', text, claudeMessageId, ts: j.timestamp ? j.timestamp * 1000 : Date.now() }];
+    if (text.trim()) return [{ kind: 'user', text, claudeMessageId, ts: parseTs(j) }];
     return [];
   }
   if (type !== 'assistant') return [];
@@ -140,7 +203,7 @@ export function messageToEvents(j, acc) {
       if (!cur.usage) cur.usage = extractUsage(m);
     } else if (b.type === 'tool_use') {
       // tool 事件：单独 emit，不并入主文本
-      out.push({ kind: 'tool', text: String(b.name || 'tool'), claudeMessageId: mid, ts: j.timestamp ? j.timestamp * 1000 : Date.now() });
+      out.push({ kind: 'tool', text: String(b.name || 'tool'), claudeMessageId: mid, ts: parseTs(j) });
     }
   }
   // 有 text 块 → 主文本完整，emit 一条 assistant 事件
@@ -153,7 +216,7 @@ export function messageToEvents(j, acc) {
       kind: 'assistant',
       text: cur.text,
       claudeMessageId: mid,
-      ts: j.timestamp ? j.timestamp * 1000 : Date.now(),
+      ts: parseTs(j),
     };
     if (cur.thinking) ev.thinking = cur.thinking;
     if (cur.usage) ev.usage = cur.usage;
@@ -181,6 +244,15 @@ export function createTranscriptService({ bus, getKnownSessionIds }) {
   // sid -> { timer, emitted, lastSize, running, acc, cwd, claudeSessionId }
   const pollers = new Map();
 
+  // 指纹绑定（9-03 v2.1）：ptyHost submit 时广播提交文本 → 记录为探测指纹（防交叉错绑）。
+  // 若 submit 早于 ensure（罕见），先缓存 pendingSubmit，ensure 建 rec 时补上。
+  const pendingSubmit = new Map();
+  bus.on('pty:submit', ({ sid, text }) => {
+    const rec = pollers.get(sid);
+    if (rec) rec.lastSubmitText = String(text);
+    else pendingSubmit.set(sid, String(text));
+  });
+
   /** 绑定某会话的轮询（懒启动）。有 claudeSessionId 直接绑文件；没有则扫描探测。 */
   function ensure(sid, { cwd, claudeSessionId }) {
     const existing = pollers.get(sid);
@@ -188,7 +260,11 @@ export function createTranscriptService({ bus, getKnownSessionIds }) {
       if (claudeSessionId) existing.claudeSessionId = claudeSessionId;
       return;
     }
-    const rec = { timer: null, emitted: 0, lastSize: -1, running: false, acc: new Map(), cwd, claudeSessionId: claudeSessionId || null, baseline: Date.now() };
+    const rec = { timer: null, emitted: 0, lastSize: -1, running: false, acc: new Map(), cwd, claudeSessionId: claudeSessionId || null, baseline: Date.now(), lastSubmitText: null };
+    if (pendingSubmit.has(sid)) {
+      rec.lastSubmitText = pendingSubmit.get(sid);
+      pendingSubmit.delete(sid);
+    }
     pollers.set(sid, rec);
     const pump = () => {
       if (rec.running) return;
@@ -197,10 +273,20 @@ export function createTranscriptService({ bus, getKnownSessionIds }) {
       if (rec.claudeSessionId) {
         file = sessionFile(rec.cwd, rec.claudeSessionId);
       } else {
-        // 排除 store 已有会话的 claudeSessionId：防命中活跃会话（当前会话一直在写，baseline 挡不住）
+        // ⚠ 指纹驱动（9-03 v2.1）：没发过消息（无指纹）→ 不探测（jsonl 未生成，也防"猜最新"错绑/刷屏）
+        const fp = rec.lastSubmitText ? String(rec.lastSubmitText).trim().slice(0, 30) : '';
+        if (!fp) return;
+        // 排除 store 已有会话的 claudeSessionId：防命中活跃会话
         const known = new Set(getKnownSessionIds?.() ?? []);
-        const latest = findLatestSession(rec.cwd, rec.baseline, known);
-        console.log(`[transcript] 探测 sid=${sid} cwd=${rec.cwd} → ${latest ? latest.sessionId.slice(0,8) : '无'}（排除${known.size}已知）`);
+        const latest = findLatestSession(rec.cwd, rec.baseline, known, fp, (d) => {
+          // 探测诊断（9-03 排雷）：只在「无结果」时打印明细，同 sid 8s 限流防刷屏
+          if (d.matched) return;
+          const now = Date.now();
+          if (rec.lastDiagTs && now - rec.lastDiagTs < 8000) return;
+          rec.lastDiagTs = now;
+          const desc = d.error || (d.candidates || []).join(' ') || '无候选';
+          logger.warn('transcript', `探测无结果 sid=${sid.slice(0, 8)} 共${d.total}文件 ${desc}`);
+        });
         if (latest && latest.sessionId) {
           bus.emit('transcript:sessionId', { sid, claudeSessionId: latest.sessionId });
           rec.claudeSessionId = latest.sessionId;

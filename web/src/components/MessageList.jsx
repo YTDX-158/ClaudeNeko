@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import MessageBubble from './MessageBubble.jsx';
 
-// 方案A：claude 对系统记录（媒体生成记忆）的机械确认回复不渲染。
-// 只匹配"已记录"类（已记录 / 好的，已记录…），不误伤"好的/收到"等正常简短回复。
-const SYSTEM_CONFIRM = /^(好的?，?)?已记录?[，。！!~～\s]*$/i;
-
 /**
  * 回合分组（8-30）：claude 一次回复因工具调用会被拆成多条独立 assistant 记录，
  * 逐条渲染就成了"N 条气泡"。渲染层把「中间无用户消息、无附件、非 streaming 的连续
@@ -144,9 +140,12 @@ export default function MessageList({ messages, error, onQuote, onBranch, sessio
 
   // 过滤系统记录 + 回合分组渲染（组内保持 msg-{index} 锚点语义 = 过滤后数组顺序）
   const filtered = messages.filter((m, i) => {
-    if (m.isSystem) return false; // 系统记录 user（命令/回填）
+    if (m.isSystem) return false; // 系统记录 user（命令/回填）+ B2 机械确认（后端已标）
     const prev = messages[i - 1];
-    if (m.role === 'assistant' && prev?.isSystem && SYSTEM_CONFIRM.test(String(m.text || '').trim())) return false; // 机械确认
+    // A1（9-03）：紧跟系统记录（isSystem）之后、**来自 claude 的**回复（话痨长句"收到已生成状态记录…"）
+    // → 折叠不散成气泡。⚠ 9-03 修正：必须限定「有 claudeMessageId」（= claude jsonl 真实回复）才滤——
+    //   [🎬 生视频] 结果气泡是系统插入的（无 claudeMessageId），紧跟确认流之后，不能滤（否则生成结果消失）。
+    if (m.role === 'assistant' && m.claudeMessageId && prev?.isSystem) return false;
     return true;
   });
   const groups = buildGroups(filtered);

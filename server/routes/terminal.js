@@ -14,6 +14,7 @@
 // 远程经 proxy 重写 Origin/Host 成本机后也匹配（与现有 HTTP 转发模型一致）。
 
 import { WebSocketServer } from 'ws';
+import { logger } from '../lib/logger.js';
 
 const TERM_BUF_MAX = 2 * 1024 * 1024; // 回放缓冲上限（最近 2MB 原始字节，够滚回看多次生成的完整输出；原 64KB 太小）
 const SYNC_WINDOW_MS = 200; // attach 同步窗：200ms 内 drop 实时流，等快照稳定再发（tmux-web 默认值）
@@ -124,7 +125,7 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
       if (!ptyHost.isRunning(sid)) return; // pty 没了
       const bufLen = getTermBuffer(sid).length;
       if (bufLen >= STARTUP_MIN_TERMBUF) return; // TUI 已正常画出
-      console.error(`[terminal] 会话 ${sid} attach 后 termBuf 仅 ${bufLen}B（疑似窄列渲染崩/单色+c），宽列 ${WAKE_COLS} 列 resize 唤醒`);
+      logger.warn('terminal', `会话 ${sid} attach 后 termBuf 仅 ${bufLen}B（疑似窄列渲染崩/单色+c），宽列 ${WAKE_COLS} 列 resize 唤醒`);
       ptyHost.resize(sid, WAKE_COLS, 30);
     }, WAKE_CHECK_MS);
     wakeTimers.set(sid, t);
@@ -146,12 +147,12 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
         continue;
       }
       if (st.retries >= MAX_STARTUP_RETRIES) {
-        console.error(`[terminal] 会话 ${sid} termBuf 持续仅 ${bufLen}B（疑似 TUI 死锁/单色+c），重试 ${st.retries} 次仍失败，放弃自愈`);
+        logger.error('terminal', `会话 ${sid} termBuf 持续仅 ${bufLen}B（疑似 TUI 死锁/单色+c），重试 ${st.retries} 次仍失败，放弃自愈`);
         healState.delete(sid);
         continue;
       }
       const retries = st.retries + 1;
-      console.error(`[terminal] 会话 ${sid} termBuf 仅 ${bufLen}B < ${STARTUP_MIN_TERMBUF}B（疑似 TUI 渲染死锁/单色+c），第 ${retries}/${MAX_STARTUP_RETRIES} 次自动重启`);
+      logger.warn('terminal', `会话 ${sid} termBuf 仅 ${bufLen}B < ${STARTUP_MIN_TERMBUF}B（疑似 TUI 渲染死锁/单色+c），第 ${retries}/${MAX_STARTUP_RETRIES} 次自动重启`);
       ptyHost.kill(sid);
       clearTermBuffer(sid);
       const s = store.get(sid);
@@ -204,7 +205,7 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
     ws.wantTerm = false;
     ws.lastActivity = Date.now(); // M14 心跳（流量检测）：收发消息刷新，5min 无流量才 close
     clients.add(ws);
-    console.log(`[terminal] 连接建立 sid=${sid} cwd=${store.get(sid)?.cwd || config.defaultCwd}`);
+    logger.info('terminal', `连接建立 sid=${sid} cwd=${store.get(sid)?.cwd || config.defaultCwd}`);
 
     // 懒启动该会话的 pty + transcript（若 store 有该会话则带上下文）
     const session = store.get(sid);
@@ -214,7 +215,7 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
       claudeSessionId: session?.claudeSessionId || undefined,
       // 不传 model：claude 统一走全局 env（改模型=全局生效）
     });
-    console.log(`[terminal] pty ensure sid=${sid}: ${JSON.stringify(ptyRes)}`);
+    logger.info('terminal', `pty ensure sid=${sid}: ${JSON.stringify(ptyRes)}`);
     transcript.ensure(sid, { cwd, claudeSessionId: session?.claudeSessionId || undefined });
     // 死锁自愈：新 pty（冷启动）登记周期检测（30s 查一次 termBuf，TUI 未画出自动重启）
     if (ptyRes.isNew) trackHeal(sid);

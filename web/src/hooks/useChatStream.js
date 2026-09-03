@@ -135,11 +135,12 @@ export function useChatStream(sessionId, onModelUpdate) {
           setError(ev.text || '终端进程已退出');
           setMessages((prev) => prev.filter((m) => !(m.streaming && !m.text)));
         } else if (ev.kind === 'send-fail') {
-          // 9-02：消息确认送达失败（重发耗尽，claude 未响应）→ 清"思考中"占位 + 提示重试
+          // 9-03 文案修正：消息其实已注入 claude（HTTP 早已 200），只是确认超时（长内容/处理慢）。
+          // 旧文案"发送失败请重试"诱导用户重复发送 → 消息堆积重复。改"已发出/处理中"不诱导重发。
           setStreaming(false);
           streamingRef.current = false;
           setThinking(false);
-          setError('消息发送失败（claude 未响应），请重试');
+          setError('消息已发出，claude 正在处理（长内容等待较久）；若 60 秒仍无回复，可停止后重新发送');
           setMessages((prev) => prev.filter((m) => !(m.streaming && !m.text)));
         }
         // tool 事件：可选渲染小徽标（暂不做，保持简洁）
