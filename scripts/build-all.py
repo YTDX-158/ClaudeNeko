@@ -38,13 +38,40 @@ for _s in (sys.stdout, sys.stderr):
             pass
 
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _load_build_local():
+    """读本机私有配置 scripts/.build_local.env（gitignore 不入仓库）。
+    每行 KEY=VALUE（# 开头为注释），把真实本机路径注入环境变量。"""
+    env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".build_local.env")
+    if not os.path.isfile(env_file):
+        return
+    try:
+        with open(env_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+    except Exception:
+        pass
+
+
+_load_build_local()
+
 DELIVERY_DIR = os.path.join(PROJECT, "交付物")
 DIST_INSTALLER = os.path.join(PROJECT, "dist_installer")
 INSTALLER_SRC = os.path.join(PROJECT, "installer_src")
 # 归档统一入口（9-02 定稿）：源码包 + 封装包全进这
-# ⚠ 以下为本机路径（开发者的归档位置 + 本机 Inno Setup），二次开发者请按自己环境修改
-ARCHIVE_DIR = r"D:\UserFiles\004_归档\ClaudeNeko历史备份"
+# 本机归档位置：优先 scripts/.build_local.env（gitignore 不入仓库）→ 其次
+# 环境变量 CLAUDE_NEKO_ARCHIVE_DIR → 最后通用默认。二次开发者按需配置。
+ARCHIVE_DIR = os.environ.get(
+    "CLAUDE_NEKO_ARCHIVE_DIR",
+    os.path.join(os.path.expanduser("~"), "ClaudeNeko_归档"),
+)
 DESKTOP_TMP = os.path.expanduser("~/Desktop/待处理")
+# 本机 Inno Setup 7 路径（本机专用，二次开发者按自己环境修改或注释）
 ISCC = r"C:\Program Files (x86)\Inno Setup 7\ISCC.exe"
 ISS = os.path.join(PROJECT, "ClaudeNeko安装器.iss")
 
