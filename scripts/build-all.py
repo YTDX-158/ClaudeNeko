@@ -17,7 +17,7 @@ build-all.py — ClaudeNeko 一键打全部封装（绿色包 + SFX + 安装器�
   python scripts/build-all.py --skip-archive  # 不归档旧版
 
 对应规范：memory/workspace/references/自动化与工具/reference_claudeneko_packaging.md
-归档目录统一：D:/UserFiles/004_归档/ClaudeNeko历史备份/（源码+封装全在这，9-02 定稿）
+归档目录统一：本机 004_归档/ClaudeNeko历史备份（源码+封装全在这，9-02 定稿；路径见下方 ARCHIVE_DIR，本机专用）
 """
 import argparse
 import importlib.util
@@ -42,6 +42,7 @@ DELIVERY_DIR = os.path.join(PROJECT, "交付物")
 DIST_INSTALLER = os.path.join(PROJECT, "dist_installer")
 INSTALLER_SRC = os.path.join(PROJECT, "installer_src")
 # 归档统一入口（9-02 定稿）：源码包 + 封装包全进这
+# ⚠ 以下为本机路径（开发者的归档位置 + 本机 Inno Setup），二次开发者请按自己环境修改
 ARCHIVE_DIR = r"D:\UserFiles\004_归档\ClaudeNeko历史备份"
 DESKTOP_TMP = os.path.expanduser("~/Desktop/待处理")
 ISCC = r"C:\Program Files (x86)\Inno Setup 7\ISCC.exe"

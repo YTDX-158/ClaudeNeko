@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isConfigured, settingsPath } from './configService.js';
 
 function versionOf(cmd) {
@@ -42,8 +43,9 @@ export function detectProvider(baseUrl) {
 }
 
 // 常用目录存在即视为已装（无副作用，不启动服务）；可被环境变量覆盖
+// 自身推导：server 跑在哪，ClaudeNeko 就装在哪——不写死个人路径
 const NEKO_PATHS = [
-  path.join('D:', 'UserFiles', '002_项目', 'ClaudeNeko'),
+  fileURLToPath(new URL('../../', import.meta.url)),
 ];
 
 export function detectNeko() {
