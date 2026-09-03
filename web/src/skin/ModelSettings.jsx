@@ -6,15 +6,18 @@
 // - 视觉理解：独立配置项（baseUrl + key + model），AI 看附件用
 // 复用 SkinSettings 的 skin-* 样式类。
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 
-// 供应商模板（切换时自动带出 baseUrl；模型档为预设，可自定义输入）
+// 供应商模板（候选点击 → 自动带出 baseUrl；供应商名也可自由手输当自定义）
+// 注：qwen 的 baseUrl 为既有配置，存疑未核实，暂不动（另案处理）
 const PROVIDERS = [
   { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/anthropic', models: ['deepseek-v4-flash[1m]', 'deepseek-v4-pro[1m]'] },
   { id: 'qwen', label: '通义(Qwen)', baseUrl: 'https://dashscope.aliyuncs.com/api/v2/apps/anthropic', models: [] },
+  { id: 'zhipu', label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/anthropic', models: ['glm-5.2', 'glm-5-turbo'] },
+  { id: 'kimi', label: 'Kimi', baseUrl: 'https://api.moonshot.cn/anthropic', models: ['kimi-k3', 'kimi-k2.6'] },
+  { id: 'minimax', label: 'MiniMax', baseUrl: 'https://api.minimaxi.com/anthropic', models: ['MiniMax-M3[1m]', 'MiniMax-M2.7'] },
   { id: 'volcengine', label: '豆包(火山)', baseUrl: '', models: [] },
-  { id: 'custom', label: '自定义', baseUrl: '', models: [] },
 ];
 
 function Btn({ onClick, children, disabled, title }) {
@@ -29,10 +32,12 @@ function Btn({ onClick, children, disabled, title }) {
 function ChatConfig({ onModelChanged }) {
   const [cur, setCur] = useState(null); // 当前生效配置（脱敏）
   const [profiles, setProfiles] = useState(null); // { profiles: [], current }
-  const [prov, setProv] = useState('deepseek');
+  const [prov, setProv] = useState(''); // 供应商名：预设 label 或自由手输（任意文本）
   const [model, setModel] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [key, setKey] = useState('');
+  const [provOpen, setProvOpen] = useState(false); // 供应商候选下拉开合
+  const [candOpen, setCandOpen] = useState(false); // 模型候选下拉开合
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null); // { type: 'ok'|'err', text }
 
@@ -41,24 +46,49 @@ function ChatConfig({ onModelChanged }) {
     api.getProfiles().then((r) => setProfiles(r)).catch(() => {});
   };
   useEffect(() => { load(); }, []);
+  // R1 外点关闭：点页面其他处收起候选下拉（各自 ref 判断，互不误关）
+  const provRef = useRef(null);
+  const candRef = useRef(null);
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (provRef.current && !provRef.current.contains(e.target)) setProvOpen(false);
+      if (candRef.current && !candRef.current.contains(e.target)) setCandOpen(false);
+    };
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  }, []);
 
-  const onProv = (id) => {
-    setProv(id);
-    const p = PROVIDERS.find((x) => x.id === id);
-    if (p?.baseUrl) setBaseUrl(p.baseUrl);
-    if (p?.models?.length && !model) setModel(p.models[0]);
+  // 匹配：供应商输入文本命中预设（label 或 id）→ 该预设可提供 baseUrl/模型候选；未命中 = 自定义
+  const matchProv = PROVIDERS.find((p) => p.label === prov.trim() || p.id === prov.trim());
+  const provModels = matchProv?.models || []; // 当前供应商预设模型档（候选列表用）
+  const pickedProv = matchProv; // 命中的预设对象；手输自定义名时为 undefined
+
+  // 两个候选列表互斥（打开一个关另一个）：供应商 ↔ 模型
+  const openProv = (v) => { setProvOpen(v); if (v) setCandOpen(false); };
+  const openCand = (v) => { setCandOpen(v); if (v) setProvOpen(false); };
+
+  // 点候选：只在「点击」这一刻带 baseUrl（打字过程绝不动，防中途改写串台）；模型清空由你填/选
+  const pickProv = (p) => {
+    setProv(p.label);
+    setBaseUrl(p.baseUrl || ''); // 有预设就填；无预设（火山）就清空
+    setModel('');
+    setProvOpen(false);
+    setCandOpen(false);
   };
-  const provModels = PROVIDERS.find((p) => p.id === prov)?.models || []; // 当前供应商预设模型档（下拉用）
+
+  // R3：手输模型名可能带首尾空格/全角字符 → 统一 trim 后再提交（防 API 404/不认）
+  const cleanModel = () => (model || '').trim();
 
   // 存为档案并应用（原「保存并应用」升级：存档案 + 立即生效 + 重启 pty，一个请求原子完成）
   const doSaveApply = async () => {
-    if (!baseUrl || !model || !key) { setMsg({ type: 'err', text: '需要 baseUrl + 模型 + key' }); return; }
-    const name = prompt('档案名称（如 deepseek-flash）:', model.replace(/[^a-zA-Z0-9-]/g, '-'));
+    const m = cleanModel();
+    if (!baseUrl || !m || !key) { setMsg({ type: 'err', text: '需要 baseUrl + 模型 + key' }); return; }
+    const name = prompt('档案名称（如 deepseek-flash）:', m.replace(/[^a-zA-Z0-9-]/g, '-'));
     if (!name) return;
     if (profiles?.profiles?.includes(name) && !confirm(`档案「${name}」已存在，覆盖？`)) return;
     setBusy(true); setMsg(null);
     try {
-      const r = await api.saveApplyProfile({ name, provider: prov, baseUrl, model, authToken: key });
+      const r = await api.saveApplyProfile({ name, provider: prov, baseUrl, model: m, authToken: key });
       onModelChanged?.(); // 生效了 → 刷新右上角全局模型显示
       setMsg({ type: 'ok', text: `已保存「${r.applied}」并应用（全局默认）` });
       load();
@@ -67,10 +97,11 @@ function ChatConfig({ onModelChanged }) {
   };
 
   const doTest = async () => {
-    if (!baseUrl || !model || !key) { setMsg({ type: 'err', text: '需要 baseUrl + 模型 + key' }); return; }
+    const m = cleanModel();
+    if (!baseUrl || !m || !key) { setMsg({ type: 'err', text: '需要 baseUrl + 模型 + key' }); return; }
     setBusy(true); setMsg(null);
     try {
-      const r = await api.testConfig({ baseUrl, model, authToken: key });
+      const r = await api.testConfig({ baseUrl, model: m, authToken: key });
       setMsg(r.ok ? { type: 'ok', text: `连通成功（${r.latencyMs}ms）` } : { type: 'err', text: `连通失败：${r.error}` });
     } catch (e) { setMsg({ type: 'err', text: e.message || '测试失败' }); }
     setBusy(false);
@@ -78,13 +109,14 @@ function ChatConfig({ onModelChanged }) {
 
   // 存为档案（只存不应用，以后可到档案列表点「应用」切换）
   const doSaveProfile = async () => {
-    if (!baseUrl || !model || !key) { setMsg({ type: 'err', text: '需要 baseUrl + 模型 + key' }); return; }
-    const name = prompt('档案名称（如 deepseek-flash）:', model.replace(/[^a-zA-Z0-9-]/g, '-'));
+    const m = cleanModel();
+    if (!baseUrl || !m || !key) { setMsg({ type: 'err', text: '需要 baseUrl + 模型 + key' }); return; }
+    const name = prompt('档案名称（如 deepseek-flash）:', m.replace(/[^a-zA-Z0-9-]/g, '-'));
     if (!name) return;
     if (profiles?.profiles?.includes(name) && !confirm(`档案「${name}」已存在，覆盖？`)) return;
     setBusy(true);
     try {
-      await api.saveProfile({ name, provider: prov, baseUrl, model, authToken: key });
+      await api.saveProfile({ name, provider: prov, baseUrl, model: m, authToken: key });
       setMsg({ type: 'ok', text: `档案「${name}」已保存（未应用）` });
       load();
     } catch (e) { setMsg({ type: 'err', text: e.message || '保存失败' }); }
@@ -132,7 +164,7 @@ function ChatConfig({ onModelChanged }) {
         <div className="skin-label">📌 当前生效配置</div>
         {cur ? (
           <div style={{ fontSize: 13, color: '#888' }}>
-            供应商 {cur.provider || '—'} · 模型 <b>{cur.model || '—'}</b> · key {cur.keyMask || '—'} ·{' '}
+            供应商 {(PROVIDERS.find((p) => p.id === cur.provider)?.label) || cur.provider || '—'} · 模型 <b>{cur.model || '—'}</b> · key {cur.keyMask || '—'} ·{' '}
             {cur.configured ? <span style={{ color: '#2ecc71' }}>✅ 已配置</span> : <span style={{ color: '#e74c3c' }}>❌ 未配置</span>}
             <div style={{ marginTop: 4 }}>baseUrl: {cur.baseUrl || '—'}</div>
             <div style={{ marginTop: 8 }}>
@@ -165,27 +197,102 @@ function ChatConfig({ onModelChanged }) {
         <div className="skin-label">✏️ 配置 / 切换模型</div>
         <div className="skin-row">
           <span className="skin-label">供应商</span>
-          <select className="skin-input" value={prov} onChange={(e) => onProv(e.target.value)}>
-            {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
+          {/* 供应商名：可点▼选预设（自动带 baseUrl），也可直接手输任意名字当自定义 */}
+          <div className="model-cand" ref={provRef} style={{ position: 'relative', flex: 1, minWidth: 140 }}>
+            <input
+              className="skin-input"
+              value={prov}
+              onChange={(e) => { setProv(e.target.value); openProv(false); }}
+              onFocus={() => openProv(true)}
+              placeholder="选预设或输入任意供应商名"
+              spellCheck={false}
+              style={{ paddingRight: 30 }}
+            />
+            <button
+              type="button"
+              className="model-cand-toggle"
+              tabIndex={-1}
+              onClick={() => openProv(!provOpen)}
+              style={{
+                position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
+                border: 'none', background: 'transparent', color: 'var(--muted)', cursor: 'pointer',
+                fontSize: 11, padding: '2px 6px',
+              }}
+              aria-label="展开供应商预设"
+            >▼</button>
+            {provOpen && (
+              <div
+                className="model-cand-list"
+                style={{
+                  position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 2,
+                  background: 'var(--panel-3)', border: '1px solid var(--border-strong)', borderRadius: 8,
+                  boxShadow: '0 6px 18px rgba(0,0,0,.2)', zIndex: 10, overflow: 'hidden',
+                }}
+              >
+                {PROVIDERS.map((p) => (
+                  <div
+                    key={p.id}
+                    className="model-cand-item"
+                    onClick={() => pickProv(p)}
+                    style={{ padding: '6px 10px', cursor: 'pointer', fontSize: 13, color: 'var(--text)' }}
+                  >
+                    {p.label}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <div className="skin-row">
           <span className="skin-label">模型档</span>
-          <select
-            className="skin-input"
-            value={provModels.includes(model) ? model : '__custom'}
-            onChange={(e) => setModel(e.target.value === '__custom' ? '' : e.target.value)}
-          >
-            {provModels.map((m) => <option key={m} value={m}>{m}</option>)}
-            <option value="__custom">✏️ 自定义…</option>
-          </select>
-        </div>
-        {!provModels.includes(model) && model && (
-          <div className="skin-row">
-            <span className="skin-label">模型名</span>
-            <input className="skin-input" value={model} onChange={(e) => setModel(e.target.value)} placeholder="手输模型名" />
+          {/* 自画候选下拉：点▼/聚焦展开全量预设 → 点选 setModel 整体替换；也可直接手输任意名字 */}
+          <div className="model-cand" ref={candRef} style={{ position: 'relative', flex: 1, minWidth: 140 }}>
+            <input
+              className="skin-input"
+              value={model}
+              onChange={(e) => { setModel(e.target.value); openCand(false); }}
+              onFocus={() => { if (provModels.length) openCand(true); }}
+              placeholder={provModels.length ? '点▼选预设或直接输入' : (pickedProv ? '该供应商无预设，直接输入模型名' : '输入模型名（先选/填供应商）')}
+              spellCheck={false}
+              style={{ paddingRight: 30 }}
+            />
+            {provModels.length > 0 && (
+              <button
+                type="button"
+                className="model-cand-toggle"
+                tabIndex={-1}
+                onClick={() => openCand(!candOpen)}
+                style={{
+                  position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
+                  border: 'none', background: 'transparent', color: 'var(--muted)', cursor: 'pointer',
+                  fontSize: 11, padding: '2px 6px',
+                }}
+                aria-label="展开模型预设"
+              >▼</button>
+            )}
+            {candOpen && provModels.length > 0 && (
+              <div
+                className="model-cand-list"
+                style={{
+                  position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 2,
+                  background: 'var(--panel-3)', border: '1px solid var(--border-strong)', borderRadius: 8,
+                  boxShadow: '0 6px 18px rgba(0,0,0,.2)', zIndex: 10, overflow: 'hidden',
+                }}
+              >
+                {provModels.map((m) => (
+                  <div
+                    key={m}
+                    className="model-cand-item"
+                    onClick={() => { setModel(m); setCandOpen(false); }}
+                    style={{ padding: '6px 10px', cursor: 'pointer', fontSize: 13, color: 'var(--text)' }}
+                  >
+                    {m === model ? <b>{m}</b> : m}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
         <div className="skin-row">
           <span className="skin-label">baseUrl</span>
           <input className="skin-input" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Anthropic 兼容端点，不以 / 结尾" />

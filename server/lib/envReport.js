@@ -23,9 +23,13 @@ function versionOf(cmd) {
 }
 
 // 已知中转域名 → provider；未知 → custom（与 ClaudeInstall 一致）
+// 与前端 PROVIDERS（ModelSettings.jsx）对应；只做「域名归属」识别，供 /api/env 与当前生效卡片显示
 const PROVIDER_TABLE = [
   ['api.deepseek.com', 'deepseek'],
   ['dashscope.aliyuncs.com', 'qwen'],
+  ['open.bigmodel.cn', 'zhipu'],
+  ['api.moonshot.cn', 'kimi'],
+  ['api.minimaxi.com', 'minimax'],
   ['ark.cn-beijing.volces.com', 'volcengine'],
 ];
 
