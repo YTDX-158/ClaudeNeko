@@ -55,6 +55,7 @@ export function remoteHandler({ pairing, remote }) {
     if (method === 'POST' && pathname === '/api/remote/regenerate-code') {
       const code = pairing.generatePairCode();
       pairing.clearSessions();
+      remote.disconnectAll?.();
       return sendJson(res, 200, { pairCode: code });
     }
 

@@ -64,7 +64,11 @@ setInterval(() => { try { pruneMedia(); } catch (e) { logger.error('media', '定
 const store = new SessionStore(config.dataDir);
 const busyLock = createBusyLock(); // per-session 在途锁（唯一写入口，见 lib/busyLock.js）
 const bus = createEventBus(); // 模块解耦事件总线（Phase2，事件字典见 lib/bus.js）
-const remote = createRemote({ pairing, config }); // 远程访问生命周期（默认关）
+const remote = createRemote({
+  pairing,
+  config,
+  disconnectBusinessSockets: () => terminal.disconnectRemoteClients(),
+}); // 远程访问生命周期（默认关）
 const remoteRouter = remoteHandler({ pairing, remote });
 
 // 常驻 pty + jsonl 轮询 + 终端 WS 通道（c2web 模式）

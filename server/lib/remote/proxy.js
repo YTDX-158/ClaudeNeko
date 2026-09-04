@@ -28,6 +28,29 @@ const REMOTE_BLOCKED_PATHS = new Set([
   '/api/media/download',
 ]);
 
+/** 跟踪长连接并在凭据撤销时幂等断开。 */
+export function createSocketRegistry({ disconnect } = {}) {
+  const sockets = new Set();
+  const closeSocket = disconnect || ((socket) => {
+    if (!socket.destroyed) socket.destroy();
+  });
+  return {
+    track(socket) {
+      if (!socket) return socket;
+      sockets.add(socket);
+      socket.once?.('close', () => sockets.delete(socket));
+      return socket;
+    },
+    disconnectAll() {
+      for (const socket of [...sockets]) {
+        sockets.delete(socket);
+        try { closeSocket(socket); } catch { /* 已关闭 */ }
+      }
+    },
+    size: () => sockets.size,
+  };
+}
+
 /** 远程禁用判定：删数据（DELETE）/ SSRF 下载 / force-stop 杀进程 → 403。放行其余（含上传/生成媒体）。 */
 export function isBlocked(method, pathname) {
   if (method === 'DELETE') return true;                 // 删数据（媒体等）：不可逆
@@ -97,9 +120,10 @@ function getCookie(header, name) {
 /**
  * 启动远程代理。
  * @param {{port:number, targetPort:number, pairing:{hasSession:(h:string)=>boolean, readPairCode:()=>string|null}}} opts
- * @returns {http.Server}
+ * @returns {Promise<{server:http.Server, disconnectAll:Function}>}
  */
 export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
+  const upgradeSockets = createSocketRegistry();
   const server = http.createServer(async (req, res) => {
     const url = req.url.split('?')[0];
     const method = req.method;
@@ -222,11 +246,14 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
       socket.destroy();
       return;
     }
+    upgradeSockets.track(socket);
     // 2) 重写来源头：手机请求带公网 Origin/Host，业务 4000 的 isLocalRequest 会 403，
     //    代理已通过配对鉴权，转发时应伪装成本机来源（与 HTTP 转发一致）
     req.headers.origin = `http://127.0.0.1:${targetPort}`;
     req.headers.referer = `http://127.0.0.1:${targetPort}/`;
     req.headers.host = `127.0.0.1:${targetPort}`;
+    // 只用于业务端区分需要随远程凭据撤销的连接，不参与授权判断。
+    req.headers['x-claudeneko-remote'] = '1';
     // 3) 原始 TCP 管道：重建升级请求头（保留 WebSocket 握手必需头）→ 双向透传。
     //    head 是握手扩展数据（permessage-deflate 等），必须透传，否则协商失败。
     const upstream = net.connect({ host: '127.0.0.1', port: targetPort }, () => {
@@ -243,6 +270,7 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
         // 已断
       }
     });
+    upgradeSockets.track(upstream);
     // 任一端断/错 → 销毁另一端（防半开连接挂死）
     const closePair = () => {
       try { upstream.destroy(); } catch { /* 已关 */ }
@@ -257,6 +285,7 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
   // 这里监听 listening/error 包装成成功/失败，让调用方（index.js）能正确判断启动是否成功。
   return new Promise((resolve, reject) => {
     const onErr = (err) => {
+      upgradeSockets.disconnectAll();
       try { server.close(); } catch { /* 已关 */ }
       reject(err);
     };
@@ -264,7 +293,7 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
     server.listen(port, '127.0.0.1', () => {
       server.removeListener('error', onErr);
       logger.info('remote', `远程代理已启动: http://127.0.0.1:${port}（仅配对凭证可过）`);
-      resolve({ server });
+      resolve({ server, disconnectAll: () => upgradeSockets.disconnectAll() });
     });
   });
 }

@@ -15,6 +15,7 @@
 
 import { WebSocketServer } from 'ws';
 import { logger } from '../lib/logger.js';
+import { createSocketRegistry } from '../lib/remote/proxy.js';
 
 const TERM_BUF_MAX = 2 * 1024 * 1024; // 回放缓冲上限（最近 2MB 原始字节，够滚回看多次生成的完整输出；原 64KB 太小）
 const SYNC_WINDOW_MS = 200; // attach 同步窗：200ms 内 drop 实时流，等快照稳定再发（tmux-web 默认值）
@@ -42,6 +43,12 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
   // 禁用后帧全明文，浏览器端不再协商压缩，cloudflared 字节透传即安全。
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
   const clients = new Set(); // 所有 ws 连接（ws.sid, ws.wantTerm）
+  const remoteClients = createSocketRegistry({
+    disconnect(ws) {
+      if (typeof ws.terminate === 'function') ws.terminate();
+      else ws.close?.(1008, '远程凭据已撤销');
+    },
+  });
   const termBufs = new Map(); // sid -> 最近 64KB 原始字节（attach 回放）
   const healState = new Map(); // sid -> { retries, lastClear }（死锁自愈检测状态）
   const wakeTimers = new Map(); // sid -> setTimeout（attach 后快速唤醒检查）
@@ -196,15 +203,17 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(req, socket, head, (ws) => onConnect(ws, sid));
+    const isRemote = req.headers['x-claudeneko-remote'] === '1';
+    wss.handleUpgrade(req, socket, head, (ws) => onConnect(ws, sid, isRemote));
   }
 
   /** 连接建立：懒起 pty/transcript + 绑定消息协议 */
-  function onConnect(ws, sid) {
+  function onConnect(ws, sid, isRemote = false) {
     ws.sid = sid;
     ws.wantTerm = false;
     ws.lastActivity = Date.now(); // M14 心跳（流量检测）：收发消息刷新，5min 无流量才 close
     clients.add(ws);
+    if (isRemote) remoteClients.track(ws);
     logger.info('terminal', `连接建立 sid=${sid} cwd=${store.get(sid)?.cwd || config.defaultCwd}`);
 
     // 懒启动该会话的 pty + transcript（若 store 有该会话则带上下文）
@@ -298,5 +307,6 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
     setTermBuffer,
     getTermBuffer,
     clearTermBuffer,
+    disconnectRemoteClients: () => remoteClients.disconnectAll(),
   };
 }
