@@ -2007,13 +2007,54 @@ body {
 .media-log-time { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .media-log-prompt {
   display: block;
+  position: relative;
   max-width: 260px;
+  padding-right: 20px; /* 给 hover 复制按钮留位 */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.media-log-prompt[role='button'] { cursor: pointer; }
+.media-log-prompt[role='button']:hover { background: var(--border); border-radius: 4px; }
+.media-log-copy {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.media-log-prompt:hover .media-log-copy,
+.media-log-copy.copied { opacity: 1; }
+.media-log-copy:hover { background: var(--border-strong); color: var(--text); }
+.media-log-copy.copied { color: #2e7d32; }
 .media-log-params { color: var(--muted); white-space: nowrap; }
 .media-log-file { max-width: 180px; word-break: break-all; }
+.media-log-modal-prompt {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.media-log-modal-foot {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
 
 /* ============ 📑 用户消息导航抽屉 ============ */
 .msg-nav-scrim {

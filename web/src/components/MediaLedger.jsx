@@ -27,6 +27,8 @@ export default function MediaLedger() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [changing, setChanging] = useState(false);
+  const [detail, setDetail] = useState(null); // 点击提示词打开的全文弹窗
+  const [copiedId, setCopiedId] = useState(''); // 刚复制成功的记录 id（短暂"已复制"反馈）
 
   const refresh = async () => {
     setLoading(true);
@@ -78,6 +80,37 @@ export default function MediaLedger() {
     }
   };
 
+  /** 复制提示词：优先 Clipboard API；非 https/localhost 环境降级 execCommand */
+  const copyPrompt = async (record) => {
+    const text = record?.prompt || '';
+    const showCopied = () => {
+      setCopiedId(record.id);
+      setTimeout(() => setCopiedId(''), 1500);
+    };
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        showCopied();
+        return;
+      }
+      throw new Error('clipboard 不可用');
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showCopied();
+      } catch {
+        // 复制失败静默（弹窗里仍可手动选中）
+      }
+    }
+  };
+
   return (
     <section className="media-log-panel" aria-label="媒体生成台账">
       <div className="media-log-toolbar">
@@ -121,8 +154,34 @@ export default function MediaLedger() {
                   </td>
                   <td className="media-log-model" title={record.model}>{record.model || '—'}</td>
                   <td>
-                    <span className="media-log-prompt" title={record.prompt}>
+                    <span
+                      className="media-log-prompt"
+                      title={record.prompt || ''}
+                      role={record.prompt ? 'button' : undefined}
+                      tabIndex={record.prompt ? 0 : undefined}
+                      aria-label={record.prompt ? '查看完整提示词' : undefined}
+                      onClick={record.prompt ? () => setDetail(record) : undefined}
+                      onKeyDown={record.prompt ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setDetail(record);
+                        }
+                      } : undefined}
+                    >
                       {record.prompt || '（无提示词）'}
+                      {record.prompt && (
+                        <button
+                          type="button"
+                          className={`media-log-copy${copiedId === record.id ? ' copied' : ''}`}
+                          title={copiedId === record.id ? '已复制' : '复制提示词'}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copyPrompt(record);
+                          }}
+                        >
+                          {copiedId === record.id ? '✓' : '📋'}
+                        </button>
+                      )}
                     </span>
                   </td>
                   <td className="media-log-params">{formatParams(record)}</td>
@@ -137,6 +196,26 @@ export default function MediaLedger() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {detail && (
+        <div className="skin-modal" onClick={() => setDetail(null)}>
+          <div className="skin-modal-box media-log-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="skin-modal-header">
+              <span className="skin-modal-title">
+                {detail.type === 'image' ? '图片' : '视频'}提示词 · {formatTime(detail.time)}
+              </span>
+              <button type="button" className="skin-btn" onClick={() => setDetail(null)}>×</button>
+            </div>
+            <pre className="media-log-modal-prompt">{detail.prompt || '（无提示词）'}</pre>
+            <div className="media-log-modal-foot">
+              <button type="button" className="skin-btn" onClick={() => copyPrompt(detail)}>
+                {copiedId === detail.id ? '✓ 已复制' : '📋 复制提示词'}
+              </button>
+              <button type="button" className="skin-btn" onClick={() => setDetail(null)}>关闭</button>
+            </div>
+          </div>
         </div>
       )}
     </section>
