@@ -58,6 +58,15 @@ export function isBlocked(method, pathname) {
   if (pathname.endsWith('/force-stop')) return true;    // 杀 claude 进程
   return false;
 }
+
+/** 与业务端 URL 解析采用相同的 WHATWG 规范化，避免 /x/../log 一类策略绕过。 */
+export function canonicalPathname(requestTarget) {
+  try {
+    return new URL(String(requestTarget || ''), 'http://claudeneko.invalid').pathname;
+  } catch {
+    return null;
+  }
+}
 const sha256 = (s) => createHash('sha256').update(String(s)).digest('hex');
 
 function headerValue(headers, name) {
@@ -271,8 +280,14 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing, readRequest
   const nonceStore = createPairNonceStore();
   const pairHandler = createPairHandler({ pairing, readRequestBody, nonceStore });
   const server = http.createServer(async (req, res) => {
-    const url = req.url.split('?')[0];
+    const url = canonicalPathname(req.url);
     const method = req.method;
+
+    if (!url) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '请求路径无效' }));
+      return;
+    }
 
     // 1) 配对接口：同源 + 一次性 nonce + 双层限流通过后才读取配对码
     if (method === 'POST' && url === '/pair') {
