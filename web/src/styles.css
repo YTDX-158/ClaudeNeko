@@ -1115,6 +1115,37 @@ body {
 .skin-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 .skin-btn.danger { color: var(--danger); border-color: rgba(255, 107, 107, 0.4); }
 .skin-btn.danger:hover { background: rgba(255, 107, 107, 0.1); }
+.skin-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b0e13;
+  font-weight: 600;
+}
+.skin-btn.primary:hover { filter: brightness(1.1); color: #0b0e13; border-color: var(--accent); }
+/* ============ 📦 版本更新提示弹窗 ============ */
+.update-dialog { width: min(520px, 92vw); }
+.update-dialog-body { max-height: 50vh; overflow: auto; margin: 4px 0 14px; }
+.update-dialog-notes {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.update-dialog-foot {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
 .skin-input {
   flex: 1;
   min-width: 140px;

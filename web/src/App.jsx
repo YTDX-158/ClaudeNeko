@@ -11,6 +11,8 @@ import FluidCanvas from './skin/FluidCanvas.jsx';
 const MediaLibrary = lazy(() => import('./components/MediaLibrary.jsx'));
 const TerminalView = lazy(() => import('./components/TerminalView.jsx'));
 import { readDefaultEffort } from './utils/effort.js';
+import { checkForUpdate, isLocalAccess, isDisabled, compareVersions, parseVersionTag } from './updateCheck.js';
+import UpdateDialog from './components/UpdateDialog.jsx';
 
 export default function App() {
   const sessions = useSessions();
@@ -33,11 +35,32 @@ export default function App() {
   useEffect(() => {
     if (activeId) api.prewarmSession(activeId).catch(() => {});
   }, [activeId]);
+  // 版本更新检测（9-04）：仅本机访问 + 未手动关闭 + GitHub 确有新版才弹（延迟 2s 错峰，不抢首屏）
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        if (cancelled || !isLocalAccess() || isDisabled()) return;
+        const health = await api.health();
+        const current = health?.version;
+        if (!current) return;
+        const hit = await checkForUpdate();
+        if (!hit) return;
+        if (compareVersions(hit.version, parseVersionTag(current)) <= 0) return; // 本地不落后不弹
+        setUpdateDialog(hit);
+      } catch {
+        // 网络/解析任何异常：全静默
+      }
+    }, 2000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, []);
   const [mediaOpen, setMediaOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false); // 终端页（c2web 模式）
   const [terminalSessionId, setTerminalSessionId] = useState(null); // 打开终端的会话 id（每个会话独立入口）
   // 搜索跳转目标：Sidebar 点搜索结果 → 切会话 + 定位到目标消息气泡（ChatWindow 消费后清除）
   const [jumpTarget, setJumpTarget] = useState(null);
+  // 版本更新提示（9-04）：检测到 GitHub 有新版时弹框（null=不弹）
+  const [updateDialog, setUpdateDialog] = useState(null);
   const handleJumpResult = (sessionId, messageIndex) => {
     sessions.setActiveId(sessionId);
     setJumpTarget({ sessionId, messageIndex });
@@ -137,6 +160,7 @@ export default function App() {
           <SkinSettings open={skinOpen} onClose={() => setSkinOpen(false)} onModelChanged={refreshModel} />
           <MediaLibrary open={mediaOpen} onClose={() => setMediaOpen(false)} />
           <TerminalView open={terminalOpen} onClose={() => setTerminalOpen(false)} sessionId={terminalSessionId} />
+          {updateDialog && <UpdateDialog info={updateDialog} onClose={() => setUpdateDialog(null)} />}
         </Suspense>
       </ErrorBoundary>
     </div>
