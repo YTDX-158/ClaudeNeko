@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as proxy from '../server/lib/remote/proxy.js';
 
 test('canonicalizes a raw backslash force-stop path before checking policy', () => {
-  const pathname = proxy.normalizeProxyPath?.('/api/sessions/demo\\force-stop?source=test');
+  const pathname = proxy.canonicalPathname?.('/api/sessions/demo\\force-stop?source=test');
   assert.equal(pathname, '/api/sessions/demo/force-stop');
   assert.equal(proxy.isBlocked('POST', pathname), true);
 });
@@ -14,5 +14,5 @@ test('keeps ordinary paths available and blocks local-only balance', () => {
 });
 
 test('returns null for an invalid absolute URL', () => {
-  assert.equal(proxy.normalizeProxyPath?.('http://['), null);
+  assert.equal(proxy.canonicalPathname?.('http://['), null);
 });
