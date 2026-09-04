@@ -104,6 +104,10 @@ export const api = {
     return j;
   },
   mediaTask: (id) => request(`/media/task/${id}`),
+  mediaLog: () => request('/media/log'),
+  mediaLogDelete: (body) => request('/media/log', { method: 'DELETE', body: JSON.stringify(body) }),
+  mediaLogEnabled: (enabled) =>
+    request('/media/log-enabled', { method: 'PUT', body: JSON.stringify({ enabled }) }),
   // 强制结束当前对话任务（杀 claude + 清生成任务）
   forceStop: (id) => request(`/sessions/${id}/force-stop`, { method: 'POST' }),
 
