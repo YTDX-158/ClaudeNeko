@@ -17,10 +17,17 @@ const PORT_TRIES = 50;
  * @param {{ pairing: object, config: { port: number } }} deps
  */
 export function createRemote(deps) {
+  const startProxy = deps.startRemoteProxy || startRemoteProxy;
+  const startCloudflareTunnel = deps.startTunnel || startTunnel;
   let proxy = null;
   let tunnelChild = null;
   let publicUrl = null;
   let _startPromise = null;
+
+  function disconnectAll() {
+    try { proxy?.disconnectAll?.(); } catch { /* 已关 */ }
+    try { deps.disconnectBusinessSockets?.(); } catch { /* 已关 */ }
+  }
 
   return {
     isEnabled: () => proxy !== null,
@@ -41,12 +48,12 @@ export function createRemote(deps) {
         let lastErr = null;
         for (let p = REMOTE_PORT; p < REMOTE_PORT + PORT_TRIES; p++) {
           try {
-            const r = await startRemoteProxy({
+            const r = await startProxy({
               port: p,
               pairing: deps.pairing,
               targetPort: deps.config?.port ?? 4000, // 业务端口跟随 config，改 PORT 不断链
             });
-            server = r.server;
+            server = r;
             usedPort = p;
             break;
           } catch (err) {
@@ -62,7 +69,7 @@ export function createRemote(deps) {
         proxy = server;
 
         // 2) 起 cloudflared 隧道指向实际用到的端口（失败/被拦/网络不通 → 仅局域网可用）
-        const t = await startTunnel(usedPort);
+        const t = await startCloudflareTunnel(usedPort);
         tunnelChild = t.child; // 存子进程，stop 时杀
         publicUrl = t.url;
         logger.info('remote', `公网地址: ${publicUrl || '(未获取，仅局域网可用)'}（代理端口 ${usedPort}）`);
@@ -76,8 +83,12 @@ export function createRemote(deps) {
       }
     },
 
-    /** 关闭远程：杀隧道 + 关代理 */
+    /** 立即撤销全部既有远程长连接；本机终端连接不受影响。 */
+    disconnectAll,
+
+    /** 关闭远程：断长连接 + 杀隧道 + 关代理 */
     stop() {
+      disconnectAll();
       // 杀 cloudflared 进程树（Windows 下用 taskkill 清子进程）
       if (tunnelChild) {
         try {
@@ -90,7 +101,7 @@ export function createRemote(deps) {
       }
       if (proxy) {
         try {
-          proxy.close();
+          proxy.server.close();
         } catch {
           // 已关
         }

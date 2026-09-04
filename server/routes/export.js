@@ -37,6 +37,56 @@ function safeFilename(name, fallback) {
   return cleaned || fallback;
 }
 
+export class ExportLimitError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'ExportLimitError';
+    this.code = code;
+    this.status = 413;
+  }
+}
+
+/** 在创建 ZIP 前完整收集并校验；任一上限触发时不返回部分文件。 */
+export function prepareSessionExport(sessions, readMessages, {
+  maxSessions = EXPORT_MAX_SESSIONS,
+  maxBytes = EXPORT_MAX_BYTES,
+} = {}) {
+  if (sessions.length > maxSessions) {
+    throw new ExportLimitError(
+      'EXPORT_SESSION_LIMIT',
+      `会话数量超过 ${maxSessions} 个导出上限，未生成备份；请减少会话或分批导出`,
+    );
+  }
+  const files = [];
+  const usedNames = new Set();
+  let totalSize = 0;
+  for (const session of sessions) {
+    const data = Buffer.from(JSON.stringify({
+      version: 1,
+      session,
+      messages: readMessages(session.id),
+    }), 'utf8');
+    if (totalSize + data.length > maxBytes) {
+      const maxMb = maxBytes / (1024 * 1024);
+      const limitLabel = Number.isInteger(maxMb) && maxMb >= 1 ? `${maxMb}MB` : `${maxBytes} 字节`;
+      throw new ExportLimitError(
+        'EXPORT_SIZE_LIMIT',
+        `会话数据超过 ${limitLabel} 导出上限，未生成备份；请减少会话或分批导出`,
+      );
+    }
+    totalSize += data.length;
+    let name = `${safeFilename(session.title, session.id)}.json`;
+    let suffix = 1;
+    while (usedNames.has(name)) {
+      name = `${name.slice(0, -5)}(${suffix}).json`;
+      suffix += 1;
+    }
+    usedNames.add(name);
+    files.push({ name, data });
+  }
+  return { files, totalSize };
+}
+
 export function exportHandler(ctx) {
   const { store, isLocalRequest } = ctx;
   return async (req, res, url) => {
@@ -63,32 +113,24 @@ export function exportHandler(ctx) {
 
     if (method === 'GET' && pathname === '/api/sessions/export-all') {
       if (!isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
-      const sessions = store.list().slice(0, EXPORT_MAX_SESSIONS); // 上限：防会话过多全内存打包
-      const files = [];
-      const usedNames = new Set(); // 记最终文件名：重名加 (n) 序号，且避开真实标题同名（防 zip 覆盖丢数据）
-      let totalSize = 0;
-      for (const s of sessions) {
-        const data = Buffer.from(JSON.stringify({ version: 1, session: s, messages: store.readMessages(s.id) }), 'utf8'); // 紧凑格式，省内存
-        totalSize += data.length;
-        if (totalSize > EXPORT_MAX_BYTES) break; // 字节上限
-        let name = `${safeFilename(s.title, s.id)}.json`;
-        let n = 1;
-        while (usedNames.has(name)) {
-          name = `${name.slice(0, -5)}(${n}).json`;
-          n++;
-        }
-        usedNames.add(name);
-        files.push({ name, data });
+      const sessions = store.list();
+      let prepared;
+      try {
+        prepared = prepareSessionExport(sessions, (id) => store.readMessages(id));
+      } catch (error) {
+        if (error instanceof ExportLimitError) return sendJson(res, error.status, { error: error.message, code: error.code });
+        throw error;
       }
+      const { files } = prepared;
       if (!files.length) {
-        // 有会话但全超限 → 明确提示，别误导为"没会话"
-        return sendJson(res, 404, { error: sessions.length ? '会话数据超过 500MB 导出上限，请减少会话或单条导出' : '没有可导出的会话' });
+        return sendJson(res, 404, { error: '没有可导出的会话' });
       }
       const zip = createZip(files);
       res.on('error', () => {}); // 客户端断开（EPIPE）不崩进程（审查②）
       res.writeHead(200, {
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename="claudeneko-sessions-${Date.now()}.zip"`,
+        'X-ClaudeNeko-Export-Complete': 'true',
       });
       res.end(zip);
       return;

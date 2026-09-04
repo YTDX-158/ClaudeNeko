@@ -25,6 +25,17 @@ async function request(path, options = {}) {
 export const api = {
   health: () => request('/health'),
   listSessions: () => request('/sessions'),
+  exportAllSessions: async () => {
+    const res = await fetch(BASE + '/sessions/export-all');
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `导出失败（HTTP ${res.status}）`);
+    }
+    if (res.headers.get('X-ClaudeNeko-Export-Complete') !== 'true') {
+      throw new Error('服务器未确认备份完整，已取消下载');
+    }
+    return res.blob();
+  },
   createSession: (model, effort) =>
     request('/sessions', { method: 'POST', body: JSON.stringify({ model, effort }) }),
   getSession: (id) => request(`/sessions/${id}`),

@@ -22,34 +22,218 @@ import { readBody } from '../util.js';
 import { logger } from '../logger.js';
 
 const AUTH_COOKIE = 'neko_auth';
+const REMOTE_BLOCKED_PATHS = new Set([
+  '/api/balance', // 余额与供应商凭据：仅本机可用（首轮 04-01）
+  '/api/log',
+  '/api/log/download',
+  '/api/media/download',
+]);
 
-/** 将请求目标规范成策略层唯一使用的路径；无效 URL 必须失败关闭。 */
-export function normalizeProxyPath(rawUrl) {
-  try {
-    return new URL(String(rawUrl || ''), 'http://127.0.0.1').pathname;
-  } catch {
-    return null;
-  }
+/** 跟踪长连接并在凭据撤销时幂等断开。 */
+export function createSocketRegistry({ disconnect } = {}) {
+  const sockets = new Set();
+  const closeSocket = disconnect || ((socket) => {
+    if (!socket.destroyed) socket.destroy();
+  });
+  return {
+    track(socket) {
+      if (!socket) return socket;
+      sockets.add(socket);
+      socket.once?.('close', () => sockets.delete(socket));
+      return socket;
+    },
+    disconnectAll() {
+      for (const socket of [...sockets]) {
+        sockets.delete(socket);
+        try { closeSocket(socket); } catch { /* 已关闭 */ }
+      }
+    },
+    size: () => sockets.size,
+  };
 }
 
 /** 远程禁用判定：删数据（DELETE）/ SSRF 下载 / force-stop 杀进程 → 403。放行其余（含上传/生成媒体）。 */
 export function isBlocked(method, pathname) {
   if (method === 'DELETE') return true;                 // 删数据（媒体等）：不可逆
-  if (pathname === '/api/balance') return true;         // 余额与供应商凭据：仅本机可用
-  if (pathname === '/api/media/download') return true;  // SSRF：任意 URL 抓取
+  if (REMOTE_BLOCKED_PATHS.has(pathname)) return true;  // 本机日志 / SSRF 下载
   if (pathname.endsWith('/force-stop')) return true;    // 杀 claude 进程
   return false;
 }
-/** 配对码暴力破解防护：连续失败 N 次后锁定 M 毫秒 */
-const MAX_PAIR_FAILS = 5;
-const PAIR_LOCK_MS = 60_000;
-let pairFails = 0; // 全局失败计数（单用户本机场景足够；公网攻击面受限）
-let pairLockUntil = 0;
 
+/** 与业务端 URL 解析采用相同的 WHATWG 规范化，避免 /x/../log 一类策略绕过。 */
+export function canonicalPathname(requestTarget) {
+  try {
+    return new URL(String(requestTarget || ''), 'http://claudeneko.invalid').pathname;
+  } catch {
+    return null;
+  }
+}
 const sha256 = (s) => createHash('sha256').update(String(s)).digest('hex');
 
+function headerValue(headers, name) {
+  const value = headers?.[name];
+  return Array.isArray(value) ? String(value[0] || '') : String(value || '');
+}
+
+export function getPairSource(req) {
+  const cloudflare = headerValue(req.headers, 'cf-connecting-ip').trim();
+  if (cloudflare) return cloudflare;
+  const forwarded = headerValue(req.headers, 'x-forwarded-for').split(',')[0].trim();
+  return forwarded || String(req.socket?.remoteAddress || 'unknown');
+}
+
+export function isPairRequestAllowed(req) {
+  const contentType = headerValue(req.headers, 'content-type').split(';')[0].trim().toLowerCase();
+  const host = headerValue(req.headers, 'host').trim().toLowerCase();
+  const origin = headerValue(req.headers, 'origin').trim();
+  if (contentType !== 'application/json' || !host || !origin) return false;
+  try {
+    const parsed = new URL(origin);
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:')
+      && parsed.host.toLowerCase() === host;
+  } catch {
+    return false;
+  }
+}
+
+export function createPairNonceStore({
+  ttlMs = 5 * 60_000,
+  maxEntries = 4096,
+  now = () => Date.now(),
+  generate = () => randomBytes(32).toString('hex'),
+} = {}) {
+  // source -> nonce：同一来源刷新页面会替换旧 nonce，而不是持续增长。
+  const nonces = new Map();
+  const capacity = Math.max(1, Math.floor(maxEntries));
+  return {
+    issue(source) {
+      const sourceKey = String(source || 'unknown');
+      const nonce = generate();
+      nonces.delete(sourceKey); // 替换并刷新 Map 插入顺序
+      while (nonces.size >= capacity) {
+        const oldestSource = nonces.keys().next().value;
+        nonces.delete(oldestSource);
+      }
+      nonces.set(sourceKey, { nonce, expiresAt: now() + ttlMs });
+      return nonce;
+    },
+    consume(nonce, source) {
+      const sourceKey = String(source || 'unknown');
+      const entry = nonces.get(sourceKey);
+      if (!entry) return false;
+      if (entry.expiresAt <= now()) {
+        nonces.delete(sourceKey);
+        return false;
+      }
+      if (entry.nonce !== String(nonce || '')) return false;
+      nonces.delete(sourceKey);
+      return true;
+    },
+    size: () => nonces.size,
+  };
+}
+
+export function createPairRateLimiter({
+  sourceLimit = 5,
+  globalLimit = 50,
+  maxSources = 4096,
+  windowMs = 60_000,
+} = {}) {
+  const sourceFailures = new Map();
+  const sourceCapacity = Math.max(1, Math.floor(maxSources));
+  let globalFailures = [];
+  const prune = (source, now) => {
+    const cutoff = now - windowMs;
+    globalFailures = globalFailures.filter((timestamp) => timestamp > cutoff);
+    const failures = (sourceFailures.get(source) || []).filter((timestamp) => timestamp > cutoff);
+    if (failures.length) sourceFailures.set(source, failures);
+    else sourceFailures.delete(source);
+    return failures;
+  };
+  const check = (source, now = Date.now()) => {
+    const failures = prune(source, now);
+    const sourceLocked = failures.length >= sourceLimit;
+    const globalLocked = globalFailures.length >= globalLimit;
+    return { locked: sourceLocked || globalLocked, sourceLocked, globalLocked };
+  };
+  return {
+    check,
+    recordFailure(source, now = Date.now()) {
+      const failures = prune(source, now);
+      failures.push(now);
+      sourceFailures.delete(source); // 刷新活跃来源的淘汰顺序
+      while (sourceFailures.size >= sourceCapacity) {
+        const oldestSource = sourceFailures.keys().next().value;
+        sourceFailures.delete(oldestSource);
+      }
+      sourceFailures.set(source, failures);
+      globalFailures.push(now);
+      return check(source, now);
+    },
+    resetSource(source) {
+      sourceFailures.delete(source);
+    },
+    sourceSize: () => sourceFailures.size,
+  };
+}
+
+function sendPairJson(res, status, body, headers = {}) {
+  res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
+  res.end(JSON.stringify(body));
+}
+
+export function createPairHandler({
+  pairing,
+  readRequestBody = readBody,
+  nonceStore = createPairNonceStore(),
+  rateLimiter = createPairRateLimiter(),
+  now = () => Date.now(),
+} = {}) {
+  return async (req, res) => {
+    const source = getPairSource(req);
+    const lock = rateLimiter.check(source, now());
+    if (lock.locked) {
+      sendPairJson(res, 429, { ok: false, locked: true });
+      return;
+    }
+    if (!isPairRequestAllowed(req)) {
+      sendPairJson(res, 403, { ok: false, error: '来源校验失败' });
+      return;
+    }
+    const nonce = headerValue(req.headers, 'x-neko-pair-nonce');
+    if (!nonceStore.consume(nonce, source)) {
+      sendPairJson(res, 403, { ok: false, error: '配对页面已失效，请刷新后重试' });
+      return;
+    }
+    const body = await readRequestBody(req);
+    if (body?.__tooLarge) {
+      sendPairJson(res, 413, { ok: false, error: '请求内容过大', nonce: nonceStore.issue(source) });
+      return;
+    }
+    const code = typeof body?.code === 'string' ? body.code : '';
+    const current = pairing.readPairCode();
+    if (current && code === current) {
+      rateLimiter.resetSource(source);
+      const session = randomBytes(32).toString('hex');
+      pairing.addSession(sha256(session));
+      sendPairJson(res, 200, { ok: true }, {
+        'Set-Cookie': `${AUTH_COOKIE}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000; Secure`,
+      });
+      return;
+    }
+    const state = rateLimiter.recordFailure(source, now());
+    logger.warn('remote', `配对失败 source=${source} sourceLocked=${state.sourceLocked} globalLocked=${state.globalLocked}`);
+    sendPairJson(res, state.locked ? 429 : 401, {
+      ok: false,
+      locked: state.locked,
+      nonce: nonceStore.issue(source),
+    });
+  };
+}
+
 /** 内置配对页：未配对访问时返回，输入码后 POST /pair 换 Cookie */
-const PAIR_HTML = `<!DOCTYPE html>
+function pairHtml(nonce) {
+  return `<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -75,19 +259,23 @@ const PAIR_HTML = `<!DOCTYPE html>
     <div class="err" id="err"></div>
   </div>
 <script>
+let pairNonce=${JSON.stringify(nonce)};
 async function pair(){
   const code=document.getElementById('code').value.trim();
   const btn=document.getElementById('go'); const err=document.getElementById('err');
   btn.disabled=true; err.textContent='';
   try{
-    const r=await fetch('/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
+    const r=await fetch('/pair',{method:'POST',headers:{'Content-Type':'application/json','X-Neko-Pair-Nonce':pairNonce},body:JSON.stringify({code})});
+    const data=await r.json().catch(()=>({}));
+    if(data.nonce) pairNonce=data.nonce;
     if(r.ok){ location.reload(); }
-    else { err.textContent='配对码不对，请重试'; btn.disabled=false; }
+    else { err.textContent=data.locked?'尝试次数过多，请稍后重试':(data.error||'配对码不对，请重试'); btn.disabled=false; }
   }catch(e){ err.textContent='网络错误'; btn.disabled=false; }
 }
 </script>
 </body>
 </html>`;
+}
 
 /** 从 Cookie 头里取指定 cookie 值 */
 function getCookie(header, name) {
@@ -102,54 +290,25 @@ function getCookie(header, name) {
 /**
  * 启动远程代理。
  * @param {{port:number, targetPort:number, pairing:{hasSession:(h:string)=>boolean, readPairCode:()=>string|null}}} opts
- * @returns {http.Server}
+ * @returns {Promise<{server:http.Server, disconnectAll:Function}>}
  */
-export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
+export function startRemoteProxy({ port, targetPort = 4000, pairing, readRequestBody = readBody }) {
+  const upgradeSockets = createSocketRegistry();
+  const nonceStore = createPairNonceStore();
+  const pairHandler = createPairHandler({ pairing, readRequestBody, nonceStore });
   const server = http.createServer(async (req, res) => {
-    const pathname = normalizeProxyPath(req.url);
+    const url = canonicalPathname(req.url);
     const method = req.method;
-    if (!pathname) {
-      res.writeHead(403, { 'Content-Type': 'application/json' });
+
+    if (!url) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: '请求路径无效' }));
       return;
     }
 
-    // 1) 配对接口：放行（无需凭证），校验码 → 签发 HttpOnly Cookie
-    if (method === 'POST' && pathname === '/pair') {
-      const body = await readBody(req); // 复用健壮版：超时/1MB上限/UTF-8归一化
-      let code = '';
-      try {
-        code = String(body.code || '');
-      } catch {
-        // 坏请求
-      }
-      // 暴力破解防护：锁定期间直接拒绝（不管码对不对）
-      if (Date.now() < pairLockUntil) {
-        res.writeHead(429, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, locked: true }));
-        return;
-      }
-      const current = pairing.readPairCode();
-      if (current && code === current) {
-        pairFails = 0; // 配对成功重置计数
-        const session = randomBytes(32).toString('hex');
-        pairing.addSession(sha256(session));
-        res.writeHead(200, {
-          'Content-Type': 'application/json',
-          // Secure：隧道全走 https，防 http 入口下明文凭证被窃取
-          'Set-Cookie': `${AUTH_COOKIE}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000; Secure`,
-        });
-        res.end(JSON.stringify({ ok: true }));
-      } else {
-        pairFails += 1;
-        if (pairFails >= MAX_PAIR_FAILS) {
-          pairLockUntil = Date.now() + PAIR_LOCK_MS;
-          pairFails = 0; // 锁定后重置计数，避免锁定解除后立即再次累计
-          logger.warn('remote', `配对失败累计 ${MAX_PAIR_FAILS} 次，已锁定 ${PAIR_LOCK_MS / 1000}s 防爆破`);
-        }
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false }));
-      }
+    // 1) 配对接口：同源 + 一次性 nonce + 双层限流通过后才读取配对码
+    if (method === 'POST' && url === '/pair') {
+      await pairHandler(req, res);
       return;
     }
 
@@ -157,12 +316,12 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
     const session = getCookie(req.headers.cookie || '', AUTH_COOKIE);
     if (!session || !pairing.hasSession(sha256(session))) {
       res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-      res.end(PAIR_HTML);
+      res.end(pairHtml(nonceStore.issue(getPairSource(req))));
       return;
     }
 
     // 3) 远程禁用高危操作（删数据 / SSRF 下载 / force-stop）
-    if (isBlocked(method, pathname)) {
+    if (isBlocked(method, url)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: '远程模式已禁用该功能（安全保护）' }));
       return;
@@ -232,11 +391,14 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
       socket.destroy();
       return;
     }
+    upgradeSockets.track(socket);
     // 2) 重写来源头：手机请求带公网 Origin/Host，业务 4000 的 isLocalRequest 会 403，
     //    代理已通过配对鉴权，转发时应伪装成本机来源（与 HTTP 转发一致）
     req.headers.origin = `http://127.0.0.1:${targetPort}`;
     req.headers.referer = `http://127.0.0.1:${targetPort}/`;
     req.headers.host = `127.0.0.1:${targetPort}`;
+    // 只用于业务端区分需要随远程凭据撤销的连接，不参与授权判断。
+    req.headers['x-claudeneko-remote'] = '1';
     // 3) 原始 TCP 管道：重建升级请求头（保留 WebSocket 握手必需头）→ 双向透传。
     //    head 是握手扩展数据（permessage-deflate 等），必须透传，否则协商失败。
     const upstream = net.connect({ host: '127.0.0.1', port: targetPort }, () => {
@@ -253,6 +415,7 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
         // 已断
       }
     });
+    upgradeSockets.track(upstream);
     // 任一端断/错 → 销毁另一端（防半开连接挂死）
     const closePair = () => {
       try { upstream.destroy(); } catch { /* 已关 */ }
@@ -267,6 +430,7 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
   // 这里监听 listening/error 包装成成功/失败，让调用方（index.js）能正确判断启动是否成功。
   return new Promise((resolve, reject) => {
     const onErr = (err) => {
+      upgradeSockets.disconnectAll();
       try { server.close(); } catch { /* 已关 */ }
       reject(err);
     };
@@ -274,7 +438,7 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
     server.listen(port, '127.0.0.1', () => {
       server.removeListener('error', onErr);
       logger.info('remote', `远程代理已启动: http://127.0.0.1:${port}（仅配对凭证可过）`);
-      resolve({ server });
+      resolve({ server, disconnectAll: () => upgradeSockets.disconnectAll() });
     });
   });
 }

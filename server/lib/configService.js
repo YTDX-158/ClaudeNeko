@@ -13,6 +13,16 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+
+export class ConfigFileError extends Error {
+  constructor(file, cause) {
+    super(`配置文件 ${file} 不是有效 JSON，已拒绝保存并保留原文件`);
+    this.name = 'ConfigFileError';
+    this.code = 'CONFIG_JSON_INVALID';
+    this.cause = cause;
+  }
+}
 
 export function settingsPath(home) {
   return path.join(home || os.homedir(), '.claude', 'settings.json');
@@ -23,29 +33,48 @@ export function claudeJsonPath(home) {
 }
 
 export function readSettings(home) {
-  try {
-    return JSON.parse(fs.readFileSync(settingsPath(home), 'utf-8'));
-  } catch {
-    return {};
-  }
+  return readJson(settingsPath(home));
 }
 
 function readJson(p) {
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf-8'));
-  } catch {
-    return {};
+    raw = fs.readFileSync(p, 'utf-8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return {};
+    throw error;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new ConfigFileError(p, error);
   }
 }
 
-function writeJson(p, obj) {
-  // 合并写入，先备份（与 ClaudeInstall 一致）
-  if (fs.existsSync(p)) {
-    const bak = p + '.bak';
-    if (!fs.existsSync(bak)) fs.copyFileSync(p, bak);
+function rotateBackups(p) {
+  for (let generation = 3; generation >= 2; generation -= 1) {
+    const previous = `${p}.bak.${generation - 1}`;
+    if (fs.existsSync(previous)) fs.copyFileSync(previous, `${p}.bak.${generation}`);
   }
+  fs.copyFileSync(p, `${p}.bak.1`);
+}
+
+function writeJson(p, obj) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(obj, null, 2), 'utf-8');
+  const serialized = JSON.stringify(obj, null, 2);
+  if (fs.existsSync(p)) {
+    // 写入前再次验证主文件，避免读取与保存之间文件被损坏后仍遭覆盖。
+    readJson(p);
+    rotateBackups(p);
+  }
+  const tmp = `${p}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, serialized, 'utf-8');
+    fs.renameSync(tmp, p);
+  } catch (error) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* 精确临时文件清理失败不遮蔽原错误 */ }
+    throw error;
+  }
 }
 
 export function writeEnv(home, { baseUrl, authToken, model }) {

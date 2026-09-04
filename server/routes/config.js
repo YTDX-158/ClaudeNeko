@@ -23,6 +23,17 @@ function mask(key) {
   return `${key.slice(0, 4)}••••${key.slice(-4)}`;
 }
 
+function writeEnvOrRespond(configService, res, home, values) {
+  try {
+    configService.writeEnv(home, values);
+    return true;
+  } catch (error) {
+    if (error?.code !== 'CONFIG_JSON_INVALID') throw error;
+    sendJson(res, 409, { error: error.message });
+    return false;
+  }
+}
+
 /** 连通测试：向 baseUrl/v1/messages 发最小请求，验证 baseUrl+key+model 是否可用 */
 async function testConnection({ baseUrl, authToken, model }) {
   const url = baseUrl.replace(/\/+$/, '') + '/v1/messages';
@@ -83,7 +94,7 @@ export function configHandler(ctx) {
       if (!baseUrl || !authToken || !model) {
         return sendJson(res, 400, { error: '需要 baseUrl + authToken + model 三个字段' });
       }
-      configService.writeEnv(home, { baseUrl, authToken, model });
+      if (!writeEnvOrRespond(configService, res, home, { baseUrl, authToken, model })) return;
       // 配置已变：重启所有活跃 pty，让 claude 进程用新配置（懒启动读 env）——「没接模型→配置→能用」的关键
       if (ptyHost?.killAll) ptyHost.killAll();
       return sendJson(res, 200, { ok: true, keyMask: mask(authToken), note: '已保存，会话将用新配置重启' });
@@ -120,7 +131,11 @@ export function configHandler(ctx) {
       const { name } = body || {};
       const p = modelConfig.getProfile(name);
       if (!p) return sendJson(res, 404, { error: '档案不存在' });
-      configService.writeEnv(home, { baseUrl: p.baseUrl, authToken: p.authToken, model: p.model });
+      if (!writeEnvOrRespond(configService, res, home, {
+        baseUrl: p.baseUrl,
+        authToken: p.authToken,
+        model: p.model,
+      })) return;
       modelConfig.setCurrent(name);
       if (ptyHost?.killAll) ptyHost.killAll(); // 应用档案后同样重启 pty
       return sendJson(res, 200, { ok: true, applied: name });
@@ -151,8 +166,8 @@ export function configHandler(ctx) {
       if (!name || !baseUrl || !authToken || !model) {
         return sendJson(res, 400, { error: '需要 name + baseUrl + authToken + model' });
       }
+      if (!writeEnvOrRespond(configService, res, home, { baseUrl, authToken, model })) return;
       modelConfig.saveProfile(name, { provider: body.provider || 'custom', baseUrl, model, authToken });
-      configService.writeEnv(home, { baseUrl, authToken, model });
       modelConfig.setCurrent(name);
       if (ptyHost?.killAll) ptyHost.killAll();
       return sendJson(res, 200, { ok: true, applied: name, keyMask: mask(authToken) });
