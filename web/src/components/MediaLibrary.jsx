@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { uploadToMedia } from '../utils/upload.js';
 import { api } from '../api.js';
 import Lightbox from './Lightbox.jsx';
-import LogPanel from './LogPanel.jsx';
+import MediaLedger from './MediaLedger.jsx';
 
 const KINDS = [
   { id: 'all', label: '全部' },
@@ -148,7 +148,7 @@ export default function MediaLibrary({ open, onClose }) {
         </div>
 
         {kind === 'log' ? (
-          <LogPanel />
+          <MediaLedger />
         ) : (
         <>
         <div className="media-grid">

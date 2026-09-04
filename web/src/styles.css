@@ -1945,10 +1945,12 @@ body {
 .media-log-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
+.media-log-toolbar > .skin-hint { margin-left: auto; }
 .media-log-toggle {
   display: inline-flex;
   align-items: center;
@@ -1957,46 +1959,61 @@ body {
   cursor: pointer;
   user-select: none;
 }
-.media-log-list {
+.media-log-error {
+  padding: 8px 12px;
+  color: var(--danger);
+}
+.media-log-state {
+  padding: 24px 12px;
+  text-align: center;
+}
+.media-log-table-wrap {
   flex: 1;
-  overflow-y: auto;
+  overflow: auto;
   padding: 8px;
 }
-.media-log-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px 10px;
+.media-log-table {
+  width: 100%;
+  min-width: 920px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.media-log-table th,
+.media-log-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.media-log-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  color: var(--muted);
+}
+.media-log-kind {
+  display: inline-block;
+  padding: 1px 6px;
   border-radius: 8px;
-  cursor: pointer;
-  border: 1px solid transparent;
+  white-space: nowrap;
 }
-.media-log-item:hover { background: rgba(128,128,128,.08); }
-.media-log-item.selected { background: rgba(128,128,128,.12); border-color: var(--accent); }
-.media-log-item-info { flex: 1; min-width: 0; }
-.media-log-item-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.media-log-type { font-size: 14px; }
+.media-log-kind.image { background: rgba(88,166,255,.15); color: #58a6ff; }
+.media-log-kind.video { background: rgba(188,140,255,.15); color: #bc8cff; }
 .media-log-model { font-size: 12px; color: var(--accent); font-family: monospace; }
 .media-log-result { font-size: 11px; padding: 1px 6px; border-radius: 8px; }
 .media-log-result.success { background: rgba(46,160,67,.18); color: #2ea043; }
 .media-log-result.error { background: rgba(248,81,73,.18); color: #f85149; }
-.media-log-time { font-size: 11px; color: var(--muted); margin-left: auto; }
+.media-log-time { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .media-log-prompt {
-  font-size: 13px;
-  margin-top: 3px;
+  display: block;
+  max-width: 260px;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  word-break: break-all;
 }
-.media-log-params { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.media-log-params { color: var(--muted); white-space: nowrap; }
+.media-log-file { max-width: 180px; word-break: break-all; }
 
 /* ============ 📑 用户消息导航抽屉 ============ */
 .msg-nav-scrim {

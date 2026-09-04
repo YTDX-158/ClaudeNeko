@@ -23,9 +23,19 @@ import { logger } from '../logger.js';
 
 const AUTH_COOKIE = 'neko_auth';
 
+/** 将请求目标规范成策略层唯一使用的路径；无效 URL 必须失败关闭。 */
+export function normalizeProxyPath(rawUrl) {
+  try {
+    return new URL(String(rawUrl || ''), 'http://127.0.0.1').pathname;
+  } catch {
+    return null;
+  }
+}
+
 /** 远程禁用判定：删数据（DELETE）/ SSRF 下载 / force-stop 杀进程 → 403。放行其余（含上传/生成媒体）。 */
 export function isBlocked(method, pathname) {
   if (method === 'DELETE') return true;                 // 删数据（媒体等）：不可逆
+  if (pathname === '/api/balance') return true;         // 余额与供应商凭据：仅本机可用
   if (pathname === '/api/media/download') return true;  // SSRF：任意 URL 抓取
   if (pathname.endsWith('/force-stop')) return true;    // 杀 claude 进程
   return false;
@@ -96,11 +106,16 @@ function getCookie(header, name) {
  */
 export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
   const server = http.createServer(async (req, res) => {
-    const url = req.url.split('?')[0];
+    const pathname = normalizeProxyPath(req.url);
     const method = req.method;
+    if (!pathname) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '请求路径无效' }));
+      return;
+    }
 
     // 1) 配对接口：放行（无需凭证），校验码 → 签发 HttpOnly Cookie
-    if (method === 'POST' && url === '/pair') {
+    if (method === 'POST' && pathname === '/pair') {
       const body = await readBody(req); // 复用健壮版：超时/1MB上限/UTF-8归一化
       let code = '';
       try {
@@ -147,7 +162,7 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing }) {
     }
 
     // 3) 远程禁用高危操作（删数据 / SSRF 下载 / force-stop）
-    if (isBlocked(method, url)) {
+    if (isBlocked(method, pathname)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: '远程模式已禁用该功能（安全保护）' }));
       return;

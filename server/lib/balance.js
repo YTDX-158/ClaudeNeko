@@ -3,21 +3,42 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+function isDeepSeekEndpoint(baseUrl) {
+  try {
+    const url = new URL(String(baseUrl || ''));
+    return url.protocol === 'https:' && url.hostname.toLowerCase() === 'api.deepseek.com';
+  } catch {
+    return false;
+  }
+}
+
 /**
- * 读取 DeepSeek API Key。
- * 优先取环境变量，兜底解析 ~/.claude/settings.json 里的 ANTHROPIC_AUTH_TOKEN
- * （Claude Code CLI 走的同一把 key），key 只留在后端，绝不下发到前端。
+ * 从同一配置来源中选择明确绑定到 DeepSeek 的凭据。
+ * 专用密钥优先；兼容 Claude Code 的通用 token 时，必须由同源的 DeepSeek HTTPS 地址约束。
  */
-function readApiKey() {
-  const fromEnv = process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN;
-  if (fromEnv) return fromEnv;
+export function selectDeepSeekApiKey(...sources) {
+  for (const env of sources) {
+    if (env?.DEEPSEEK_API_KEY) return env.DEEPSEEK_API_KEY;
+  }
+  for (const env of sources) {
+    if (env?.ANTHROPIC_AUTH_TOKEN && isDeepSeekEndpoint(env.ANTHROPIC_BASE_URL)) {
+      return env.ANTHROPIC_AUTH_TOKEN;
+    }
+  }
+  return null;
+}
+
+function readSettingsEnv() {
   try {
     const raw = fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf8');
-    const env = JSON.parse(raw).env || {};
-    return env.ANTHROPIC_AUTH_TOKEN || env.DEEPSEEK_API_KEY || null;
+    return JSON.parse(raw).env || {};
   } catch {
-    return null;
+    return {};
   }
+}
+
+function readApiKey() {
+  return selectDeepSeekApiKey(process.env, readSettingsEnv());
 }
 
 /**
