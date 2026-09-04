@@ -362,14 +362,14 @@ body {
 .empty::before {
   content: '';
   display: block;
-  width: 44px;
-  height: 44px;
+  width: 56px;
+  height: 56px;
   margin: 0 auto 14px;
-  border-radius: 12px;
   background-image: url('/neko-welcome.png');
-  background-size: cover;
+  background-size: contain;
   background-position: center;
-  border: 1px solid var(--border-strong);
+  background-repeat: no-repeat;
+  filter: drop-shadow(0 0 7px rgba(203, 205, 213, 0.4));
 }
 
 .msg {
