@@ -366,9 +366,9 @@ body {
   height: 44px;
   margin: 0 auto 14px;
   border-radius: 12px;
-  background:
-    radial-gradient(circle at 30% 30%, rgba(116, 192, 252, 0.5), transparent 55%),
-    linear-gradient(135deg, #2d4258, #1c2027);
+  background-image: url('/neko-welcome.png');
+  background-size: cover;
+  background-position: center;
   border: 1px solid var(--border-strong);
 }
 
