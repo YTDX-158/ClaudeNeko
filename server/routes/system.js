@@ -17,6 +17,7 @@ export function systemHandler(ctx) {
       return sendJson(res, 200, detectEnv());
     }
     if (method === 'GET' && pathname === '/api/balance') {
+      if (!ctx.isLocalRequest?.(req)) return sendJson(res, 403, { error: '来源校验失败' });
       return sendJson(res, 200, await fetchBalance());
     }
     if (method === 'GET' && pathname === '/api/skills') {
