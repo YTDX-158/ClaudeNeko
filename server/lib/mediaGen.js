@@ -114,12 +114,29 @@ export function createMediaService(cfg) {
   const isVideoModel = (id) => videoModels.some((m) => m.id === id);
   const isValidRatio = (r) => ratios.includes(r);
 
-  // ---- 任务落盘（gen_tasks.json，原子写；状态变化时调用） ----
+  // ---- 恢复队列落盘（gen_tasks.json，原子写；仅 running + 非敏感恢复字段） ----
+  function toRecoveryTask(t) {
+    if (!t || t.status !== 'running') return null;
+    return {
+      status: 'running',
+      ts: t.ts,
+      resolution: t.resolution,
+      model: t.model,
+      ratio: t.ratio,
+      duration: t.duration ?? null,
+    };
+  }
+
   function persistTasks() {
     try {
       fs.mkdirSync(path.dirname(tasksFile), { recursive: true });
       const tmp = `${tasksFile}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify({ v: 1, tasks: Object.fromEntries(tasks) }, null, 2));
+      const recoverable = {};
+      for (const [id, task] of tasks) {
+        const persisted = toRecoveryTask(task);
+        if (persisted) recoverable[id] = persisted;
+      }
+      fs.writeFileSync(tmp, JSON.stringify({ v: 1, tasks: recoverable }, null, 2));
       fs.renameSync(tmp, tasksFile);
     } catch (e) {
       logger.error('mediaGen', '任务落盘失败:', e.message); // 写盘失败不阻塞主流程
@@ -179,25 +196,43 @@ export function createMediaService(cfg) {
     }
     const now = Date.now();
     let claimed = 0;
-    let removed = false;
     for (const [id, t] of Object.entries(data.tasks || {})) {
       if (!t || t.status !== 'running') continue; // 只认领 running（done/error 不盯）
-      if (now - (t.ts || 0) > RECLAIM_MAX_AGE) {
-        delete data.tasks[id]; // 超 24h 的 running 记录从文件清（防 gen_tasks.json 无界增长 L2）
-        removed = true;
+      const ts = Number(t.ts);
+      if (!Number.isFinite(ts) || now - ts > RECLAIM_MAX_AGE) continue;
+      if (claimed >= 1) continue; // 最多认领 1 个（并发锁 MAX_ACTIVE=1）
+      let conf;
+      try {
+        conf = mediaConfig?.getConfig('video', t.model);
+      } catch (e) {
+        logger.warn('mediaGen', `恢复任务配置读取失败，已丢弃 ${id}: ${e.message}`);
         continue;
       }
-      if (claimed >= 1) continue; // 最多认领 1 个（并发锁 MAX_ACTIVE=1）
-      t.claimedBy = INSTANCE_ID;
-      t.claimedAt = now;
-      t.failCount = 0;
-      t.lockHeld = true; // 认领即持有并发锁（H1/H2：终态只释放一次）
-      tasks.set(id, t);
+      if (!conf?.apiKey) {
+        logger.warn('mediaGen', `恢复任务缺少当前模型配置，已丢弃 ${id}`);
+        continue;
+      }
+      const recovered = {
+        status: 'running',
+        ts,
+        resolution: t.resolution,
+        model: t.model,
+        ratio: t.ratio,
+        duration: t.duration ?? null,
+        baseUrl: conf.baseUrl || ARK_BASE,
+        apiKey: conf.apiKey,
+        claimedBy: INSTANCE_ID,
+        claimedAt: now,
+        failCount: 0,
+        lockHeld: true, // 认领即持有并发锁（H1/H2：终态只释放一次）
+      };
+      tasks.set(id, recovered);
       active = active + 1;
       claimed++;
-      logger.info('mediaGen', `启动认领未完成任务: ${id}（${t.model || '?'} ${t.resolution || ''}）`);
+      logger.info('mediaGen', `启动认领未完成任务: ${id}（${recovered.model || '?'} ${recovered.resolution || ''}）`);
     }
-    if (claimed || removed) persistTasks();
+    // 每次成功读取后都重写：清掉终态、过期、超额和无法恢复的旧记录，并去除历史敏感字段。
+    persistTasks();
   }
 
   /** 下载任意 URL → 存媒体库 → 返回 mediaId（供生成结果 / 下载视频共用） */
