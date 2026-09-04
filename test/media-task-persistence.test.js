@@ -141,3 +141,27 @@ test('new video tasks never persist credentials, prompts, ownership, or runtime 
     assert.equal(serialized.includes(forbidden), false, `persisted ${forbidden}`);
   }
 });
+
+test('startup prunes future-dated and invalid running recovery records', () => {
+  const dataDir = makeTempDir();
+  const base = {
+    status: 'running',
+    ts: Date.now(),
+    resolution: '720P',
+    model: 'video-model',
+    ratio: '16:9',
+    duration: 5,
+  };
+  writeTasks(dataDir, {
+    future: { ...base, ts: Date.now() + 60 * 60 * 1000 },
+    badModel: { ...base, model: 'unknown-model' },
+    badResolution: { ...base, resolution: '16K' },
+    badRatio: { ...base, ratio: '99:1' },
+    badDuration: { ...base, duration: 999 },
+  });
+
+  const service = createMediaService(makeConfig(dataDir));
+
+  assert.equal(service.hasActive(), false);
+  assert.deepEqual(readTasks(dataDir), { v: 1, tasks: {} });
+});

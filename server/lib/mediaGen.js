@@ -25,6 +25,7 @@ const WATCH_MS_4K = 10000;         // 4K 盯梢放宽（生成久 + 查询限流
 const FAIL_LIMIT = 3;              // 连续查询失败次数 → 判"查询失败"
 const MAX_RUN_MS = 6 * 60 * 60 * 1000;     // running 绝对上限：超 6h 强制停
 const RECLAIM_MAX_AGE = 24 * 60 * 60 * 1000; // 启动只认领 24h 内的 running
+const RECOVERY_CLOCK_SKEW_MS = 5 * 60 * 1000; // 容忍少量系统时钟偏差，拒绝远未来任务占锁
 const DONE_KEEP_MS = 10 * 60 * 1000;       // done 记录内存保留（给前端查进度）
 const ERROR_KEEP_MS = 24 * 60 * 60 * 1000; // error 记录内存保留（证据+可重试窗口）
 const CLEAN_MS = 5 * 60 * 1000;            // 低频清理间隔
@@ -199,7 +200,15 @@ export function createMediaService(cfg) {
     for (const [id, t] of Object.entries(data.tasks || {})) {
       if (!t || t.status !== 'running') continue; // 只认领 running（done/error 不盯）
       const ts = Number(t.ts);
-      if (!Number.isFinite(ts) || now - ts > RECLAIM_MAX_AGE) continue;
+      if (!Number.isFinite(ts) || ts > now + RECOVERY_CLOCK_SKEW_MS || now - ts > RECLAIM_MAX_AGE) continue;
+      const modelMeta = videoModels.find((model) => model.id === t.model);
+      if (!modelMeta || !modelMeta.resolutions?.includes(String(t.resolution)) || !isValidRatio(t.ratio)) continue;
+      if (t.duration != null) {
+        const duration = Number(t.duration);
+        const presets = modelMeta.durations?.length ? modelMeta.durations : [4, 30];
+        const range = modelMeta.durationRange || { min: Math.min(...presets), max: Math.max(...presets) };
+        if (!Number.isInteger(duration) || duration < range.min || duration > range.max) continue;
+      }
       if (claimed >= 1) continue; // 最多认领 1 个（并发锁 MAX_ACTIVE=1）
       let conf;
       try {
