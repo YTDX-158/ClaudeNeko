@@ -9,6 +9,7 @@
     "dev:server": "node --watch server/server.js",
     "dev:web": "vite",
     "build": "vite build",
+    "test": "node --test",
     "prod": "npm run build && node server/server.js",
     "regression": "node scripts/regression.js",
     "regression:fast": "node scripts/regression.js --skip-chat"
