@@ -22,11 +22,16 @@ import { readBody } from '../util.js';
 import { logger } from '../logger.js';
 
 const AUTH_COOKIE = 'neko_auth';
+const REMOTE_BLOCKED_PATHS = new Set([
+  '/api/log',
+  '/api/log/download',
+  '/api/media/download',
+]);
 
 /** 远程禁用判定：删数据（DELETE）/ SSRF 下载 / force-stop 杀进程 → 403。放行其余（含上传/生成媒体）。 */
 export function isBlocked(method, pathname) {
   if (method === 'DELETE') return true;                 // 删数据（媒体等）：不可逆
-  if (pathname === '/api/media/download') return true;  // SSRF：任意 URL 抓取
+  if (REMOTE_BLOCKED_PATHS.has(pathname)) return true;  // 本机日志 / SSRF 下载
   if (pathname.endsWith('/force-stop')) return true;    // 杀 claude 进程
   return false;
 }
