@@ -73,6 +73,16 @@ function calcImageSize(ratio, resolution) {
   return `${w}x${h}`;
 }
 
+/** 任务轮询的公开响应；生成凭据、提示词和内部锁状态只保留在服务端。 */
+export function toPublicTask(task) {
+  if (!task || typeof task !== 'object') return { status: 'not_found' };
+  const out = { status: typeof task.status === 'string' ? task.status : 'not_found' };
+  if (Object.hasOwn(task, 'mediaId')) out.mediaId = task.mediaId;
+  if (Object.hasOwn(task, 'error')) out.error = task.error;
+  if (Object.hasOwn(task, 'ts')) out.ts = task.ts;
+  return out;
+}
+
 export function createMediaService(cfg) {
   const { imageModels, videoModels, ratios, imageResolutions, transcribeEnabled, mediaConfig, onTaskSettled, logEnabled } = cfg;
   const tasks = new Map(); // taskId -> {status, mediaId?, error?, ts, resolution, failCount, claimedBy?, claimedAt?, lastWatchAt?}
@@ -502,9 +512,11 @@ export function createMediaService(cfg) {
         }
       }
       return t;
-    })().finally(() => {
-      t.querying = null; // 清在飞标记，下次可再查
-    });
+    })()
+      .then(toPublicTask)
+      .finally(() => {
+        t.querying = null; // 清在飞标记，下次可再查
+      });
     return t.querying;
   }
 
