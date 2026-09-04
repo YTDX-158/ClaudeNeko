@@ -167,13 +167,21 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
   const [exportAllOpen, setExportAllOpen] = useState(false);
   const handleExportAllDialog = async (format, includeThinking) => {
     if (format === 'zip') {
-      // 数据备份：全部会话打包 zip（后端 export-all，含完整数据）
-      const a = document.createElement('a');
-      a.href = '/api/sessions/export-all';
-      a.download = '';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      try {
+        const blob = await api.exportAllSessions();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const d = new Date();
+        const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+        a.href = url;
+        a.download = `ClaudeNeko-全部会话-${date}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      } catch (error) {
+        alert(error.message || '导出失败，请稍后重试');
+      }
       return;
     }
     try {
