@@ -329,4 +329,3 @@ Report these as Claude-side smoke tests, without claiming they ran in the clone:
 2. Submit and query a real video task; response contains no private fields.
 3. Open remote access and send the raw backslash force-stop path; proxy returns 403.
 4. Open Media Library → Ledger with real records; verify rows, failure tooltip, toggle, refresh, clear-records-only, and narrow-screen horizontal scrolling.
-
