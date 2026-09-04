@@ -48,6 +48,22 @@ test('pair nonces are source-bound, expiring, and one-time', () => {
   assert.equal(store.consume(expired, 'source-a'), false);
 });
 
+test('pair nonces replace per-source state and enforce a global capacity', () => {
+  let sequence = 0;
+  const store = proxy.createPairNonceStore?.({
+    maxEntries: 2,
+    generate: () => `nonce-${sequence += 1}`,
+  });
+  const oldA = store.issue('source-a');
+  const currentA = store.issue('source-a');
+  assert.equal(store.consume(oldA, 'source-a'), false);
+
+  store.issue('source-b');
+  store.issue('source-c');
+  assert.equal(store.size(), 2);
+  assert.equal(store.consume(currentA, 'source-a'), false);
+});
+
 test('five failures lock one source while the global limit is independent', () => {
   const limiter = proxy.createPairRateLimiter?.({
     sourceLimit: 5,
@@ -61,6 +77,21 @@ test('five failures lock one source while the global limit is independent', () =
   for (let i = 0; i < 45; i += 1) limiter.recordFailure(`source-${i + 10}`, 2000 + i);
   assert.equal(limiter.check('fresh-source', 3000).globalLocked, true);
   assert.equal(limiter.check('fresh-source', 61_100).locked, false);
+});
+
+test('pair rate limiter bounds retained source state', () => {
+  const limiter = proxy.createPairRateLimiter?.({
+    sourceLimit: 5,
+    globalLimit: 100,
+    maxSources: 2,
+    windowMs: 60_000,
+  });
+  limiter.recordFailure('source-a', 1000);
+  limiter.recordFailure('source-b', 1001);
+  limiter.recordFailure('source-c', 1002);
+
+  assert.equal(limiter.sourceSize(), 2);
+  assert.equal(limiter.check('source-a', 1003).sourceLocked, false);
 });
 
 test('a locked source is rejected before its request body is read', async () => {

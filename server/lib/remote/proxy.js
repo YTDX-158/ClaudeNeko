@@ -97,39 +97,49 @@ export function isPairRequestAllowed(req) {
 
 export function createPairNonceStore({
   ttlMs = 5 * 60_000,
+  maxEntries = 4096,
   now = () => Date.now(),
   generate = () => randomBytes(32).toString('hex'),
 } = {}) {
+  // source -> nonce：同一来源刷新页面会替换旧 nonce，而不是持续增长。
   const nonces = new Map();
-  const prune = () => {
-    const current = now();
-    for (const [nonce, entry] of nonces) {
-      if (entry.expiresAt <= current) nonces.delete(nonce);
-    }
-  };
+  const capacity = Math.max(1, Math.floor(maxEntries));
   return {
     issue(source) {
-      prune();
+      const sourceKey = String(source || 'unknown');
       const nonce = generate();
-      nonces.set(nonce, { source, expiresAt: now() + ttlMs });
+      nonces.delete(sourceKey); // 替换并刷新 Map 插入顺序
+      while (nonces.size >= capacity) {
+        const oldestSource = nonces.keys().next().value;
+        nonces.delete(oldestSource);
+      }
+      nonces.set(sourceKey, { nonce, expiresAt: now() + ttlMs });
       return nonce;
     },
     consume(nonce, source) {
-      prune();
-      const entry = nonces.get(String(nonce || ''));
-      if (!entry || entry.source !== source) return false;
-      nonces.delete(String(nonce));
+      const sourceKey = String(source || 'unknown');
+      const entry = nonces.get(sourceKey);
+      if (!entry) return false;
+      if (entry.expiresAt <= now()) {
+        nonces.delete(sourceKey);
+        return false;
+      }
+      if (entry.nonce !== String(nonce || '')) return false;
+      nonces.delete(sourceKey);
       return true;
     },
+    size: () => nonces.size,
   };
 }
 
 export function createPairRateLimiter({
   sourceLimit = 5,
   globalLimit = 50,
+  maxSources = 4096,
   windowMs = 60_000,
 } = {}) {
   const sourceFailures = new Map();
+  const sourceCapacity = Math.max(1, Math.floor(maxSources));
   let globalFailures = [];
   const prune = (source, now) => {
     const cutoff = now - windowMs;
@@ -150,6 +160,11 @@ export function createPairRateLimiter({
     recordFailure(source, now = Date.now()) {
       const failures = prune(source, now);
       failures.push(now);
+      sourceFailures.delete(source); // 刷新活跃来源的淘汰顺序
+      while (sourceFailures.size >= sourceCapacity) {
+        const oldestSource = sourceFailures.keys().next().value;
+        sourceFailures.delete(oldestSource);
+      }
       sourceFailures.set(source, failures);
       globalFailures.push(now);
       return check(source, now);
@@ -157,6 +172,7 @@ export function createPairRateLimiter({
     resetSource(source) {
       sourceFailures.delete(source);
     },
+    sourceSize: () => sourceFailures.size,
   };
 }
 
