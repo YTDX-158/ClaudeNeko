@@ -6,7 +6,7 @@
 ; =====================================================
 
 #define AppName "ClaudeNeko"
-#define AppVersion "2.4.5"
+#define AppVersion "2.4.6"
 #define AppExeName "启动ClaudeNeko.bat"
 
 [Setup]
