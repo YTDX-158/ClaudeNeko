@@ -16,6 +16,7 @@ import { wsChannel } from '../ws.js';
 
 // 已重放（打字机）的 assistant claudeMessageId 集合：防切会话回来重复播放
 const replayedSet = new Set();
+let _permSecret = null; // 权限体系 P1-3：审批 respond 防伪 secret（模块级缓存一次）
 
 // claude 对【系统记录】的机械确认（只认"已记录"类）→ 标 isSystem，WS 即时不渲染（防"已记录"刷屏）
 const SYSTEM_CONFIRM = /^(好的?，?)?已记录?[，。！!~～\s]*$/i;
@@ -29,6 +30,10 @@ export function useChatStream(sessionId, onModelUpdate) {
   // 兜底：error / force-stop / 切会话 / 发送失败 都显式置 false；"僵尸假死"极罕见且可被 ⛔/新消息救
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState(null);
+  // 权限体系 P1-3：当前会话未决的权限审批卡片
+  const [pendingPerms, setPendingPerms] = useState([]);
+  const pendingPermsRef = useRef([]);
+  useEffect(() => { pendingPermsRef.current = pendingPerms; }, [pendingPerms]);
   // 供轮询闭包读取的最新值（避免在 effect 依赖里塞入 streaming/sessionId 导致重建定时器）
   const streamingRef = useRef(false);
   const recoveringRef = useRef(false);
@@ -58,6 +63,7 @@ export function useChatStream(sessionId, onModelUpdate) {
     // 切会话必须重置 streaming：否则旧会话的流式态吞掉新会话发送 + 停止按钮取消错对象
     setStreaming(false);
     setThinking(false); // 切会话重置"生成中"指示
+    setPendingPerms([]); // 权限体系 P1-3：切会话清未决审批卡片
     replayedSet.clear(); // M16：replayedSet 随会话清理（防只增不减；历史消息靠 replay 标记不重放）
     lastUpdatedAtRef.current = null;
     if (!sessionId) return;
@@ -148,6 +154,14 @@ export function useChatStream(sessionId, onModelUpdate) {
       onModel: (model) => {
         if (model) modelRef.current?.(sessionId, model);
       },
+      // 权限体系 P1-3：新权限请求 → 入未决列表；已处理 → 移除
+      onPerm: (p) => {
+        if (!p || !p.id) return;
+        setPendingPerms((prev) => (prev.some((x) => x.id === p.id) ? prev : [...prev, p]));
+      },
+      onPermClosed: ({ id } = {}) => {
+        if (id) setPendingPerms((prev) => prev.filter((x) => x.id !== id));
+      },
     });
     wsChannel.connect(sessionId); // 确保 WS 连到当前会话
     return () => unsub();
@@ -222,6 +236,7 @@ export function useChatStream(sessionId, onModelUpdate) {
   const send = useCallback(
     async (prompt, attachments = []) => {
       if (!sessionId || streamingRef.current) return; // streamingRef 即时守卫（防双击双流）
+      if (pendingPermsRef.current.length) return; // 权限体系 P1-3：有待批审批 → 锁发送（等用户处理卡片）
       setError(null);
       setStreaming(true);
       streamingRef.current = true; // 立即置位：同渲染周期内第二次点击也能拦住
@@ -287,5 +302,15 @@ export function useChatStream(sessionId, onModelUpdate) {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...newMsg } : m)));
   }, []);
 
-  return { messages, messagesSessionId, streaming, recovering, thinking, error, send, stop, addMessage, replaceMessage };
+  /** 权限体系 P1-3：审批响应。action: 'once'|'always'|'deny'（always 规则由 server 从 tool_input 生成精确串） */
+  const respondPerm = useCallback(async (id, action) => {
+    try {
+      if (!_permSecret) _permSecret = (await api.getPermissionSecret()).secret;
+      await api.respondPermission(id, action, _permSecret);
+    } catch (e) {
+      setError(e?.message || '审批响应失败');
+    }
+  }, []);
+
+  return { messages, messagesSessionId, streaming, recovering, thinking, error, pendingPerms, send, stop, addMessage, replaceMessage, respondPerm };
 }

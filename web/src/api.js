@@ -143,4 +143,15 @@ export const api = {
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   },
+
+  // ---- 权限体系 P1-3：审批通道 ----
+  getPermissionSecret: () => request('/permission/secret'),
+  getPendingPermissions: (sid) => request(`/permission/pending?sid=${encodeURIComponent(sid)}`),
+  // respond 需带防伪 secret（respondPermission 前先 getPermissionSecret 拿一次并缓存）
+  respondPermission: (id, action, secret, rule) =>
+    request('/permission/respond', {
+      method: 'POST',
+      headers: { 'X-Neko-Secret': secret },
+      body: JSON.stringify({ id, action, rule }),
+    }),
 };

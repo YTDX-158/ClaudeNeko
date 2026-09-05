@@ -44,6 +44,12 @@ function handleMessage(raw) {
     for (const s of subscribers) if (s.sid === currentSid) s.onTermReplay?.(m.d);
   } else if (m.t === 'model') {
     for (const s of subscribers) if (s.sid === currentSid) s.onModel?.(m.model);
+  } else if (m.t === 'perm') {
+    // 权限体系 P1-3：新权限请求 → 弹审批卡片
+    for (const s of subscribers) if (s.sid === currentSid) s.onPerm?.(m.p);
+  } else if (m.t === 'perm-closed') {
+    // 权限体系 P1-3：权限已处理 → 收卡片
+    for (const s of subscribers) if (s.sid === currentSid) s.onPermClosed?.(m.p);
   }
 }
 

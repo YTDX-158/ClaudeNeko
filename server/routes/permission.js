@@ -14,6 +14,20 @@
 import { randomUUID } from 'node:crypto';
 import { sendJson, readBody } from '../lib/util.js';
 
+/** 「以后都行」生成精确 claude 规则（粒度防宽·雷③）——从 tool_input 抽具体目标，不落整类工具。
+ *  Bash → 命令首 token+*（Bash(ipconfig*)）；写类 → 文件路径+*；联网 → 工具级（P1-5 细化域名） */
+function buildRule(req) {
+  const t = req.tool_name || '';
+  const input = req.tool_input || {};
+  if (t === 'Bash') {
+    const cmd = String(input.command || (Array.isArray(input.args) ? input.args[0] : '') || '').trim().split(/[\s;&|<>]/)[0];
+    if (cmd) return `Bash(${cmd}*)`;
+  }
+  const fp = input.file_path || input.path;
+  if ((t === 'Write' || t === 'Edit' || t === 'MultiEdit') && fp) return `${t}(${fp}*)`;
+  return t; // 其余兜底工具名级
+}
+
 export function permissionHandler({ store, terminal, permissionConfig, isLocalRequest, logger }) {
   const pending = new Map(); // id -> { sid, req:{tool_name,tool_input,session_id,cwd}, decision:null, ts }
 
@@ -84,8 +98,8 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     const action = body.action; // 'once' | 'always' | 'deny'
     let decision;
     if (action === 'always') {
-      // 「以后都行」：allow + 写规则（规则由前端传精确串，粒度防宽见 P1-3/P1-5）
-      const rule = typeof body.rule === 'string' && body.rule ? body.rule : null;
+      // 「以后都行」：allow + 写规则。优先前端精确串；否则 server 从 tool_input 生成（粒度防宽·雷③）
+      const rule = typeof body.rule === 'string' && body.rule ? body.rule : buildRule(p.req);
       decision = { behavior: 'allow' };
       if (rule) {
         decision.updatedPermissions = [rule];
