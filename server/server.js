@@ -26,6 +26,7 @@ import { configHandler } from './routes/config.js';
 import { mediaConfigHandler } from './routes/mediaConfig.js';
 import { createModelConfig } from './lib/modelConfig.js';
 import { createMediaConfig } from './lib/mediaConfig.js';
+import { createPermissionConfig } from './lib/permissionConfig.js'; // 权限体系 P1：权限档存储（server/data/permissionConfig.json）
 import * as configService from './lib/configService.js';
 import { detectEnv } from './lib/envReport.js';
 import { createRemote } from './lib/remote/index.js';
@@ -43,6 +44,7 @@ process.on('unhandledRejection', (reason) => {
 
 const config = resolveConfig();
 const mediaConfigService = createMediaConfig({ dataDir: config.dataDir }); // 生图生视频模型条目（设置中心「媒体配置」）
+const permissionConfigService = createPermissionConfig({ dataDir: config.dataDir }); // 权限体系 P1：权限档（ask/smart/bypass）+ 黑白名单
 const media = createMediaService({
   ...config.media,
   dataDir: config.dataDir,
@@ -124,7 +126,7 @@ const configRouter = configHandler({ modelConfig, configService, detectEnv, read
 const mediaConfigRouter = mediaConfigHandler({ mediaConfig: mediaConfigService, readBody, imageModels: config.media.imageModels, videoModels: config.media.videoModels });
 const systemRouter = systemHandler({ config, appVersion: APP_VERSION, getAutoStartEnabled, setAutoStart, readBody, isLocalRequest });
 const mediaRouter = mediaHandler({ media, mediaConfig: mediaConfigService, store, ptyHost, isLocalRequest });
-const sessionsRouter = sessionsHandler({ store, config, busyLock, media, isLocalRequest, ptyHost, transcript, terminal });
+const sessionsRouter = sessionsHandler({ store, config, busyLock, media, isLocalRequest, ptyHost, transcript, terminal, permissionConfig: permissionConfigService });
 const statsRouter = statsHandler({ store, isLocalRequest }); // 成本统计（独立路由）
 const searchRouter = searchHandler({ store, isLocalRequest }); // 消息搜索（独立路由）
 const exportRouter = exportHandler({ store, isLocalRequest }); // 会话导出（独立路由）

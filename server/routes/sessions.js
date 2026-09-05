@@ -109,7 +109,7 @@ function maybeSummarizeEarlyHistory(session, slice, store, config) {
 
 /** 发消息：注入常驻 pty（TUI），落盘 user 消息，busy 锁在 assistant 事件/超时释放。 */
 async function handleMessage(ctx, req, res, url) {
-  const { store, config, busyLock, ptyHost, transcript, terminal } = ctx;
+  const { store, config, busyLock, ptyHost, transcript, terminal, permissionConfig } = ctx;
   const id = url.pathname.split('/')[3];
   const session = store.get(id);
   if (!session) return sendJson(res, 404, { error: '会话不存在' });
@@ -166,7 +166,7 @@ async function handleMessage(ctx, req, res, url) {
     unlockBusy();
     return sendJson(res, 500, { error: '终端功能不可用（node-pty 未加载）' });
   }
-  const ptyRes = ptyHost.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined }); // 不传 model：claude 统一走全局 env（改模型=全局生效，会话级覆盖已废弃）
+  const ptyRes = ptyHost.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined, permissionMode: permissionConfig?.getMode() }); // 不传 model：claude 统一走全局 env（改模型=全局生效）；permissionMode=权限档（P1-1）
   transcript.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined });
   // M2 修复：submit 内部处理"未就绪"——pty 刚起时消息进队列，claude TUI 就绪后自动补发，
   // 不再固定延迟 12s（慢机/大历史也不会吞消息）。isNew 时也直接 submit（排队等就绪）。
@@ -274,7 +274,7 @@ export function sessionsHandler(ctx) {
       if (!session) return sendJson(res, 404, { error: '会话不存在' });
       const cwd = session.cwd || config.defaultCwd;
       if (ctx.ptyHost?.available) {
-        ctx.ptyHost.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined });
+        ctx.ptyHost.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined, permissionMode: ctx.permissionConfig?.getMode() });
         ctx.transcript?.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined });
       }
       return sendJson(res, 200, { ok: true });
