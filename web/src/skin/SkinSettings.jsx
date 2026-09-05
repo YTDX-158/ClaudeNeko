@@ -14,6 +14,12 @@ import { EFFORT_LEVELS, readDefaultEffort, setDefaultEffort } from '../utils/eff
 import { readConfirmMedia, setConfirmMedia } from '../utils/mediaConfirm.js';
 
 const ACCENTS = ['#74c0fc', '#34d399', '#4f83f2', '#f472b6', '#f59e0b', '#a78bfa', '#22d3ee', '#f87171'];
+// 权限体系 P1-4：全局权限模式三档（对应后端 permissionConfig.mode：ask/smart/bypass）
+const PERM_MODES = [
+  { id: 'ask', label: '请求批准', tip: 'Claude 想改外部文件/联网等操作时，每次都问你' },
+  { id: 'smart', label: '替我审批', tip: '只对风险操作问，安全操作自动放行（推荐·默认）' },
+  { id: 'bypass', label: '完全访问', tip: '不询问，可访问电脑任何文件和网络（同开发者全权限）' },
+];
 const GRADIENTS = [
   { label: '极光', css: 'linear-gradient(135deg, #022c22 0%, #065f46 60%, #0d9488 100%)' },
   { label: '暗夜', css: 'linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #334155 100%)' },
@@ -65,6 +71,8 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
   const [confirmMedia, setConfirmMediaState] = useState(readConfirmMedia); // 生成图片/视频前确认（默认开）
   const [remote, setRemote] = useState(null); // null=加载中 / {enabled, publicUrl, pairCode}
   const [remoteBusy, setRemoteBusy] = useState(false); // 开关切换中（防连点）
+  const [permCfg, setPermCfg] = useState(null); // 权限体系 P1-4：null=加载中 / {mode, allow[], deny[]}
+  const [permBusy, setPermBusy] = useState(false); // 权限档切换中（防连点）
   const [appVersion, setAppVersion] = useState(null); // 底部版本号（后端 /api/health 带，随 package.json 自动更新）
 
   // 打开设置时刷新默认档 / 生成确认开关：组件常驻挂载，运行期 localStorage 可能被改/清，避免显示启动时旧值
@@ -97,6 +105,41 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
     api.remoteStatus().then((r) => { if (!cancelled) setRemote(r); }).catch(() => {});
     return () => { cancelled = true; };
   }, [open]);
+
+  // 权限体系 P1-4：打开设置时读权限档 + 记住的规则
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.getPermissionConfig().then((r) => { if (!cancelled) setPermCfg(r); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open]);
+
+  const setPermMode = async (id) => {
+    if (permBusy || id === permCfg?.mode) return;
+    setPermBusy(true);
+    try {
+      const { secret } = await api.getPermissionSecret();
+      const cfg = await api.setPermissionConfig({ mode: id }, secret);
+      setPermCfg(cfg);
+    } catch {
+      /* 静默：网络/后端暂不可用 */
+    } finally {
+      setPermBusy(false);
+    }
+  };
+
+  const removePermRule = async (kind, rule) => {
+    try {
+      const { secret } = await api.getPermissionSecret();
+      const cfg = await api.setPermissionConfig(
+        kind === 'allow' ? { removeAllow: rule } : { removeDeny: rule },
+        secret,
+      );
+      setPermCfg(cfg);
+    } catch {
+      /* 静默 */
+    }
+  };
 
   const toggleAutostart = async () => {
     const next = !autostart;
@@ -468,6 +511,35 @@ export default function SkinSettings({ open, onClose, onModelChanged }) {
                     </button>
                   ))}
                 </div>
+                <div className="skin-row">
+                  <span>权限模式（Claude 请求权限时怎么处理——批准会弹🔐卡片）</span>
+                </div>
+                <div className="skin-row">
+                  {permCfg ? (
+                    PERM_MODES.map((m) => (
+                      <button
+                        key={m.id}
+                        className={`skin-btn${permCfg.mode === m.id ? ' active' : ''}`}
+                        title={m.tip}
+                        onClick={() => setPermMode(m.id)}
+                        disabled={permBusy}
+                      >
+                        {m.label}
+                      </button>
+                    ))
+                  ) : (<span className="skin-hint">…</span>)}
+                </div>
+                {permCfg?.allow?.length > 0 && (
+                  <div className="skin-section">
+                    <div className="skin-section-title" style={{ fontSize: 12, margin: '8px 0 0' }}>已记住的放行规则（点移除 = 取消自动放行）</div>
+                    {permCfg.allow.map((r) => (
+                      <div className="skin-row" key={r}>
+                        <span style={{ fontSize: 12, color: '#9c9', wordBreak: 'break-all' }}>{r}</span>
+                        <button className="skin-btn" onClick={() => removePermRule('allow', r)}>移除</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="skin-row">
                   <span>开机自启（登录时后台启动服务，不用再点 neko://）</span>
                   <button

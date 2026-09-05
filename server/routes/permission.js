@@ -116,6 +116,31 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     return sendJson(res, 200, { ok: true });
   }
 
+  /** 设置页写权限档/规则（P1-4）：body 支持 {mode} 设档 / {removeAllow:rule} / {removeDeny:rule} 移除记住的规则 */
+  async function handleSetConfig(req, res) {
+    const secret = req.headers['x-neko-secret'];
+    if (!secret || secret !== permissionConfig?.getSecret()) return sendJson(res, 403, { error: '校验失败' });
+    const body = await readBody(req);
+    if (!body) return sendJson(res, 400, { error: '空请求体' });
+    try {
+      if (body.mode) {
+        permissionConfig.setMode(body.mode);
+        return sendJson(res, 200, permissionConfig.get());
+      }
+      if (typeof body.removeAllow === 'string') {
+        permissionConfig.removeAllow(body.removeAllow);
+        return sendJson(res, 200, permissionConfig.get());
+      }
+      if (typeof body.removeDeny === 'string') {
+        permissionConfig.removeDeny(body.removeDeny);
+        return sendJson(res, 200, permissionConfig.get());
+      }
+      return sendJson(res, 400, { error: '未知操作' });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
+
   async function router(req, res, url) {
     const p = url.pathname;
     if (p === '/api/permission/request' && req.method === 'POST') return handleRequest(req, res);
@@ -131,6 +156,14 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
       // respond 防伪造成密钥（仅本机可取）
       if (!isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
       return sendJson(res, 200, { secret: permissionConfig?.getSecret() });
+    }
+    if (p === '/api/permission/config' && req.method === 'GET') {
+      // 设置页读权限档+规则（仅本机）
+      if (!isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
+      return sendJson(res, 200, permissionConfig.get());
+    }
+    if (p === '/api/permission/config' && req.method === 'PUT') {
+      return handleSetConfig(req, res);
     }
     return null; // 不匹配 → 交给下个 router
   }

@@ -144,7 +144,7 @@ export const api = {
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   },
 
-  // ---- 权限体系 P1-3：审批通道 ----
+  // ---- 权限体系 P1-3/4：审批通道 + 权限配置 ----
   getPermissionSecret: () => request('/permission/secret'),
   getPendingPermissions: (sid) => request(`/permission/pending?sid=${encodeURIComponent(sid)}`),
   // respond 需带防伪 secret（respondPermission 前先 getPermissionSecret 拿一次并缓存）
@@ -153,5 +153,13 @@ export const api = {
       method: 'POST',
       headers: { 'X-Neko-Secret': secret },
       body: JSON.stringify({ id, action, rule }),
+    }),
+  // 设置页：读权限档+规则 / 写（mode 设档 · removeAllow/removeDeny 移除记住规则）
+  getPermissionConfig: () => request('/permission/config'),
+  setPermissionConfig: (body, secret) =>
+    request('/permission/config', {
+      method: 'PUT',
+      headers: { 'X-Neko-Secret': secret },
+      body: JSON.stringify(body),
     }),
 };
