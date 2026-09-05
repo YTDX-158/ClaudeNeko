@@ -1,0 +1,64 @@
+ClaudeNeko 权限体系 · P1 方案（2026-09-05 定稿）
+状态：P0 已验证通过 → P1 待开工
+========================================================
+
+一、一句话目标
+让 claude 的权限请求从"终端黑底"上浮到 ClaudeNeko 聊天界面，变成可点的卡片；
+配 3 档全局策略。小白看得懂、点得动、不卡死。
+
+二、P0 已验证事实（决定性，别推翻）
+1. PermissionRequest hook 真实可用：claude 2.1.261 + 交互 pty 触发成功，hook 收到
+   {session_id, transcript_path, cwd, prompt_id, permission_mode} 完整请求
+2. ❌ -p/headless 模式不触发（claude bug）→ 产品必须走 pty 主会话
+3. ✅ 全局 bypassPermissions + allow 里含 Write → 写外部文件不弹权限（实锤"全权限吞请求"）
+   → ptyHost 必须显式传 --permission-mode，且要管 allow 规则让该问的问
+4. ✅ claude 等 hook ≥20s 不杀（大超时可行性待 P1 验上限）
+5. ✅ hook 脚本在中文路径被正常拉起、stdout 协议正确
+P0 测试产物：D:\Claude_Files\权限P0测试\（hook 脚本 permission_hook.cjs 可演进成 P1 转发 hook）
+
+三、P1 行为定案（用户拍板）
+- 卡片：聊天界面可见的权限请求气泡，显示"claude 想干什么"（工具翻译人话）+ 3 按钮：
+  ①只此一次 ②以后都行(记规则) ③不行
+- 全局 3 档（设置页单选）：①请求批准(外部编辑/联网都问) ②替我审批(默认·黑白名单先判) ③完全访问(bypass)
+- 没人理卡片 = A：claude 一直停着等用户回来处理（hook 挂着；前提=claude 肯等，P1 第一步验）
+- 卡片等待时输入框锁住（防打断）
+- ClaudeNeko 没开时不干扰用户日常 claude（hook 秒查 server 不在 → 放行）
+
+四、架构与文件改动
+链路：claude 要权限 → PermissionRequest hook → POST server /api/permission/request
+     → WS 广播 → 前端卡片 → 用户点 /api/permission/respond → hook 得决定 → claude 继续
+改动面：
+- server/routes/permission.js(新)：request 挂起队列 + respond 幂等 + 超时 + 会话清理(N2)
+- server/lib/permissionHook.js(新，或独立 .cjs)：瘦转发器，读 stdin → POST → 等 → 输出协议 JSON
+  try/catch 全分支：连不上 server 立即输出空 → claude 原生问（N3 优雅降级）
+- server/ptyHost.js：spawn claude 显式传 --permission-mode（按档：①②→default ③→bypass）
+- 前端 PermissionCard.jsx(新)：卡片 + 3 按钮 + 危险操作红警样式 + 等待态
+- 设置页：全局三档单选 + "已记住规则"管理
+- 配置注入：ClaudeNeko 启动时向 ~/.claude/settings.json 合并注入 PermissionRequest hook
+  （保留用户 PreToolUse；记录加的键，升级/卸载清理——B8 路径失效要刷新指向）
+
+五、状态机设计（含故障雷解法——工程 60% 复杂度在这）
+请求状态：NEW→PENDING→(allow/deny/canceled)
+- N1【刷新丢卡片】A 等待中用户刷新/重连 → server 存挂起队列，前端重连自动重放未决卡片
+- N2【中断泄漏】pty 会话被杀/停止 → server 清理该会话所有 pending(当 cancel 通知 hook 退出)，防泄漏
+- N3【hook 崩/连不上 server】hook try/catch 全分支 + 快速失败输出空 → claude 原生，绝不无限挂
+- N4【多端同会话】requestId 幂等：第一次响应生效其余忽略，全端广播同步
+- N5【切会话/停止取消 pending】状态机支持 cancel，会话切换清理
+- N6【并发请求】requestId 逐个处理，卡片顺序清晰
+- 危险操作卡片红色警示（防无脑点"以后都行"→ 悄悄 bypass）
+- respond 接口带共享密钥（hook↔server），防本机恶意程序冒充允许
+- claude 版本不支持 hook → 启动探测，降级提示（不静默失效）
+- 链路异常前端提示"权限通道异常，已让 Claude 原生询问"
+
+六、开工第一步验证（雷①②，不过后面白搭）
+1. claude 肯等 hook 多久：hook 配大超时(如 10min) 实测 claude 是等到 hook 自返还是中途杀
+2. hook 全局兜底速度：ClaudeNeko 没跑时，hook 秒查 server 不在 → 放行，实测不拖 claude
+3. -p 辅助任务不触发 hook（维持 bypass）再确认，防误伤媒体生成
+
+七、6 轮排雷要点归档（防回踩）
+机制/作用域/场景/小白体验/定位/作者体验/安全/路线/实现层/A方案/产品级/故障视角——
+核心约束已并入四五六节；细碎的在会话记录。
+
+八、默认档 & 规则
+默认全局档 = ②替我审批（纯规则黑白名单，不调模型；黑名单 rm-* 类危险 deny，
+白名单只读自动 allow，拿不准上浮卡片；宁多问不放过的原则）
