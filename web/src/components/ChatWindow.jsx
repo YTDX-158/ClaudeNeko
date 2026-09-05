@@ -1,7 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import MessageList from './MessageList.jsx';
 import Composer from './Composer.jsx';
-import PermCard from './PermCard.jsx'; // 权限体系 P1-3：Claude 权限请求审批卡片
 import CatMascot from './CatMascot.jsx';
 import ClaudeNiang from './ClaudeNiang.jsx';
 import { downloadText, exportSessionText } from '../utils/export.js';
@@ -354,15 +353,6 @@ export default function ChatWindow({ session, model, chat, onBranch, onEffortCha
         thinking={chat.thinking}
       />
 
-      {/* 🔐 权限体系 P1-3：Claude 权限请求审批卡片（未决请求在此弹卡，处理完即收） */}
-      {chat.pendingPerms?.length > 0 && (
-        <div className="perm-cards">
-          {chat.pendingPerms.map((p) => (
-            <PermCard key={p.id} perm={p} onRespond={(action) => chat.respondPerm?.(p.id, action)} />
-          ))}
-        </div>
-      )}
-
       {/* 📑 用户消息导航抽屉：列出所有用户提问，点击跳转 */}
       {navOpen && <div className="msg-nav-scrim" onClick={() => setNavOpen(false)} />}
       <aside className={`msg-nav${navOpen ? ' open' : ''}`}>
@@ -399,6 +389,8 @@ export default function ChatWindow({ session, model, chat, onBranch, onEffortCha
         onStop={chat.stop}
         disabled={!session || (chat.pendingPerms?.length > 0)}
         taRef={taRef}
+        permPending={chat.pendingPerms}
+        onPermRespond={chat.respondPerm}
         quote={quote}
         onCancelQuote={() => setQuote(null)}
         attachments={attachments}

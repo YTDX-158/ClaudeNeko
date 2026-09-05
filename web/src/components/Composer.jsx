@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import PermCard from './PermCard.jsx'; // 权限体系 P1-3：Claude 权限请求卡片（显示在输入框上方）
 import MediaPicker from './MediaPicker.jsx';
 import RefImagePicker from './RefImagePicker.jsx';
 import SkillBar from './SkillBar.jsx';
@@ -24,6 +25,8 @@ const Composer = forwardRef(function Composer({
   attachments,
   onAttachmentsChange,
   onGenSend,
+  permPending,
+  onPermRespond,
 }, ref) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
@@ -207,6 +210,14 @@ const Composer = forwardRef(function Composer({
           onSelect={handleRefSelect}
           attachedImages={attachments.filter((a) => a.kind === 'image')}
         />
+      )}
+
+      {Array.isArray(permPending) && permPending.length > 0 && (
+        <div className="perm-cards">
+          {permPending.map((p) => (
+            <PermCard key={p.id} perm={p} onRespond={(a) => onPermRespond?.(p.id, a)} />
+          ))}
+        </div>
       )}
 
       {quote && (

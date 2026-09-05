@@ -146,11 +146,11 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     const action = body.action; // 'once' | 'always' | 'deny'
     let decision;
     if (action === 'always') {
-      // 「以后都行」：allow + 写规则。优先前端精确串；否则 server 从 tool_input 生成（粒度防宽·雷③）
+      // 「以后都行」：写规则到 ClaudeNeko permissionConfig（smart 判定读它，下次同类自动放行）；
+      // ⚠ decision 只给纯 behavior:'allow'——实测 updatedPermissions 字段会让 claude 解析失败、decision 失效
       const rule = typeof body.rule === 'string' && body.rule ? body.rule : buildRule(p.req);
       decision = { behavior: 'allow' };
       if (rule) {
-        decision.updatedPermissions = [rule];
         try { permissionConfig?.addAllow(rule); } catch {}
       }
     } else if (action === 'deny') {
