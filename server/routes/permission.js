@@ -28,6 +28,49 @@ function buildRule(req) {
   return t; // 其余兜底工具名级
 }
 
+// —— 档②替我审批（P1-5）：内置危险黑名单（命令前缀命中 → 直接拒绝，不打扰用户）——
+const DANGEROUS_PREFIXES = [
+  'rm -rf', 'rm -r ', 'rm -f /', 'format ', 'diskpart', 'del /s', 'del /f /s', 'rd /s',
+  'reg delete', 'cipher /w', 'net user', 'shutdown /s', 'taskkill /f /im', 'del C:\\', 'rd C:\\',
+  'powershell -enc', 'powershell -e ', 'format', 'mkfs', ':(){ :|:& };:', 'chmod 777 /',
+];
+
+/** 规则串匹配当前请求（规则格式：工具名级 'Bash' / 参数级 'Bash(cmd*)' / 'Write(path*)'） */
+function ruleMatches(rule, req) {
+  const t = req.tool_name || '';
+  const input = req.tool_input || {};
+  const m = /^([A-Za-z]+)\((.*)\)$/.exec(rule || '');
+  if (!m) return t === rule;
+  const [, tool, pat] = m;
+  if (t !== tool) return false;
+  const target = tool === 'Bash'
+    ? String(input.command || (Array.isArray(input.args) ? input.args[0] : '') || '').trim().split(/[\s;&|<>]/)[0]
+    : (input.file_path || input.path || '');
+  const star = pat.endsWith('*');
+  const core = star ? pat.slice(0, -1) : pat;
+  return star ? target.startsWith(core) : target === core;
+}
+
+/** smartDecide：档②替我审批的自动判定。命中黑名单/黑白名单规则 → 返回 decision；否则返回 null（上浮弹卡） */
+function smartDecide(req, permissionConfig) {
+  const cfg = permissionConfig?.getRules ? permissionConfig.getRules() : null;
+  const allow = cfg?.allow || [];
+  const deny = cfg?.deny || [];
+  const input = req.tool_input || {};
+  // ① 内置危险黑名单（Bash 命令前缀）
+  if (req.tool_name === 'Bash') {
+    const cmd = String(input.command || (Array.isArray(input.args) ? input.args[0] : '') || '').trim().toLowerCase();
+    if (DANGEROUS_PREFIXES.some((d) => cmd.startsWith(d.toLowerCase()))) {
+      return { behavior: 'deny', message: '检测到高风险系统操作，已自动拒绝（如需执行请改用「请求批准」模式或临时直接操作）' };
+    }
+  }
+  // ② 用户 deny 规则命中 → 拒
+  if (deny.some((r) => ruleMatches(r, req))) return { behavior: 'deny', message: '已按你的规则拒绝此操作' };
+  // ③ 用户 allow 规则命中 → 放（已有规则，无需再写）
+  if (allow.some((r) => ruleMatches(r, req))) return { behavior: 'allow' };
+  return null; // 拿不准 → 上浮弹卡
+}
+
 export function permissionHandler({ store, terminal, permissionConfig, isLocalRequest, logger }) {
   const pending = new Map(); // id -> { sid, req:{tool_name,tool_input,session_id,cwd}, decision:null, ts }
 
@@ -57,6 +100,9 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     const sid = sidForClaudeSession(body.session_id);
     if (!sid) return sendJson(res, 404, { error: '找不到对应会话' });
     const id = randomUUID();
+    // 档②替我审批（P1-5）：黑白名单/危险黑名单先判——命中直接给决定（不弹卡），拿不准才上浮弹卡
+    const mode = permissionConfig?.getMode?.() || 'smart';
+    const autoDecision = mode === 'smart' ? smartDecide(body, permissionConfig) : null;
     pending.set(id, {
       sid,
       req: {
@@ -65,12 +111,14 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
         session_id: body.session_id || '',
         cwd: body.cwd || '',
       },
-      decision: null,
+      decision: autoDecision,
       ts: Date.now(),
     });
-    // 推卡片给该会话前端（tool_input 可能巨大/含敏感 → 只传摘要长度，前端再截断渲染）
-    terminal?.broadcast(sid, { t: 'perm', p: { id, tool_name: body.tool_name || '', hasInput: !!(body.tool_input && Object.keys(body.tool_input).length) } });
-    logger?.info('permission', `权限请求 id=${id} sid=${sid} tool=${body.tool_name || ''}`);
+    if (!autoDecision) {
+      // 需人工审批 → 推卡片给该会话前端（tool_input 可能巨大/含敏感 → 只传摘要长度，前端再截断渲染）
+      terminal?.broadcast(sid, { t: 'perm', p: { id, tool_name: body.tool_name || '', hasInput: !!(body.tool_input && Object.keys(body.tool_input).length) } });
+    }
+    logger?.info('permission', `权限请求 id=${id} sid=${sid} tool=${body.tool_name || ''} mode=${mode} ${autoDecision ? '自动:' + autoDecision.behavior : '上浮'}`);
     return sendJson(res, 200, { id });
   }
 
