@@ -116,6 +116,8 @@ end;
 // 返回上一版 ClaudeNeko 安装目录（'' = 无旧装）
 //  ① 卸载键 InstallLocation（最新最准） ② 兜底默认 {localappdata}\ClaudeNeko
 // 都需通过"特征校验"才算真 ClaudeNeko 旧装（防误迁无关目录）
+// ⚠ edge case(已知)：若用户"先卸载旧版→再装新目录"，卸载会删卸载键+程序文件
+//   → 检测不到旧 server\data\media 残留 → 迁移不触发。正常"升级装换目录"路径无此问题。
 function GetPreviousAppDir(): String;
 var
   s, defaultDir: String;
