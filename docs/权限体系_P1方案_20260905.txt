@@ -50,10 +50,11 @@ P0 测试产物：D:\Claude_Files\权限P0测试\（hook 脚本 permission_hook.
 - claude 版本不支持 hook → 启动探测，降级提示（不静默失效）
 - 链路异常前端提示"权限通道异常，已让 Claude 原生询问"
 
-六、开工第一步验证（雷①②，不过后面白搭）
-1. claude 肯等 hook 多久：hook 配大超时(如 10min) 实测 claude 是等到 hook 自返还是中途杀
-2. hook 全局兜底速度：ClaudeNeko 没跑时，hook 秒查 server 不在 → 放行，实测不拖 claude
-3. -p 辅助任务不触发 hook（维持 bypass）再确认，防误伤媒体生成
+六、开工第一验证（✅ P1-0 已完成 9-05）
+1. ✅ claude 肯等 hook ≥120s 无内部超时 → **A(没人理一直等)成立**：挂起时 claude 显示原生权限菜单作为等待 UI（非卡死）
+2. ✅ hook 决定被消费：快速 allow → claude 显示「Allowed by PermissionRequest hook」→ 命令执行
+3. ✅ 原生菜单 = hook 等待时的显示层；hook respond 即接管
+4. 待实现时验：hook 全局兜底速度(ClaudeNeko 没跑 hook 秒退)、-p 辅助不触发
 
 七、6 轮排雷要点归档（防回踩）
 机制/作用域/场景/小白体验/定位/作者体验/安全/路线/实现层/A方案/产品级/故障视角——
