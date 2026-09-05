@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 export const PERMISSION_MODES = { ask: 'ask', smart: 'smart', bypass: 'bypass' };
 export const PERMISSION_LABELS = { ask: '请求批准', smart: '替我审批', bypass: '完全访问' };
@@ -62,5 +63,11 @@ export function createPermissionConfig({ dataDir }) {
     removeAllow(rule) { const d = read(); d.allow = (d.allow || []).filter((x) => x !== rule); write(d); return d.allow; },
     addDeny(rule) { const d = read(); if (!d.deny.includes(rule)) d.deny.push(rule); write(d); return d.deny; },
     removeDeny(rule) { const d = read(); d.deny = (d.deny || []).filter((x) => x !== rule); write(d); return d.deny; },
+    /** respond 接口防伪造的共享密钥（P1-2 雷6）：首次生成存文件，前端从 /api/permission/secret 取 */
+    getSecret() {
+      const d = read();
+      if (!d.secret) { d.secret = randomUUID(); write(d); }
+      return d.secret;
+    },
   };
 }

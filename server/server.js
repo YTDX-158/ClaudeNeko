@@ -24,6 +24,8 @@ import { remoteHandler } from './routes/remote.js';
 import { createTerminalChannel } from './routes/terminal.js';
 import { configHandler } from './routes/config.js';
 import { mediaConfigHandler } from './routes/mediaConfig.js';
+import { permissionHandler } from './routes/permission.js'; // 权限体系 P1-2：审批接口
+import { ensurePermissionHook } from './lib/hookManager.js'; // 权限体系 P1-2：注入 PermissionRequest hook
 import { createModelConfig } from './lib/modelConfig.js';
 import { createMediaConfig } from './lib/mediaConfig.js';
 import { createPermissionConfig } from './lib/permissionConfig.js'; // 权限体系 P1：权限档存储（server/data/permissionConfig.json）
@@ -89,6 +91,7 @@ const ptyHost = createPtyHost({
 bus.on('pty:exit', ({ sid }) => {
   logger.info('ptyHost', `pty 退出 sid=${sid}`);
   busyLock.release(sid);
+  permissionService?.cancelBySid?.(sid); // 权限体系 N2：会话关闭 → 清未决权限请求（防泄漏）
   terminal.broadcast(sid, { t: 'ev', e: { kind: 'error', text: '终端进程已退出，请重新发送消息' } });
 });
 ptyHost.scheduleIdleReap();
@@ -117,6 +120,11 @@ bus.on('pty:confirm-fail', ({ sid, text }) => {
 
 // 终端 WS 通道（upgrade 挂载在 server.on('upgrade')）
 const terminal = createTerminalChannel({ ptyHost, transcript, store, config, isLocalRequest });
+// —— 权限体系 P1-2：注入 PermissionRequest hook（写 ~/.claude/settings.json，保留用户 PreToolUse）+ 审批服务 ——
+ensurePermissionHook();
+const permissionService = permissionHandler({
+  store, terminal, permissionConfig: permissionConfigService, isLocalRequest, logger,
+});
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(SERVER_DIR, '..', 'web', 'dist');
@@ -339,6 +347,9 @@ async function routeApi(req, res, url) {
 
   const sessRes = await sessionsRouter(req, res, url);
   if (sessRes !== null) return;
+
+  const permRes = await permissionService.router(req, res, url); // 权限体系 P1-2：审批（request/wait/respond/pending/secret）
+  if (permRes !== null) return;
 
   const remoteRes = await remoteRouter(req, res, url);
   if (remoteRes !== null) return;
