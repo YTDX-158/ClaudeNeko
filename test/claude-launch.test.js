@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildClaudeArgs, reserveClaudeSession } from '../server/lib/claudeLaunch.js';
+import * as launch from '../server/lib/claudeLaunch.js';
 
 const ASK_TOOLS = ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch'];
 
@@ -53,6 +54,63 @@ test('uses --session-id for a reserved id whose transcript does not exist yet', 
   assert.equal(updates, 0);
   assert.deepEqual(reserved, { claudeSessionId: 'prewarmed-id', isNewClaudeSession: true });
   assert.deepEqual(buildClaudeArgs(reserved), ['--session-id', 'prewarmed-id']);
+});
+
+test('uses the latest stored session when the caller holds a stale unbound snapshot', () => {
+  let updates = 0;
+  const reserved = reserveClaudeSession({
+    session: { id: 'neko-race', claudeSessionId: null },
+    getSession: () => ({ id: 'neko-race', claudeSessionId: 'reserved-by-prewarm' }),
+    update: () => { updates += 1; },
+    newId: () => 'must-not-be-used',
+    transcriptExists: () => false,
+  });
+
+  assert.equal(updates, 0);
+  assert.deepEqual(reserved, {
+    claudeSessionId: 'reserved-by-prewarm',
+    isNewClaudeSession: true,
+  });
+});
+
+test('a prewarmed branch still needs context until transcript confirms injection', () => {
+  assert.equal(launch.shouldInjectBranchContext?.({
+    id: 'branch-1',
+    parentId: 'parent-1',
+    claudeSessionId: 'already-reserved',
+    branchContextInjected: false,
+  }), true);
+});
+
+test('ordinary or empty transcript user events cannot complete branch context injection', () => {
+  const updates = [];
+  const session = {
+    id: 'branch-2',
+    parentId: 'parent-1',
+    branchContextPending: true,
+    branchContextInjected: false,
+  };
+
+  assert.equal(launch.completeBranchContextInjection?.({ session, text: '', update: (...args) => updates.push(args) }), false);
+  assert.equal(launch.completeBranchContextInjection?.({ session, text: 'terminal command', update: (...args) => updates.push(args) }), false);
+  assert.deepEqual(updates, []);
+});
+
+test('only a matching transcript user event completes a pending branch context injection', () => {
+  const updates = [];
+  const session = {
+    id: 'branch-3',
+    parentId: 'parent-1',
+    branchContextPending: true,
+    branchContextInjected: false,
+  };
+  const text = `${launch.BRANCH_CONTEXT_PREFIX}\n\n用户: earlier history`;
+
+  assert.equal(launch.completeBranchContextInjection?.({ session, text, update: (...args) => updates.push(args) }), true);
+  assert.deepEqual(updates, [[
+    'branch-3',
+    { branchContextPending: false, branchContextInjected: true },
+  ]]);
 });
 
 for (const permissionMode of ['ask', 'smart']) {

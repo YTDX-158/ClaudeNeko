@@ -71,7 +71,7 @@ function smartDecide(req, permissionConfig) {
   return null; // 拿不准 → 上浮弹卡
 }
 
-export function permissionHandler({ store, terminal, permissionConfig, isLocalRequest, logger, onPendingChange }) {
+export function permissionHandler({ store, terminal, permissionConfig, isLocalRequest, logger, onPendingChange, onModeChange }) {
   const pending = new Map(); // id -> { sid, req:{tool_name,tool_input,session_id,cwd}, decision:null, ts }
 
   /** N2：会话 pty 关闭/被 kill → 清该会话所有未决请求（防泄漏 + 防 hook 卡到兜底超时） */
@@ -181,7 +181,10 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     if (!body) return sendJson(res, 400, { error: '空请求体' });
     try {
       if (body.mode) {
+        const previousMode = permissionConfig.getMode();
         permissionConfig.setMode(body.mode);
+        const nextMode = permissionConfig.getMode();
+        if (nextMode !== previousMode) onModeChange?.({ previousMode, mode: nextMode });
         return sendJson(res, 200, permissionConfig.get());
       }
       if (typeof body.removeAllow === 'string') {

@@ -101,9 +101,10 @@ export function createPtyHost({ claudeBin, bus, onData }) {
       existing.lastActive = Date.now();
       return { isNew: false, available: true };
     }
-    // 启动 claude TUI：有会话则 --resume 续接，否则新会话
+    // 启动 claude TUI：预留但未落盘用 --session-id，已有 transcript 用 --resume。
     const file = claudeBin && existsSync(claudeBin) ? claudeBin : 'claude.cmd';
-    logger.info('ptyHost', `ensure sid=${sid} file=${file} resume=${claudeSessionId || '无'} cwd=${cwd}`);
+    const launchMode = claudeSessionId ? (isNewClaudeSession ? 'session-id' : 'resume') : 'new';
+    logger.info('ptyHost', `ensure sid=${sid} file=${file} launchMode=${launchMode} claudeSessionId=${claudeSessionId || '无'} cwd=${cwd}`);
     const args = buildClaudeArgs({ claudeSessionId, isNewClaudeSession, model, permissionMode });
     let child;
     try {

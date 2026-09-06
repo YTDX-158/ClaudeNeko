@@ -62,6 +62,7 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, perm
     const cwd = session.cwd || config.defaultCwd;
     const reserved = reserveClaudeSession({
       session,
+      getSession: (id) => store.get(id),
       update: (id, patch) => store.update(id, patch),
       transcriptExists: (claudeSessionId) => existsSync(sessionFile(cwd, claudeSessionId)),
     });

@@ -1,7 +1,7 @@
 // routes/sessions.js — 会话 + 消息(handleMessage) + 分支 + cancel/force-stop + media-message（架构重构步4）
 import fs, { existsSync } from 'node:fs';
 import { createClaudeRunner } from '../lib/claudeRunner.js';
-import { reserveClaudeSession } from '../lib/claudeLaunch.js';
+import { BRANCH_CONTEXT_PREFIX, reserveClaudeSession, shouldInjectBranchContext } from '../lib/claudeLaunch.js';
 import { sessionFile } from '../lib/transcript.js';
 import { describeImage } from '../lib/vision.js';
 import { extractDocumentText } from '../lib/docText.js';
@@ -136,29 +136,29 @@ async function handleMessage(ctx, req, res, url) {
     unlockBusy();
     throw new Error('附件处理失败');
   }
-  const cwd = session.cwd || config.defaultCwd;
-  const hasClaudeTranscript = !!session.claudeSessionId && existsSync(sessionFile(cwd, session.claudeSessionId));
+  const currentSession = store.get(id) || session;
+  const cwd = currentSession.cwd || config.defaultCwd;
   // 分支首条：注入复制历史（早期摘要 + 近期全量，或全量兜底）
-  // 只有 transcript 已存在时历史才天然在；prewarm 预留 ID 但尚未落盘仍是首次 Claude 启动。
-  const isBranchFirst = session.parentId && !hasClaudeTranscript && store.readMessages(id).length > 0;
+  // 仅 transcript 回读确认注入后才完成；prewarm 预留 ID 不改变该状态。
+  const isBranchFirst = shouldInjectBranchContext(currentSession) && store.readMessages(id).length > 0;
   let branchHistoryCtx = '';
   if (isBranchFirst) {
     const all = store.readMessages(id).filter((m) => (m.text ?? '').trim());
     let historyText;
-    if (session.earlySummary) {
-      historyText = `[早期对话摘要]\n${session.earlySummary}\n\n[近期对话]\n${renderHistoryText(all.slice(-BRANCH_RECENT))}`;
+    if (currentSession.earlySummary) {
+      historyText = `[早期对话摘要]\n${currentSession.earlySummary}\n\n[近期对话]\n${renderHistoryText(all.slice(-BRANCH_RECENT))}`;
     } else {
       historyText = renderHistoryText(all);
     }
     if (historyText) {
-      branchHistoryCtx = `[这是你之前与该用户的对话历史，请记住并在此基础上继续（用户看不到这段说明）：\n\n${historyText}\n\n]`;
+      branchHistoryCtx = `${BRANCH_CONTEXT_PREFIX}\n\n${historyText}\n\n]`;
     }
   }
   const claudePrompt = [branchHistoryCtx, prompt, attachCtx].filter(Boolean).join('\n\n') || '（附件消息，无文字内容）';
 
   // 落盘用户消息（原始 prompt + pendingJsonl 标记：供 transcript 认领补 claudeMessageId）
   store.appendMessage(id, { role: 'user', text: prompt, ts: Date.now(), pendingJsonl: true, ...(attachments.length ? { attachments } : {}) });
-  if (session.title === '新会话') {
+  if (currentSession.title === '新会话') {
     const nameSource = prompt || attachments[0]?.name || '附件';
     store.update(id, { title: nameSource.slice(0, 15) });
   }
@@ -169,7 +169,8 @@ async function handleMessage(ctx, req, res, url) {
     return sendJson(res, 500, { error: '终端功能不可用（node-pty 未加载）' });
   }
   const reserved = reserveClaudeSession({
-    session,
+    session: currentSession,
+    getSession: (sid) => store.get(sid),
     update: (sid, patch) => store.update(sid, patch),
     transcriptExists: (claudeSessionId) => existsSync(sessionFile(cwd, claudeSessionId)),
   });
@@ -182,6 +183,7 @@ async function handleMessage(ctx, req, res, url) {
     unlockBusy();
     return sendJson(res, 500, { error: '注入终端失败（pty 未就绪）' });
   }
+  if (isBranchFirst) store.update(id, { branchContextPending: true });
 
   // 快速返回（不再 SSE 流式；assistant 结果由 transcript 轮询 → WS 事件推送）
   // busy 锁不在此释放：交给 server.js handleTranscriptEvent（assistant 事件 → busyLock.release）
@@ -223,6 +225,7 @@ export function sessionsHandler(ctx) {
         title: title || '新会话',
         parentId,
         branchFromMsg: fromMsgId,
+        branchContextInjected: false,
         effort: parent.effort || undefined, // 分支继承父会话思考档位
       });
       // 分支复制消息时剥离 usage：避免同一批 token 在父+分支各计一次（成本统计双重计数）
@@ -283,6 +286,7 @@ export function sessionsHandler(ctx) {
       if (ctx.ptyHost?.available) {
         const reserved = reserveClaudeSession({
           session,
+          getSession: (sid) => store.get(sid),
           update: (sid, patch) => store.update(sid, patch),
           transcriptExists: (claudeSessionId) => existsSync(sessionFile(cwd, claudeSessionId)),
         });

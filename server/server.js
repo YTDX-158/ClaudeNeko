@@ -7,6 +7,7 @@ import { resolveConfig } from './lib/settings.js';
 import { SessionStore } from './lib/sessionStore.js';
 // （maybeStartMediaClaude 已退役：媒体生成命令改为经 pty 提交进 claude 会话，见 routes/media.js）
 import { createBusyLock } from './lib/busyLock.js';
+import { completeBranchContextInjection } from './lib/claudeLaunch.js';
 import { createMediaService } from './lib/mediaGen.js';
 import { setVisionConfigProvider } from './lib/vision.js';
 import { pruneMedia } from './lib/mediaStore.js';
@@ -126,6 +127,7 @@ const permissionService = permissionHandler({
   store, terminal, permissionConfig: permissionConfigService, isLocalRequest, logger,
   // 🔴P1 遗留修复 9-06：权限挂起/解除 → 通知 ptyHost 暂停/恢复确认重发（防等批权限时误重发同条消息）
   onPendingChange: (sid, pending) => ptyHost?.setPermissionPending?.(sid, pending),
+  onModeChange: () => ptyHost.killAll(),
 });
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -294,6 +296,11 @@ function normalizeUsage(u) {
 
 /** 认领 pendingJsonl：找该会话最近一条 pendingJsonl 用户消息，补 claudeMessageId */
 function claimPendingUser(sid, ev) {
+  completeBranchContextInjection({
+    session: store.get(sid),
+    text: ev.text,
+    update: (id, patch) => store.update(id, patch),
+  });
   const msgs = store.readMessages(sid);
   // H2 修复：先按 claudeMessageId 查重（服务重启后 transcript 全量回放会重放历史 user 消息，
   // 若 store 已有同 id 的则直接跳过，不 append 造成重复）
