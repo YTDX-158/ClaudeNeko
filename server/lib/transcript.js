@@ -58,33 +58,57 @@ function projectDir(cwd) {
  * ⚠ 用 birthtime（创建时间）而非 mtime：当前活跃会话（如 CLI 本会话）的 jsonl mtime 一直在更新，
  *   baseline 过滤挡不住；但它是 ensure 之前就存在的，birthtime < baseline，天然被排除。
  */
-/** 查文件是否含指纹片段（绑定验证用）。
- *  ⚠ 9-06 修复：claude jsonl 是流式追加，user 文本写在中部后会被后续 assistant/tool/system
- *  （stop_hook_summary / turn_duration 等）事件持续追加推离"尾部小窗口"——只查尾部 → 长回复/活跃会话
- *  绑定永不成功 → transcript 探测无结果 → 确认送达永不到 → ptyHost 6s 误重发耗尽（实测 227ccb34：
- *  user 文本偏移止于 45K，文件 66K，尾部 16K 全是系统事件）。改为：尾窗快路径 + 全文兜底（cap 防超大文件）。 */
-function fileTailContains(file, fp, tailBytes = 16384, fullCap = 8 * 1024 * 1024) {
+/** Legacy binding reads a bounded prefix and compares parsed user rows exactly. */
+const TRANSCRIPT_BINDING_READ_CAP = 8 * 1024 * 1024;
+const SESSION_BIRTH_TOLERANCE_MS = 1000;
+
+export function normalizeUserText(text) {
+  return String(text ?? '').replace(/\r\n?/g, '\n').trim();
+}
+
+export function fileContainsUserMessage(file, submittedText) {
   try {
     const size = statSync(file).size;
-    if (size < 1 || !fp) return false;
+    const target = normalizeUserText(submittedText);
+    if (size < 1 || !target) return false;
     const fd = openSync(file, 'r');
     try {
-      // ① 尾部窗口（快路径：user 文本近尾时一次命中）
-      const len = Math.min(size, tailBytes);
-      const tail = Buffer.alloc(len);
-      readSync(fd, tail, 0, len, size - len);
-      if (tail.toString('utf8').includes(fp)) return true;
-      // ② 全文检索兜底（cap 内整读；>cap 读前段——user 文本若被推离尾窗必在前中段）
-      const probeLen = Math.min(size, fullCap);
+      const probeLen = Math.min(size, TRANSCRIPT_BINDING_READ_CAP);
       const probe = Buffer.alloc(probeLen);
-      readSync(fd, probe, 0, probeLen, 0);
-      return probe.toString('utf8').includes(fp);
+      const bytesRead = readSync(fd, probe, 0, probeLen, 0);
+      let content = probe.subarray(0, bytesRead).toString('utf8');
+      if (bytesRead < size) {
+        const lastNewline = content.lastIndexOf('\n');
+        content = lastNewline >= 0 ? content.slice(0, lastNewline + 1) : '';
+      }
+      for (const line of content.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const row = JSON.parse(line);
+          if (
+            row?.type === 'user'
+            && typeof row?.message?.content === 'string'
+            && normalizeUserText(row.message.content) === target
+          ) return true;
+        } catch {
+          // Ignore malformed or partially written rows.
+        }
+      }
+      return false;
     } finally {
       closeSync(fd);
     }
   } catch {
     return false;
   }
+}
+
+export function isCandidateSession(stats, afterTs, toleranceMs = SESSION_BIRTH_TOLERANCE_MS) {
+  if (!Number.isFinite(afterTs)) return false;
+  const birthtime = Number(stats?.birthtimeMs);
+  const ctime = Number(stats?.ctimeMs);
+  const createdAt = Number.isFinite(birthtime) && birthtime > 0 ? birthtime : ctime;
+  return Number.isFinite(createdAt) && createdAt >= afterTs - toleranceMs;
 }
 
 /**
@@ -94,7 +118,7 @@ function fileTailContains(file, fp, tailBytes = 16384, fullCap = 8 * 1024 * 1024
  * @param {string} cwd 项目目录
  * @param {number} afterTs ensure 时刻（毫秒）
  * @param {Set<string>} excludeIds 排除的 claudeSessionId（store 已有会话）
- * @param {string} fingerprint 最近提交文本前 30 字符；空则不确定，不探测（返回 null）
+ * @param {string} fingerprint 最近提交的完整文本；空则不确定，不探测（返回 null）
  */
 export function findLatestSession(cwd, afterTs, excludeIds, fingerprint, onDiag) {
   const dir = projectDir(cwd);
@@ -107,13 +131,13 @@ export function findLatestSession(cwd, afterTs, excludeIds, fingerprint, onDiag)
     return null;
   }
   if (!files.length) { onDiag?.({ error: '无 jsonl', total: 0 }); return null; }
-  const fp = String(fingerprint || '').trim().slice(0, 30);
+  const fp = normalizeUserText(fingerprint);
   if (!fp) {
     // 无指纹（还没发消息）→ 不猜不绑（此时本会话的 jsonl 也未必生成）
     onDiag?.({ error: '无指纹(尚未发消息)不探测', total: files.length });
     return null;
   }
-  // 候选：非排除 +（ensure 后新建 或 5s 内活跃写入），按 mtime 降序
+  // 候选：排除已知 ID，且创建时间在 baseline 的小容差范围内。
   const candidates = [];
   for (const f of files) {
     const sessionId = f.replace(/\.jsonl$/, '');
@@ -124,19 +148,27 @@ export function findLatestSession(cwd, afterTs, excludeIds, fingerprint, onDiag)
       const st = statSync(full);
       const birth = st.birthtimeMs || st.ctimeMs; // Windows 有 birthtime；退化用 ctime
       const mtime = st.mtimeMs;
-      const active = !!(afterTs && mtime >= afterTs - 5000); // 5s 内活跃写入 = 正在用
-      if (!active && !(afterTs && birth >= afterTs)) continue; // 既非新建也非活跃 → 跳过
-      candidates.push({ id: sessionId.slice(0, 8), file: full, sessionId, birth, mtime, active });
+      if (!isCandidateSession(st, afterTs)) continue;
+      candidates.push({ id: sessionId.slice(0, 8), file: full, sessionId, birth, mtime });
     } catch {
       // 文件被占/删除，跳过
     }
   }
-  candidates.sort((a, b) => b.mtime - a.mtime);
-  for (const c of candidates) {
-    if (fileTailContains(c.file, fp)) {
-      onDiag?.({ baseline: afterTs, total: files.length, matched: c.id, candidates: candidates.map((x) => `${x.id}(创建${fmtTs(x.birth)}/改${fmtTs(x.mtime)})`) });
-      return { mt: c.mtime, file: c.file, sessionId: c.sessionId };
-    }
+  candidates.sort((a, b) => b.birth - a.birth);
+  const exactMatches = candidates.filter((candidate) => fileContainsUserMessage(candidate.file, fp));
+  if (exactMatches.length > 1) {
+    onDiag?.({
+      baseline: afterTs,
+      total: files.length,
+      error: 'ambiguous exact matches',
+      candidates: candidates.map((candidate) => candidate.id),
+    });
+    return null;
+  }
+  if (exactMatches.length === 1) {
+    const match = exactMatches[0];
+    onDiag?.({ baseline: afterTs, total: files.length, matched: match.id, candidates: candidates.map((x) => `${x.id}(创建${fmtTs(x.birth)}/改${fmtTs(x.mtime)})`) });
+    return { mt: match.mtime, file: match.file, sessionId: match.sessionId };
   }
   onDiag?.({ baseline: afterTs, total: files.length, error: '候选均不含指纹', candidates: candidates.map((x) => `${x.id}(创建${fmtTs(x.birth)}/改${fmtTs(x.mtime)})`) });
   return null;
@@ -284,7 +316,7 @@ export function createTranscriptService({ bus, getKnownSessionIds }) {
         file = sessionFile(rec.cwd, rec.claudeSessionId);
       } else {
         // ⚠ 指纹驱动（9-03 v2.1）：没发过消息（无指纹）→ 不探测（jsonl 未生成，也防"猜最新"错绑/刷屏）
-        const fp = rec.lastSubmitText ? String(rec.lastSubmitText).trim().slice(0, 30) : '';
+        const fp = normalizeUserText(rec.lastSubmitText);
         if (!fp) return;
         // 排除 store 已有会话的 claudeSessionId：防命中活跃会话
         const known = new Set(getKnownSessionIds?.() ?? []);
