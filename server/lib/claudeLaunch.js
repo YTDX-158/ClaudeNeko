@@ -15,13 +15,14 @@ export function completeBranchContextInjection({ session, text, update }) {
   return true;
 }
 
-export function reserveClaudeSession({ session, getSession = () => session, update, newId = randomUUID, transcriptExists }) {
+export function reserveClaudeSession({ session, getSession, update, newId = randomUUID, transcriptExists }) {
   if (!session?.id) throw new TypeError('session with id is required');
-  if (typeof getSession !== 'function') throw new TypeError('getSession must be a function');
+  if (getSession !== undefined && typeof getSession !== 'function') throw new TypeError('getSession must be a function');
   if (typeof update !== 'function') throw new TypeError('update is required');
   if (typeof transcriptExists !== 'function') throw new TypeError('transcriptExists is required');
 
-  const currentSession = getSession(session.id) || session;
+  const currentSession = getSession ? getSession(session.id) : session;
+  if (!currentSession) throw new Error(`session ${session.id} no longer exists`);
   let claudeSessionId = currentSession.claudeSessionId;
   if (!claudeSessionId) {
     claudeSessionId = newId();

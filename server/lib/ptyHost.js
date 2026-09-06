@@ -75,15 +75,19 @@ function cleanClaudeEnv(env) {
 
 /**
  * 创建常驻 pty 管理器。
- * @param {{ claudeBin: string, bus?: object, onData?: (sid:string, data:string)=>void }} opts
+ * @param {{ claudeBin: string, bus?: object, onData?: (sid:string, data:string)=>void, ptyImpl?: object, taskkillImpl?: (pid:number)=>void }} opts
  * 退出事件走 bus（'pty:exit'，Phase2 解耦）；onData 高频终端流保留直接回调。
  */
-export function createPtyHost({ claudeBin, bus, onData }) {
+export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillImpl }) {
   // sid -> { child, sessionId, lastActive }
   const ptys = new Map();
 
   /** Windows 下 taskkill 杀进程树（node-pty 的 child.kill 可能留孤儿） */
   function taskkill(pid) {
+    if (taskkillImpl) {
+      try { taskkillImpl(pid); } catch { /* 测试替身/平台实现失败时沿用静默语义 */ }
+      return;
+    }
     try {
       const k = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
       k.on('error', () => { /* taskkill 缺失等，静默 */ });
@@ -92,12 +96,46 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     }
   }
 
+  function resolveExitWaiters(rec, exited) {
+    for (const waiter of rec.exitWaiters || []) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(exited);
+    }
+    rec.exitWaiters = [];
+  }
+
+  function finalizeExit(sid, rec, exitCode) {
+    if (rec.exitHandled) return;
+    rec.exitHandled = true;
+    cancelConfirm(rec);
+    if (rec.readyTimer) clearTimeout(rec.readyTimer);
+    if (rec.quietTimer) clearTimeout(rec.quietTimer);
+    if (rec.markerTimer) clearTimeout(rec.markerTimer);
+    const isCurrent = ptys.get(sid) === rec;
+    if (isCurrent) ptys.delete(sid);
+    resolveExitWaiters(rec, true);
+    if (isCurrent) bus?.emit('pty:exit', { sid, exitCode });
+  }
+
+  function waitForExit(rec) {
+    if (rec.exitHandled) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const waiter = { resolve, timer: null };
+      waiter.timer = setTimeout(() => {
+        rec.exitWaiters = (rec.exitWaiters || []).filter((item) => item !== waiter);
+        resolve(false);
+      }, KILL_CONFIRM_MS);
+      rec.exitWaiters.push(waiter);
+    });
+  }
+
   /** 确保某会话有常驻 pty；没有则懒启动
    *  @param {string} [permissionMode] 权限档 ask|smart|bypass（缺省不传 = 跟随 claude 全局 settings，兼容旧行为） */
   function ensure(sid, { cwd, claudeSessionId, isNewClaudeSession, model, permissionMode } = {}) {
-    if (!pty) return { isNew: false, available: false };
+    if (!ptyImpl) return { isNew: false, available: false };
     const existing = ptys.get(sid);
     if (existing) {
+      if (existing.stopping) return { isNew: false, available: false, stopping: true };
       existing.lastActive = Date.now();
       return { isNew: false, available: true };
     }
@@ -109,7 +147,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     let child;
     try {
       const childEnv = cleanClaudeEnv(process.env);
-      child = pty.spawn(file, args, {
+      child = ptyImpl.spawn(file, args, {
         name: 'xterm-color',
         cols: DEFAULT_COLS,
         rows: DEFAULT_ROWS,
@@ -120,13 +158,14 @@ export function createPtyHost({ claudeBin, bus, onData }) {
       logger.error('ptyHost', `spawn 失败 sid=${sid}:`, e.message);
       return { isNew: false, available: false };
     }
-    const rec = { sid, child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null, lastInterruptAt: 0, termBuf: '', markerTimer: null, pendingConfirm: null, writeQueue: [], writing: false, permissionPending: false };
+    const rec = { sid, child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null, lastInterruptAt: 0, termBuf: '', markerTimer: null, pendingConfirm: null, writeQueue: [], writing: false, permissionPending: false, stopping: false, exitHandled: false, exitWaiters: [], readyTimer: null };
     ptys.set(sid, rec);
     // M2 兜底：20s 内无论输出多少都强制就绪（防 claude 卡死/输出异常导致消息永久卡队列）
-    setTimeout(() => {
+    rec.readyTimer = setTimeout(() => {
       if (ptys.get(sid) !== rec) return;
       becomeReady(sid, rec, '20s兜底');
     }, 20000);
+    rec.readyTimer.unref?.();
     child.onData((d) => {
       rec.lastActive = Date.now();
       rec.outAcc += d.length;
@@ -150,10 +189,8 @@ export function createPtyHost({ claudeBin, bus, onData }) {
       onData?.(sid, d);
     });
     child.onExit(({ exitCode }) => {
-      cancelConfirm(rec); // pty 退出 → 清确认（不再重发/误报失败）
-      // ⚠ 身份检查：只删自己——force-stop/自愈重启后旧进程 onExit 可能晚到，不能误删新 rec
-      if (ptys.get(sid) === rec) ptys.delete(sid);
-      bus?.emit('pty:exit', { sid, exitCode });
+      // 身份 + 幂等检查：旧实例迟到/重复 exit 不能清理新实例或重复触发业务事件。
+      finalizeExit(sid, rec, exitCode);
     });
     return { isNew: true, available: true };
   }
@@ -162,7 +199,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
    *  @param {object} [opts] — { noConfirm: true } 媒体记忆等：不注册确认送达（丢了不重发，防重复注入） */
   function submit(sid, text, opts = {}) {
     const rec = ptys.get(sid);
-    if (!rec) return false;
+    if (!rec || rec.stopping) return false;
     // 指纹绑定（9-03 v2.1）：广播提交文本，供 transcript 探测验证 jsonl（防交叉错绑）
     bus?.emit('pty:submit', { sid, text: String(text) });
     // 确认送达（9-02）：提交即注册，transcript 在 jsonl 读到该文本 → 确认；6s 未确认 → 重发
@@ -249,7 +286,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
 
   /** 写队列泵：一次只处理一条；cancel 后冷却；超长分块写入（ConPTY 单次 >~1024 丢前段） */
   function kickWrite(rec) {
-    if (rec.writing || !rec.writeQueue.length) return;
+    if (rec.stopping || rec.writing || !rec.writeQueue.length) return;
     // cancel 后冷却（审查①）：claude 收尾未回输入态时延迟启动，避免新旧消息写同 jsonl 打架
     const sinceInt = rec.lastInterruptAt ? Date.now() - rec.lastInterruptAt : Infinity;
     if (sinceInt < INTERRUPT_SETTLE_MS) {
@@ -261,6 +298,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     const afterText = () => {
       // 回车隔离：下一条必须等这条 \r 发出（否则下一条字符接在未回车输入区后，两条合成一条）
       setTimeout(() => {
+        if (rec.stopping || ptys.get(rec.sid) !== rec) { rec.writing = false; return; }
         try { rec.child.write('\r'); } catch { /* 已退出 */ }
         rec.lastActive = Date.now();
         rec.writing = false;
@@ -278,7 +316,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     const chunks = splitChunks(s, WRITE_CHUNK);
     let i = 0;
     const step = () => {
-      if (ptys.get(rec.sid) !== rec) { rec.writing = false; return; } // pty 被回收/kill → 中止剩余块
+      if (rec.stopping || ptys.get(rec.sid) !== rec) { rec.writing = false; return; } // pty 被回收/kill → 中止剩余块
       if (i >= chunks.length) { afterText(); return; }
       try { rec.child.write(chunks[i]); rec.lastActive = Date.now(); } catch { afterText(); return; }
       i++;
@@ -302,7 +340,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
 
   /** 置就绪（幂等）：任何可靠信号触发都走这里，统一补发积压消息 */
   function becomeReady(sid, rec, why) {
-    if (rec.ready) return;
+    if (rec.ready || rec.stopping) return;
     logger.info('ptyHost', `就绪 sid=${sid}（${why}）`);
     rec.ready = true;
     flushPending(rec);
@@ -312,7 +350,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
    *  收到后再 settle READY_SETTLE_MS，给 TUI 画完输入框留时间。 */
   function markReady(sid) {
     const rec = ptys.get(sid);
-    if (!rec || rec.ready) return;
+    if (!rec || rec.ready || rec.stopping) return;
     logger.info('ptyHost', `markReady sid=${sid}（jsonl 信号）`);
     setTimeout(() => {
       if (ptys.get(sid) === rec) becomeReady(sid, rec, 'jsonl信号');
@@ -322,7 +360,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
   /** 原始按键透传（含 Esc 中断、方向键选择、Ctrl+C 等），终端视图用 */
   function write(sid, data) {
     const rec = ptys.get(sid);
-    if (!rec) return false;
+    if (!rec || rec.stopping) return false;
     try {
       rec.child.write(String(data));
       rec.lastActive = Date.now(); // C1：透传按键也算活跃（终端操作中防误回收）
@@ -338,7 +376,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
    *  钳到 MIN_COLS=50 安全宽度；前端错误小尺寸（1~3列）也被同一道拦下。 */
   function resize(sid, cols, rows) {
     const rec = ptys.get(sid);
-    if (!rec) return;
+    if (!rec || rec.stopping) return;
     const c = Math.max(MIN_COLS, Number.isInteger(cols) && cols > 0 ? cols : DEFAULT_COLS);
     const r = Math.max(MIN_ROWS, Number.isInteger(rows) && rows > 0 ? rows : DEFAULT_ROWS);
     try {
@@ -388,6 +426,25 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     ptys.clear();
   }
 
+  /** 运行时策略切换：保留 stopping 占位直到真实 exit，避免新旧 PTY 并发写同一 transcript。 */
+  async function killAllAndWait() {
+    const waits = [];
+    for (const [sid, rec] of ptys) {
+      if (!rec.stopping) {
+        rec.stopping = true;
+        cancelConfirm(rec);
+        rec.pendingSubmits = [];
+        rec.writeQueue = [];
+        const waiting = waitForExit(rec);
+        taskkill(rec.child.pid);
+        waits.push(waiting);
+      } else {
+        waits.push(waitForExit(rec));
+      }
+    }
+    return Promise.all(waits);
+  }
+
   function isRunning(sid) {
     return ptys.has(sid);
   }
@@ -413,9 +470,9 @@ export function createPtyHost({ claudeBin, bus, onData }) {
   }
 
   return {
-    ensure, submit, markReady, write, resize, interrupt, kill, killAll, isRunning, touch, scheduleIdleReap,
+    ensure, submit, markReady, write, resize, interrupt, kill, killAll, killAllAndWait, isRunning, touch, scheduleIdleReap,
     confirmDelivered, // 确认送达（transcript 读到 jsonl user 文本时调）
     setPermissionPending, // 权限挂起状态（外部通知：挂起暂停重发，解除触发补查）
-    get available() { return pty !== null; },
+    get available() { return ptyImpl !== null; },
   };
 }

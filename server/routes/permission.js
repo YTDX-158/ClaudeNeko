@@ -184,7 +184,7 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
         const previousMode = permissionConfig.getMode();
         permissionConfig.setMode(body.mode);
         const nextMode = permissionConfig.getMode();
-        if (nextMode !== previousMode) onModeChange?.({ previousMode, mode: nextMode });
+        if (nextMode !== previousMode) await onModeChange?.({ previousMode, mode: nextMode });
         return sendJson(res, 200, permissionConfig.get());
       }
       if (typeof body.removeAllow === 'string') {

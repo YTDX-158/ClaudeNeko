@@ -127,7 +127,7 @@ const permissionService = permissionHandler({
   store, terminal, permissionConfig: permissionConfigService, isLocalRequest, logger,
   // 🔴P1 遗留修复 9-06：权限挂起/解除 → 通知 ptyHost 暂停/恢复确认重发（防等批权限时误重发同条消息）
   onPendingChange: (sid, pending) => ptyHost?.setPermissionPending?.(sid, pending),
-  onModeChange: () => ptyHost.killAll(),
+  onModeChange: () => ptyHost.killAllAndWait(),
 });
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));

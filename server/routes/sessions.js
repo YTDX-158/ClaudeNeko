@@ -136,7 +136,11 @@ async function handleMessage(ctx, req, res, url) {
     unlockBusy();
     throw new Error('附件处理失败');
   }
-  const currentSession = store.get(id) || session;
+  const currentSession = store.get(id);
+  if (!currentSession) {
+    unlockBusy();
+    return sendJson(res, 404, { error: '会话不存在' });
+  }
   const cwd = currentSession.cwd || config.defaultCwd;
   // 分支首条：注入复制历史（早期摘要 + 近期全量，或全量兜底）
   // 仅 transcript 回读确认注入后才完成；prewarm 预留 ID 不改变该状态。
@@ -178,12 +182,13 @@ async function handleMessage(ctx, req, res, url) {
   transcript.ensure(id, { cwd, claudeSessionId: reserved.claudeSessionId });
   // M2 修复：submit 内部处理"未就绪"——pty 刚起时消息进队列，claude TUI 就绪后自动补发，
   // 不再固定延迟 12s（慢机/大历史也不会吞消息）。isNew 时也直接 submit（排队等就绪）。
+  if (isBranchFirst) store.update(id, { branchContextPending: true });
   const ok = ptyHost.submit(id, claudePrompt);
   if (!ok) {
+    if (isBranchFirst) store.update(id, { branchContextPending: false });
     unlockBusy();
     return sendJson(res, 500, { error: '注入终端失败（pty 未就绪）' });
   }
-  if (isBranchFirst) store.update(id, { branchContextPending: true });
 
   // 快速返回（不再 SSE 流式；assistant 结果由 transcript 轮询 → WS 事件推送）
   // busy 锁不在此释放：交给 server.js handleTranscriptEvent（assistant 事件 → busyLock.release）

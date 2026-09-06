@@ -73,6 +73,19 @@ test('uses the latest stored session when the caller holds a stale unbound snaps
   });
 });
 
+test('refuses to reserve a deleted session instead of falling back to a stale snapshot', () => {
+  let updates = 0;
+
+  assert.throws(() => reserveClaudeSession({
+    session: { id: 'neko-deleted', claudeSessionId: null },
+    getSession: () => null,
+    update: () => { updates += 1; },
+    newId: () => 'must-not-launch',
+    transcriptExists: () => false,
+  }), /no longer exists/);
+  assert.equal(updates, 0);
+});
+
 test('a prewarmed branch still needs context until transcript confirms injection', () => {
   assert.equal(launch.shouldInjectBranchContext?.({
     id: 'branch-1',
