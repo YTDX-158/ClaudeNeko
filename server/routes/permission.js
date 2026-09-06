@@ -106,7 +106,12 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     const body = await readBody(req);
     if (!body) return sendJson(res, 400, { error: '空请求体' });
     const sid = sidForClaudeSession(body.session_id);
-    if (!sid) return sendJson(res, 404, { error: '找不到对应会话' });
+    if (!sid) {
+      const shortSession = String(body.session_id || '').slice(0, 8) || 'missing';
+      // 仅记录短标识用于关联排障；禁止记录工具参数、cwd、提示词、密钥或完整 Claude UUID。
+      logger?.warn?.('permission', `权限请求找不到对应会话 claudeSession=${shortSession}`);
+      return sendJson(res, 404, { error: '找不到对应会话' });
+    }
     const id = randomUUID();
     // 档②替我审批（P1-5）：黑白名单/危险黑名单先判——命中直接给决定（不弹卡），拿不准才上浮弹卡
     const mode = permissionConfig?.getMode?.() || 'smart';
