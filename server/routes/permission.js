@@ -71,7 +71,7 @@ function smartDecide(req, permissionConfig) {
   return null; // 拿不准 → 上浮弹卡
 }
 
-export function permissionHandler({ store, terminal, permissionConfig, isLocalRequest, logger }) {
+export function permissionHandler({ store, terminal, permissionConfig, isLocalRequest, logger, onPendingChange }) {
   const pending = new Map(); // id -> { sid, req:{tool_name,tool_input,session_id,cwd}, decision:null, ts }
 
   /** N2：会话 pty 关闭/被 kill → 清该会话所有未决请求（防泄漏 + 防 hook 卡到兜底超时） */
@@ -79,12 +79,19 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     for (const [id, p] of pending) {
       if (p.sid === sid && !p.decision) pending.delete(id);
     }
+    notifyPending(sid); // 清空后同步 ptyHost（通常 pty 已死 rec 不存在 → no-op，双保险）
   }
   /** N1：某会话未决请求（前端重连/刷新重放用） */
   function listPendingBySid(sid) {
     return [...pending.entries()]
       .filter(([, p]) => p.sid === sid && !p.decision)
       .map(([id, p]) => ({ id, tool_name: p.req.tool_name, tool_input: p.req.tool_input }));
+  }
+
+  /** 通知 ptyHost 该会话权限挂起状态（listPendingBySid 排除已决 → 反映真实未决数；
+   *  挂起中暂停 pty 确认重发，防等批权限时误重发同条消息 —— 🔴P1 遗留修复 9-06） */
+  function notifyPending(sid) {
+    try { onPendingChange?.(sid, listPendingBySid(sid).length > 0); } catch {}
   }
 
   /** 把 claude 会话 id 关联到 ClaudeNeko sid（hook 带 session_id = claude 侧） */
@@ -119,6 +126,7 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
       terminal?.broadcast(sid, { t: 'perm', p: { id, tool_name: body.tool_name || '', hasInput: !!(body.tool_input && Object.keys(body.tool_input).length) } });
     }
     logger?.info('permission', `权限请求 id=${id} sid=${sid} tool=${body.tool_name || ''} mode=${mode} ${autoDecision ? '自动:' + autoDecision.behavior : '上浮'}`);
+    notifyPending(sid); // 请求入队 → 通知 ptyHost（autoDecision 时无未决 → false，人工上浮 → true）
     return sendJson(res, 200, { id });
   }
 
@@ -160,6 +168,7 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     }
     p.decision = decision;
     terminal?.broadcast(p.sid, { t: 'perm-closed', p: { id: body.id } });
+    notifyPending(p.sid); // 决定落地 → 通知 ptyHost 解除挂起（若仍有多余未决 → 保持 true）
     logger?.info('permission', `权限决定 id=${body.id} action=${action}`);
     return sendJson(res, 200, { ok: true });
   }

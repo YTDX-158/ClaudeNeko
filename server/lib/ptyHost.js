@@ -124,7 +124,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
       logger.error('ptyHost', `spawn 失败 sid=${sid}:`, e.message);
       return { isNew: false, available: false };
     }
-    const rec = { sid, child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null, lastInterruptAt: 0, termBuf: '', markerTimer: null, pendingConfirm: null, writeQueue: [], writing: false };
+    const rec = { sid, child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null, lastInterruptAt: 0, termBuf: '', markerTimer: null, pendingConfirm: null, writeQueue: [], writing: false, permissionPending: false };
     ptys.set(sid, rec);
     // M2 兜底：20s 内无论输出多少都强制就绪（防 claude 卡死/输出异常导致消息永久卡队列）
     setTimeout(() => {
@@ -204,6 +204,13 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     if (!ptys.has(rec.sid)) return; // pty 已退出/回收 → 不再重发（onExit/killAll 已清，双保险）
     const c = rec.pendingConfirm;
     if (!c) return;
+    // 权限挂起中（claude 停在等 PermissionRequest hook 审批，输入框不可用）：
+    // 消息"没确认"≠丢了——它在 claude 手里卡在权限门。不重发、不计 attempts、不报 fail，
+    // 仅延后复查；挂起解除（setPermissionPending false）会主动触发一次补查。
+    if (rec.permissionPending) {
+      c.timer = setTimeout(() => checkConfirm(rec), CONFIRM_TIMEOUT_MS);
+      return;
+    }
     if (c.attempts >= CONFIRM_MAX_RETRY) {
       rec.pendingConfirm = null;
       bus?.emit('pty:confirm-fail', { sid: rec.sid, text: c.text });
@@ -219,6 +226,20 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     if (rec?.pendingConfirm) {
       clearTimeout(rec.pendingConfirm.timer);
       rec.pendingConfirm = null;
+    }
+  }
+
+  /** 权限挂起状态（外部在权限 request/respond/cancel 时通知，防等批权限时误重发同条消息）
+   *  pending=true  → 该会话 claude 停在等 PermissionRequest hook 审批，输入框不可用 → 挂起确认重发
+   *  pending=false → 解除：若仍有未确认消息 → 1s 后触发一次补查（claude 恢复、jsonl 推进；
+   *                  1s 缓冲防"刚恢复 jsonl 未 flush"就误重发；confirmDelivered 通常已清无需补查） */
+  function setPermissionPending(sid, pending) {
+    const rec = ptys.get(sid);
+    if (!rec) return;
+    rec.permissionPending = !!pending;
+    if (!pending && rec.pendingConfirm) {
+      clearTimeout(rec.pendingConfirm.timer);
+      rec.pendingConfirm.timer = setTimeout(() => checkConfirm(rec), 1000);
     }
   }
 
@@ -398,6 +419,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
   return {
     ensure, submit, markReady, write, resize, interrupt, kill, killAll, isRunning, touch, scheduleIdleReap,
     confirmDelivered, // 确认送达（transcript 读到 jsonl user 文本时调）
+    setPermissionPending, // 权限挂起状态（外部通知：挂起暂停重发，解除触发补查）
     get available() { return pty !== null; },
   };
 }

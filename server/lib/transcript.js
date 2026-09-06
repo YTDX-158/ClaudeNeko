@@ -58,17 +58,27 @@ function projectDir(cwd) {
  * ⚠ 用 birthtime（创建时间）而非 mtime：当前活跃会话（如 CLI 本会话）的 jsonl mtime 一直在更新，
  *   baseline 过滤挡不住；但它是 ensure 之前就存在的，birthtime < baseline，天然被排除。
  */
-/** 读文件尾部小窗口，查是否含指纹片段（绑定验证用，避免全量读大 jsonl） */
-function fileTailContains(file, fp, tailBytes = 16384) {
+/** 查文件是否含指纹片段（绑定验证用）。
+ *  ⚠ 9-06 修复：claude jsonl 是流式追加，user 文本写在中部后会被后续 assistant/tool/system
+ *  （stop_hook_summary / turn_duration 等）事件持续追加推离"尾部小窗口"——只查尾部 → 长回复/活跃会话
+ *  绑定永不成功 → transcript 探测无结果 → 确认送达永不到 → ptyHost 6s 误重发耗尽（实测 227ccb34：
+ *  user 文本偏移止于 45K，文件 66K，尾部 16K 全是系统事件）。改为：尾窗快路径 + 全文兜底（cap 防超大文件）。 */
+function fileTailContains(file, fp, tailBytes = 16384, fullCap = 8 * 1024 * 1024) {
   try {
     const size = statSync(file).size;
-    if (size < 1) return false;
-    const len = Math.min(size, tailBytes);
+    if (size < 1 || !fp) return false;
     const fd = openSync(file, 'r');
     try {
-      const buf = Buffer.alloc(len);
-      readSync(fd, buf, 0, len, size - len);
-      return buf.toString('utf8').includes(fp);
+      // ① 尾部窗口（快路径：user 文本近尾时一次命中）
+      const len = Math.min(size, tailBytes);
+      const tail = Buffer.alloc(len);
+      readSync(fd, tail, 0, len, size - len);
+      if (tail.toString('utf8').includes(fp)) return true;
+      // ② 全文检索兜底（cap 内整读；>cap 读前段——user 文本若被推离尾窗必在前中段）
+      const probeLen = Math.min(size, fullCap);
+      const probe = Buffer.alloc(probeLen);
+      readSync(fd, probe, 0, probeLen, 0);
+      return probe.toString('utf8').includes(fp);
     } finally {
       closeSync(fd);
     }
