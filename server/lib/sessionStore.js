@@ -128,4 +128,30 @@ export class SessionStore {
       // 损坏行跳过（不阻塞）
     }
   }
+
+  /** 按稳定消息 id 删除一条消息；仅用于提交尚未发生时回滚本次追加，避免误删并发消息。 */
+  removeMessage(id, messageId) {
+    if (!messageId) return false;
+    const file = path.join(this.messagesDir, `${id}.jsonl`);
+    if (!fs.existsSync(file)) return false;
+    const lines = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim());
+    const kept = [];
+    let removed = false;
+    for (const line of lines) {
+      if (!removed) {
+        try {
+          if (JSON.parse(line)?.id === messageId) {
+            removed = true;
+            continue;
+          }
+        } catch {
+          // 损坏行原样保留
+        }
+      }
+      kept.push(line);
+    }
+    if (!removed) return false;
+    fs.writeFileSync(file, kept.length ? `${kept.join('\n')}\n` : '', 'utf8');
+    return true;
+  }
 }

@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { sessionsHandler } from '../server/routes/sessions.js';
+import { SessionStore } from '../server/lib/sessionStore.js';
 
 function responseRecorder() {
   return {
@@ -65,10 +69,16 @@ test('branch context is pending before submit and rolls back when submit fails',
   };
   const messages = [{ role: 'user', text: 'earlier context' }];
   let pendingAtSubmit;
+  let removedMessageId = null;
   const store = {
     get: () => session,
     readMessages: () => messages,
     appendMessage(_id, message) { messages.push(message); },
+    removeMessage(_id, messageId) {
+      removedMessageId = messageId;
+      const index = messages.findIndex((message) => message.id === messageId);
+      if (index >= 0) messages.splice(index, 1);
+    },
     update(_id, patch) { Object.assign(session, patch); return session; },
   };
   const handler = sessionsHandler({
@@ -96,4 +106,50 @@ test('branch context is pending before submit and rolls back when submit fails',
   assert.equal(res.status, 500);
   assert.equal(pendingAtSubmit, true);
   assert.equal(session.branchContextPending, false);
+  assert.ok(removedMessageId);
+  assert.deepEqual(messages, [{ role: 'user', text: 'earlier context' }]);
+});
+
+test('message rollback removes only the exact failed message', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neko-message-rollback-'));
+  try {
+    const store = new SessionStore(dataDir);
+    const session = store.create({ model: 'test', cwd: process.cwd() });
+    store.appendMessage(session.id, { id: 'keep-1', role: 'user', text: 'keep' });
+    store.appendMessage(session.id, { id: 'failed-1', role: 'user', text: 'failed', pendingJsonl: true });
+    store.appendMessage(session.id, { id: 'keep-2', role: 'user', text: 'concurrent' });
+
+    assert.equal(store.removeMessage(session.id, 'failed-1'), true);
+    assert.deepEqual(store.readMessages(session.id).map((message) => message.id), ['keep-1', 'keep-2']);
+    assert.equal(store.removeMessage(session.id, 'missing'), false);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('an unavailable PTY rejects before persisting a pending user message', async () => {
+  const session = { id: 'pty-unavailable', cwd: process.cwd(), title: 'session' };
+  let appendCalls = 0;
+  const store = {
+    get: () => session,
+    readMessages: () => [],
+    appendMessage() { appendCalls += 1; },
+    update() {},
+  };
+  const handler = sessionsHandler({
+    store,
+    config: { defaultCwd: process.cwd(), defaultModel: 'test-model' },
+    busyLock: { acquire: () => true, release() {} },
+    ptyHost: { available: false },
+  });
+  const req = Readable.from([Buffer.from(JSON.stringify({ prompt: 'hello' }))]);
+  req.method = 'POST';
+  req.url = '/api/sessions/pty-unavailable/messages';
+  req.headers = {};
+  const res = responseRecorder();
+
+  await handler(req, res, new URL('http://localhost/api/sessions/pty-unavailable/messages'));
+
+  assert.equal(res.status, 500);
+  assert.equal(appendCalls, 0);
 });

@@ -182,11 +182,16 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, perm
       }
       const retries = st.retries + 1;
       logger.warn('terminal', `会话 ${sid} termBuf 仅 ${bufLen}B < ${STARTUP_MIN_TERMBUF}B（疑似 TUI 渲染死锁/单色+c），第 ${retries}/${MAX_STARTUP_RETRIES} 次自动重启`);
-      ptyHost.kill(sid);
-      clearTermBuffer(sid);
-      ensureRuntime(sid);
-      // 记录重试次数 + 重置宽限（给新 pty 启动/重绘时间）
-      healState.set(sid, { retries, lastClear: now });
+      void ptyHost.kill(sid).then((stopped) => {
+        if (!stopped) {
+          logger.error('terminal', `会话 ${sid} 旧终端未在时限内退出，暂不自动重启`);
+          return;
+        }
+        clearTermBuffer(sid);
+        ensureRuntime(sid);
+        // 记录重试次数 + 重置宽限（给新 pty 启动/重绘时间）
+        healState.set(sid, { retries, lastClear: Date.now() });
+      });
     }
   }, HEAL_INTERVAL_MS);
   healTimer.unref?.();

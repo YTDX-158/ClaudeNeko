@@ -71,8 +71,9 @@ function smartDecide(req, permissionConfig) {
   return null; // 拿不准 → 上浮弹卡
 }
 
-export function permissionHandler({ store, terminal, permissionConfig, isLocalRequest, logger, onPendingChange, onModeChange }) {
+export function permissionHandler({ store, terminal, permissionConfig, isLocalRequest, logger, onPendingChange, onModeChangeStart, onModeChange }) {
   const pending = new Map(); // id -> { sid, req:{tool_name,tool_input,session_id,cwd}, decision:null, ts }
+  let modeChangeTail = Promise.resolve(); // 权限切换串行化：避免并发请求交叉停机/覆盖配置
 
   /** N2：会话 pty 关闭/被 kill → 清该会话所有未决请求（防泄漏 + 防 hook 卡到兜底超时） */
   function cancelBySid(sid) {
@@ -181,11 +182,34 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     if (!body) return sendJson(res, 400, { error: '空请求体' });
     try {
       if (body.mode) {
-        const previousMode = permissionConfig.getMode();
-        permissionConfig.setMode(body.mode);
-        const nextMode = permissionConfig.getMode();
-        if (nextMode !== previousMode) await onModeChange?.({ previousMode, mode: nextMode });
-        return sendJson(res, 200, permissionConfig.get());
+        if (!['ask', 'smart', 'bypass'].includes(body.mode)) {
+          return sendJson(res, 400, { error: `invalid permission mode: ${body.mode}` });
+        }
+        const change = async () => {
+          const previousMode = permissionConfig.getMode();
+          if (body.mode === previousMode) return sendJson(res, 200, permissionConfig.get());
+
+          // 先停掉按旧策略运行的 Claude，确认全部退出后才落盘新模式。
+          // 若超时，stopping 占位仍保留，且旧配置不变，不能向用户谎报切换成功。
+          const releaseLaunches = onModeChangeStart?.({ previousMode, mode: body.mode });
+          try {
+            const results = await onModeChange?.({ previousMode, mode: body.mode });
+            const stopped = results !== false && (!Array.isArray(results) || results.every(Boolean));
+            if (!stopped) {
+              return sendJson(res, 503, { error: '旧终端未完全退出，权限模式切换失败；请稍后重试' });
+            }
+            permissionConfig.setMode(body.mode);
+            return sendJson(res, 200, permissionConfig.get());
+          } catch (e) {
+            logger?.error?.('permission', '权限模式切换失败', e);
+            return sendJson(res, 503, { error: '权限模式切换失败，请稍后重试' });
+          } finally {
+            try { releaseLaunches?.(); } catch {}
+          }
+        };
+        const queued = modeChangeTail.then(change, change);
+        modeChangeTail = queued.then(() => undefined, () => undefined);
+        return queued;
       }
       if (typeof body.removeAllow === 'string') {
         permissionConfig.removeAllow(body.removeAllow);

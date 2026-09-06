@@ -1,5 +1,6 @@
 // routes/sessions.js — 会话 + 消息(handleMessage) + 分支 + cancel/force-stop + media-message（架构重构步4）
 import fs, { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createClaudeRunner } from '../lib/claudeRunner.js';
 import { BRANCH_CONTEXT_PREFIX, reserveClaudeSession, shouldInjectBranchContext } from '../lib/claudeLaunch.js';
 import { sessionFile } from '../lib/transcript.js';
@@ -160,18 +161,21 @@ async function handleMessage(ctx, req, res, url) {
   }
   const claudePrompt = [branchHistoryCtx, prompt, attachCtx].filter(Boolean).join('\n\n') || '（附件消息，无文字内容）';
 
+  // 终端整体不可用时在落盘前失败，避免留下永远无法被 transcript 认领的 pending 消息。
+  if (!ptyHost.available) {
+    unlockBusy();
+    return sendJson(res, 500, { error: '终端功能不可用（node-pty 未加载）' });
+  }
+
   // 落盘用户消息（原始 prompt + pendingJsonl 标记：供 transcript 认领补 claudeMessageId）
-  store.appendMessage(id, { role: 'user', text: prompt, ts: Date.now(), pendingJsonl: true, ...(attachments.length ? { attachments } : {}) });
+  const localMessageId = `msg-${randomUUID()}`;
+  store.appendMessage(id, { id: localMessageId, role: 'user', text: prompt, ts: Date.now(), pendingJsonl: true, ...(attachments.length ? { attachments } : {}) });
   if (currentSession.title === '新会话') {
     const nameSource = prompt || attachments[0]?.name || '附件';
     store.update(id, { title: nameSource.slice(0, 15) });
   }
 
-  // 注入常驻 pty（若 pty 不可用 → 降级回 -p runner）
-  if (!ptyHost.available) {
-    unlockBusy();
-    return sendJson(res, 500, { error: '终端功能不可用（node-pty 未加载）' });
-  }
+  // 注入常驻 pty
   const reserved = reserveClaudeSession({
     session: currentSession,
     getSession: (sid) => store.get(sid),
@@ -186,6 +190,7 @@ async function handleMessage(ctx, req, res, url) {
   const ok = ptyHost.submit(id, claudePrompt);
   if (!ok) {
     if (isBranchFirst) store.update(id, { branchContextPending: false });
+    store.removeMessage?.(id, localMessageId);
     unlockBusy();
     return sendJson(res, 500, { error: '注入终端失败（pty 未就绪）' });
   }
@@ -275,7 +280,8 @@ export function sessionsHandler(ctx) {
     if (method === 'POST' && pathname.endsWith('/force-stop')) {
       const id = pathname.split('/').slice(-2)[0];
       if (ctx.ptyHost?.isRunning(id)) {
-        ctx.ptyHost.kill(id); // taskkill 整棵树
+        const stopped = await ctx.ptyHost.kill(id); // taskkill 整棵树，并等待真实退出
+        if (!stopped) return sendJson(res, 503, { error: '终端进程尚未完全退出，请稍后重试' });
       }
       busyLock.release(id);
       ctx.media.cancelAll();
@@ -373,7 +379,10 @@ export function sessionsHandler(ctx) {
         }
         if (method === 'DELETE') {
           // H1 修复：删会话同步清理常驻 pty + jsonl 轮询（防定时器/进程泄漏）
-          ctx.ptyHost?.kill(id);
+          if (ctx.ptyHost?.isRunning(id)) {
+            const stopped = await ctx.ptyHost.kill(id);
+            if (!stopped) return sendJson(res, 503, { error: '终端进程尚未完全退出，会话未删除' });
+          }
           ctx.transcript?.release(id);
           ctx.terminal?.clearTermBuffer(id); // M12：清终端回放缓冲
           store.remove(id);

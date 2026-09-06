@@ -18,11 +18,6 @@ import { buildClaudeArgs } from './claudeLaunch.js';
 // ESM 加载原生 CommonJS 模块（node-pty）必须用 createRequire
 const require = createRequire(import.meta.url);
 
-/** 同步 sleep（Atomics.wait 短暂阻塞事件循环；仅 force-stop 等低频操作用） */
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
 /** 尝试加载 node-pty；失败返回 null（调用方降级，不阻塞服务） */
 let pty = null;
 try {
@@ -39,9 +34,8 @@ const MIN_COLS = 50; // 列宽下钳（8-29 单色+c 源头根治）：claude In
 const MIN_ROWS = 5;
 // —— force-stop 并发写防护（8-29 审查剩余项修复） ——
 // taskkill 是异步的，旧 claude 进程可能短暂残留写 jsonl；若 force-stop 后立即重开同会话，
-// 新 pty resume 同 jsonl → 新旧并发写可能损坏文件。kill 时同步轮询确认旧进程退出后再放行新 pty。
+// 新 pty resume 同 jsonl → 新旧并发写可能损坏文件。停止期间保留占位，收到真实 exit 后才放行。
 const KILL_CONFIRM_MS = 2000; // 确认旧进程退出上限
-const KILL_POLL_MS = 100; // 轮询间隔
 const ENTER_DELAY_MS = 200; // 文本写入后延迟写回车：防 Windows ConPTY「背靠背吞回车」（8-27 修复）
 // —— 9-03 长文本分块写入（根治 ConPTY 单次写入 >~1024 字符丢前段，实证：T1200 丢前 1024 剩后 176） ——
 const DIRECT_LEN = 900;     // 短文本直接单次写（T900 实测完整，<1024 安全区；≤此值不启用分块，保持原语义）
@@ -75,12 +69,24 @@ function cleanClaudeEnv(env) {
 
 /**
  * 创建常驻 pty 管理器。
- * @param {{ claudeBin: string, bus?: object, onData?: (sid:string, data:string)=>void, ptyImpl?: object, taskkillImpl?: (pid:number)=>void }} opts
+ * @param {{ claudeBin: string, bus?: object, onData?: (sid:string, data:string)=>void, ptyImpl?: object, taskkillImpl?: (pid:number)=>void, setIntervalImpl?: typeof setInterval }} opts
  * 退出事件走 bus（'pty:exit'，Phase2 解耦）；onData 高频终端流保留直接回调。
  */
-export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillImpl }) {
+export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillImpl, setIntervalImpl = setInterval }) {
   // sid -> { child, sessionId, lastActive }
   const ptys = new Map();
+  let launchBlocks = 0;
+
+  /** 跨会话启动闸门：权限事务等临界区内禁止任何新 PTY 继承旧配置。 */
+  function blockLaunches() {
+    launchBlocks += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      launchBlocks = Math.max(0, launchBlocks - 1);
+    };
+  }
 
   /** Windows 下 taskkill 杀进程树（node-pty 的 child.kill 可能留孤儿） */
   function taskkill(pid) {
@@ -104,13 +110,25 @@ export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillI
     rec.exitWaiters = [];
   }
 
+  /** 所有停止入口共用：先封住新写入，再清掉可能迟到的回调和队列。 */
+  function beginStop(sid, rec) {
+    if (!rec || ptys.get(sid) !== rec) return false;
+    rec.stopping = true;
+    cancelConfirm(rec);
+    for (const timerName of ['readyTimer', 'readySignalTimer', 'quietTimer', 'markerTimer', 'writeTimer']) {
+      if (rec[timerName]) clearTimeout(rec[timerName]);
+      rec[timerName] = null;
+    }
+    rec.pendingSubmits = [];
+    rec.writeQueue = [];
+    rec.writing = false;
+    return true;
+  }
+
   function finalizeExit(sid, rec, exitCode) {
     if (rec.exitHandled) return;
     rec.exitHandled = true;
-    cancelConfirm(rec);
-    if (rec.readyTimer) clearTimeout(rec.readyTimer);
-    if (rec.quietTimer) clearTimeout(rec.quietTimer);
-    if (rec.markerTimer) clearTimeout(rec.markerTimer);
+    beginStop(sid, rec);
     const isCurrent = ptys.get(sid) === rec;
     if (isCurrent) ptys.delete(sid);
     resolveExitWaiters(rec, true);
@@ -129,10 +147,22 @@ export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillI
     });
   }
 
+  function requestStop(sid, rec = ptys.get(sid)) {
+    if (!rec || ptys.get(sid) !== rec || rec.exitHandled) return Promise.resolve(true);
+    beginStop(sid, rec);
+    const waiting = waitForExit(rec);
+    if (!rec.stopRequested) {
+      rec.stopRequested = true;
+      taskkill(rec.child.pid);
+    }
+    return waiting;
+  }
+
   /** 确保某会话有常驻 pty；没有则懒启动
    *  @param {string} [permissionMode] 权限档 ask|smart|bypass（缺省不传 = 跟随 claude 全局 settings，兼容旧行为） */
   function ensure(sid, { cwd, claudeSessionId, isNewClaudeSession, model, permissionMode } = {}) {
     if (!ptyImpl) return { isNew: false, available: false };
+    if (launchBlocks > 0) return { isNew: false, available: false, launchBlocked: true };
     const existing = ptys.get(sid);
     if (existing) {
       if (existing.stopping) return { isNew: false, available: false, stopping: true };
@@ -158,7 +188,7 @@ export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillI
       logger.error('ptyHost', `spawn 失败 sid=${sid}:`, e.message);
       return { isNew: false, available: false };
     }
-    const rec = { sid, child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null, lastInterruptAt: 0, termBuf: '', markerTimer: null, pendingConfirm: null, writeQueue: [], writing: false, permissionPending: false, stopping: false, exitHandled: false, exitWaiters: [], readyTimer: null };
+    const rec = { sid, child, lastActive: Date.now(), ready: false, outAcc: 0, pendingSubmits: [], quietTimer: null, lastInterruptAt: 0, termBuf: '', markerTimer: null, pendingConfirm: null, writeQueue: [], writing: false, writeTimer: null, permissionPending: false, stopping: false, stopRequested: false, exitHandled: false, exitWaiters: [], readyTimer: null, readySignalTimer: null };
     ptys.set(sid, rec);
     // M2 兜底：20s 内无论输出多少都强制就绪（防 claude 卡死/输出异常导致消息永久卡队列）
     rec.readyTimer = setTimeout(() => {
@@ -167,6 +197,7 @@ export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillI
     }, 20000);
     rec.readyTimer.unref?.();
     child.onData((d) => {
+      if (ptys.get(sid) !== rec || rec.stopping) return;
       rec.lastActive = Date.now();
       rec.outAcc += d.length;
       // 就绪主信号（9-02 取证）：claude 开启 bracketed-paste（ESC[?2004h）= 输入态激活。
@@ -234,7 +265,7 @@ export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillI
 
   /** 确认超时 → 重发（此时 claude 已就绪，成功率高）；耗尽 → 上报失败（server.js 释放 busy + 广播） */
   function checkConfirm(rec) {
-    if (!ptys.has(rec.sid)) return; // pty 已退出/回收 → 不再重发（onExit/killAll 已清，双保险）
+    if (ptys.get(rec.sid) !== rec || rec.stopping) return; // pty 已退出/回收/停止 → 不再重发
     const c = rec.pendingConfirm;
     if (!c) return;
     // 权限挂起中（claude 停在等 PermissionRequest hook 审批，输入框不可用）：
@@ -286,18 +317,22 @@ export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillI
 
   /** 写队列泵：一次只处理一条；cancel 后冷却；超长分块写入（ConPTY 单次 >~1024 丢前段） */
   function kickWrite(rec) {
-    if (rec.stopping || rec.writing || !rec.writeQueue.length) return;
+    if (ptys.get(rec.sid) !== rec || rec.stopping || rec.writing || !rec.writeQueue.length) return;
     // cancel 后冷却（审查①）：claude 收尾未回输入态时延迟启动，避免新旧消息写同 jsonl 打架
     const sinceInt = rec.lastInterruptAt ? Date.now() - rec.lastInterruptAt : Infinity;
     if (sinceInt < INTERRUPT_SETTLE_MS) {
-      setTimeout(() => { if (ptys.get(rec.sid) === rec) kickWrite(rec); }, INTERRUPT_SETTLE_MS - sinceInt);
+      rec.writeTimer = setTimeout(() => {
+        rec.writeTimer = null;
+        if (ptys.get(rec.sid) === rec && !rec.stopping) kickWrite(rec);
+      }, INTERRUPT_SETTLE_MS - sinceInt);
       return;
     }
     rec.writing = true;
     const text = rec.writeQueue.shift();
     const afterText = () => {
       // 回车隔离：下一条必须等这条 \r 发出（否则下一条字符接在未回车输入区后，两条合成一条）
-      setTimeout(() => {
+      rec.writeTimer = setTimeout(() => {
+        rec.writeTimer = null;
         if (rec.stopping || ptys.get(rec.sid) !== rec) { rec.writing = false; return; }
         try { rec.child.write('\r'); } catch { /* 已退出 */ }
         rec.lastActive = Date.now();
@@ -320,7 +355,7 @@ export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillI
       if (i >= chunks.length) { afterText(); return; }
       try { rec.child.write(chunks[i]); rec.lastActive = Date.now(); } catch { afterText(); return; }
       i++;
-      setTimeout(step, CHUNK_DELAY_MS);
+      rec.writeTimer = setTimeout(() => { rec.writeTimer = null; step(); }, CHUNK_DELAY_MS);
     };
     step();
   }
@@ -352,8 +387,9 @@ export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillI
     const rec = ptys.get(sid);
     if (!rec || rec.ready || rec.stopping) return;
     logger.info('ptyHost', `markReady sid=${sid}（jsonl 信号）`);
-    setTimeout(() => {
-      if (ptys.get(sid) === rec) becomeReady(sid, rec, 'jsonl信号');
+    rec.readySignalTimer = setTimeout(() => {
+      rec.readySignalTimer = null;
+      if (ptys.get(sid) === rec && !rec.stopping) becomeReady(sid, rec, 'jsonl信号');
     }, READY_SETTLE_MS);
   }
 
@@ -396,52 +432,26 @@ export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillI
 
   /** 强杀某会话 pty（force-stop）。
    *  ⚠ 8-29 并发写防护：taskkill 是异步的，旧 claude 可能短暂残留写 jsonl；若 force-stop 后立即重开
-   *  同会话，新 pty resume 同 jsonl → 新旧并发写可能损坏文件。这里同步轮询确认旧进程退出后再删，
-   *  保证后续 ensure（重开）时旧进程已死透。 */
+   *  同会话，新 pty resume 同 jsonl → 新旧并发写可能损坏文件。这里等待真实 exit；超时仍保留
+   *  stopping 占位，保证后续 ensure（重开）不会与旧进程并发。 */
   function kill(sid) {
-    const rec = ptys.get(sid);
-    if (!rec) return;
-    cancelConfirm(rec); // 杀之前清确认（force-stop = 放弃当前消息，不重发）
-    const pid = rec.child.pid;
-    taskkill(pid);
-    // 轮询确认退出（process.kill(pid, 0)：进程不存在抛 ESRCH，存在则成功）
-    const deadline = Date.now() + KILL_CONFIRM_MS;
-    while (Date.now() < deadline) {
-      try {
-        process.kill(pid, 0);
-      } catch {
-        break; // 已退出
-      }
-      sleepSync(KILL_POLL_MS);
-    }
-    ptys.delete(sid);
+    return requestStop(sid);
   }
 
   /** 服务退出时清理全部 */
   function killAll() {
     for (const [sid, rec] of ptys) {
-      cancelConfirm(rec); // 清确认（防 timer 在 pty 已杀后误重发/误报失败）
-      taskkill(rec.child.pid);
+      if (!beginStop(sid, rec)) continue;
+      if (!rec.stopRequested) {
+        rec.stopRequested = true;
+        taskkill(rec.child.pid);
+      }
     }
-    ptys.clear();
   }
 
   /** 运行时策略切换：保留 stopping 占位直到真实 exit，避免新旧 PTY 并发写同一 transcript。 */
   async function killAllAndWait() {
-    const waits = [];
-    for (const [sid, rec] of ptys) {
-      if (!rec.stopping) {
-        rec.stopping = true;
-        cancelConfirm(rec);
-        rec.pendingSubmits = [];
-        rec.writeQueue = [];
-        const waiting = waitForExit(rec);
-        taskkill(rec.child.pid);
-        waits.push(waiting);
-      } else {
-        waits.push(waitForExit(rec));
-      }
-    }
+    const waits = [...ptys].map(([sid, rec]) => requestStop(sid, rec));
     return Promise.all(waits);
   }
 
@@ -456,21 +466,24 @@ export function createPtyHost({ claudeBin, bus, onData, ptyImpl = pty, taskkillI
 
   /** 空闲回收：遍历 Map，超过 idleMs 未活跃的 pty 杀掉（WS 断开后计时） */
   function scheduleIdleReap(idleMs = IDLE_REAP_MS) {
-    setInterval(() => {
+    const timer = setIntervalImpl(() => {
       const now = Date.now();
       for (const [sid, rec] of ptys) {
         if (now - rec.lastActive > idleMs) {
           logger.info('ptyHost', `会话 ${sid} 空闲 ${Math.round(idleMs / 60000)} 分钟，回收 pty`);
-          taskkill(rec.child.pid);
-          ptys.delete(sid);
+          if (beginStop(sid, rec) && !rec.stopRequested) {
+            rec.stopRequested = true;
+            taskkill(rec.child.pid);
+          }
         }
       }
     }, 60 * 1000);
+    timer?.unref?.();
     // 防进程未退出（setInterval 不阻止进程退出）
   }
 
   return {
-    ensure, submit, markReady, write, resize, interrupt, kill, killAll, killAllAndWait, isRunning, touch, scheduleIdleReap,
+    ensure, submit, markReady, write, resize, interrupt, kill, killAll, killAllAndWait, blockLaunches, isRunning, touch, scheduleIdleReap,
     confirmDelivered, // 确认送达（transcript 读到 jsonl user 文本时调）
     setPermissionPending, // 权限挂起状态（外部通知：挂起暂停重发，解除触发补查）
     get available() { return ptyImpl !== null; },

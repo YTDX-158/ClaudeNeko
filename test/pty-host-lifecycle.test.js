@@ -89,3 +89,48 @@ test('a timed-out mode-change stop keeps its stopping placeholder until the real
   assert.equal(host.isRunning('sid-timeout'), false);
   assert.deepEqual(exitEvents, [{ sid: 'sid-timeout', exitCode: 9 }]);
 });
+
+for (const stopKind of ['kill', 'killAll', 'idle']) {
+  test(`${stopKind} uses the guarded stop lifecycle`, async () => {
+    const children = [];
+    const exitEvents = [];
+    let idleSweep;
+    const host = createPtyHost({
+      claudeBin: '',
+      ptyImpl: {
+        spawn() {
+          const child = new FakePtyChild(200 + children.length);
+          children.push(child);
+          return child;
+        },
+      },
+      taskkillImpl() {},
+      setIntervalImpl(fn) { idleSweep = fn; return { unref() {} }; },
+      bus: { emit(name, payload) { if (name === 'pty:exit') exitEvents.push(payload); } },
+    });
+
+    host.ensure('sid-stop', { cwd: process.cwd() });
+    children[0].dataHandler('\x1b[?2004h');
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(host.submit('sid-stop', 'queued write'), true);
+
+    let waiting;
+    if (stopKind === 'kill') waiting = host.kill('sid-stop');
+    if (stopKind === 'killAll') host.killAll();
+    if (stopKind === 'idle') {
+      host.scheduleIdleReap(-1);
+      idleSweep();
+    }
+
+    assert.equal(host.submit('sid-stop', 'must be blocked'), false);
+    assert.equal(host.ensure('sid-stop', { cwd: process.cwd() }).stopping, true);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.deepEqual(children[0].writeCalls, ['queued write']);
+    assert.deepEqual(exitEvents, []);
+
+    children[0].emitExit(0);
+    if (waiting) assert.equal(await waiting, true);
+    assert.deepEqual(exitEvents, [{ sid: 'sid-stop', exitCode: 0 }]);
+    assert.equal(host.isRunning('sid-stop'), false);
+  });
+}
