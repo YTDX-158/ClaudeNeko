@@ -13,9 +13,12 @@
 // 鉴权：upgrade 时校验 isLocalRequest(req)——本机 dev/prod 来源头都匹配；
 // 远程经 proxy 重写 Origin/Host 成本机后也匹配（与现有 HTTP 转发模型一致）。
 
+import { existsSync } from 'node:fs';
 import { WebSocketServer } from 'ws';
+import { reserveClaudeSession } from '../lib/claudeLaunch.js';
 import { logger } from '../lib/logger.js';
 import { createSocketRegistry } from '../lib/remote/proxy.js';
+import { sessionFile } from '../lib/transcript.js';
 
 const TERM_BUF_MAX = 2 * 1024 * 1024; // 回放缓冲上限（最近 2MB 原始字节，够滚回看多次生成的完整输出；原 64KB 太小）
 const SYNC_WINDOW_MS = 200; // attach 同步窗：200ms 内 drop 实时流，等快照稳定再发（tmux-web 默认值）
@@ -34,9 +37,9 @@ const WAKE_COLS = 80; // 唤醒列宽：claude Ink 在宽列重绘正常（实�
 
 /**
  * 创建终端 WS 通道。
- * @param {{ ptyHost: object, transcript: object, store: object, config: object, isLocalRequest: (req)=>boolean }} deps
+ * @param {{ ptyHost: object, transcript: object, store: object, config: object, permissionConfig?: object, isLocalRequest: (req)=>boolean }} deps
  */
-export function createTerminalChannel({ ptyHost, transcript, store, config, isLocalRequest }) {
+export function createTerminalChannel({ ptyHost, transcript, store, config, permissionConfig, isLocalRequest }) {
   // perMessageDeflate:false —— 禁用 WS 压缩。
   // 远程链路（cloudflared 隧道）对 permessage-deflate 压缩帧的转发不可靠（实测手机端
   // WS 数据损坏：聊天靠 HTTP 轮询兜底仍显示但 streaming 卡死、终端完全空白）。
@@ -52,6 +55,24 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
   const termBufs = new Map(); // sid -> 最近 64KB 原始字节（attach 回放）
   const healState = new Map(); // sid -> { retries, lastClear }（死锁自愈检测状态）
   const wakeTimers = new Map(); // sid -> setTimeout（attach 后快速唤醒检查）
+
+  function ensureRuntime(sid) {
+    const session = store.get(sid);
+    if (!session) return { isNew: false, available: false };
+    const cwd = session.cwd || config.defaultCwd;
+    const reserved = reserveClaudeSession({
+      session,
+      update: (id, patch) => store.update(id, patch),
+      transcriptExists: (claudeSessionId) => existsSync(sessionFile(cwd, claudeSessionId)),
+    });
+    const ptyRes = ptyHost.ensure(sid, {
+      cwd,
+      ...reserved,
+      permissionMode: permissionConfig?.getMode(),
+    });
+    transcript.ensure(sid, { cwd, claudeSessionId: reserved.claudeSessionId });
+    return ptyRes;
+  }
 
   // M14 心跳（流量检测版）：不依赖 ping/pong（实测前端可能不回 pong 导致误杀）。
   // 改为看连接「消息活动」：每次收发消息刷新 lastActivity，5 分钟无任何流量才 close。
@@ -162,13 +183,7 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
       logger.warn('terminal', `会话 ${sid} termBuf 仅 ${bufLen}B < ${STARTUP_MIN_TERMBUF}B（疑似 TUI 渲染死锁/单色+c），第 ${retries}/${MAX_STARTUP_RETRIES} 次自动重启`);
       ptyHost.kill(sid);
       clearTermBuffer(sid);
-      const s = store.get(sid);
-      const res = ptyHost.ensure(sid, {
-        cwd: s?.cwd || config.defaultCwd,
-        claudeSessionId: s?.claudeSessionId || undefined,
-        // 不传 model：claude 统一走全局 env
-      });
-      transcript.ensure(sid, { cwd: s?.cwd || config.defaultCwd, claudeSessionId: s?.claudeSessionId || undefined });
+      ensureRuntime(sid);
       // 记录重试次数 + 重置宽限（给新 pty 启动/重绘时间）
       healState.set(sid, { retries, lastClear: now });
     }
@@ -217,15 +232,8 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
     logger.info('terminal', `连接建立 sid=${sid} cwd=${store.get(sid)?.cwd || config.defaultCwd}`);
 
     // 懒启动该会话的 pty + transcript（若 store 有该会话则带上下文）
-    const session = store.get(sid);
-    const cwd = session?.cwd || config.defaultCwd;
-    const ptyRes = ptyHost.ensure(sid, {
-      cwd,
-      claudeSessionId: session?.claudeSessionId || undefined,
-      // 不传 model：claude 统一走全局 env（改模型=全局生效）
-    });
+    const ptyRes = ensureRuntime(sid);
     logger.info('terminal', `pty ensure sid=${sid}: ${JSON.stringify(ptyRes)}`);
-    transcript.ensure(sid, { cwd, claudeSessionId: session?.claudeSessionId || undefined });
     // 死锁自愈：新 pty（冷启动）登记周期检测（30s 查一次 termBuf，TUI 未画出自动重启）
     if (ptyRes.isNew) trackHeal(sid);
 
@@ -256,13 +264,7 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, isLo
         // （resume 原会话，历史还在）。注意：WS 连接可能复用（聊天在用），onConnect 不会重新触发，必须在此 ensure。
         // ⚠ 顺序：ensure 必须在 resize 前（pty 不存在时 resize 无效）。
         if (!ptyHost.isRunning(sid)) {
-          const session = store.get(sid);
-          ptyHost.ensure(sid, {
-            cwd: session?.cwd || config.defaultCwd,
-            claudeSessionId: session?.claudeSessionId || undefined,
-            // 不传 model：claude 统一走全局 env
-          });
-          transcript.ensure(sid, { cwd: session?.cwd || config.defaultCwd, claudeSessionId: session?.claudeSessionId || undefined });
+          ensureRuntime(sid);
           clearTermBuffer(sid); // 新 pty 是全新 claude：旧 termBuf 作废，防新旧画面叠加
         }
         // 客户端列宽同步（借鉴 c2web：resize 触发 Ink 用客户端列宽重绘，拿到权威完整画面）。

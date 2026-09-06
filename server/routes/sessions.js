@@ -1,6 +1,8 @@
 // routes/sessions.js — 会话 + 消息(handleMessage) + 分支 + cancel/force-stop + media-message（架构重构步4）
-import fs from 'node:fs';
+import fs, { existsSync } from 'node:fs';
 import { createClaudeRunner } from '../lib/claudeRunner.js';
+import { reserveClaudeSession } from '../lib/claudeLaunch.js';
+import { sessionFile } from '../lib/transcript.js';
 import { describeImage } from '../lib/vision.js';
 import { extractDocumentText } from '../lib/docText.js';
 import { describeMedia } from '../lib/mediaUnderstand.js';
@@ -134,10 +136,11 @@ async function handleMessage(ctx, req, res, url) {
     unlockBusy();
     throw new Error('附件处理失败');
   }
+  const cwd = session.cwd || config.defaultCwd;
+  const hasClaudeTranscript = !!session.claudeSessionId && existsSync(sessionFile(cwd, session.claudeSessionId));
   // 分支首条：注入复制历史（早期摘要 + 近期全量，或全量兜底）
-  // ⚠ 修正点1：有 claudeSessionId（pty 会 resume）→ 历史天然在，不注入；
-  //   无 claudeSessionId（新 pty 无 resume）→ 首条注入 branchHistoryCtx
-  const isBranchFirst = session.parentId && !session.claudeSessionId && store.readMessages(id).length > 0;
+  // 只有 transcript 已存在时历史才天然在；prewarm 预留 ID 但尚未落盘仍是首次 Claude 启动。
+  const isBranchFirst = session.parentId && !hasClaudeTranscript && store.readMessages(id).length > 0;
   let branchHistoryCtx = '';
   if (isBranchFirst) {
     const all = store.readMessages(id).filter((m) => (m.text ?? '').trim());
@@ -161,13 +164,17 @@ async function handleMessage(ctx, req, res, url) {
   }
 
   // 注入常驻 pty（若 pty 不可用 → 降级回 -p runner）
-  const cwd = session.cwd || config.defaultCwd;
   if (!ptyHost.available) {
     unlockBusy();
     return sendJson(res, 500, { error: '终端功能不可用（node-pty 未加载）' });
   }
-  const ptyRes = ptyHost.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined, permissionMode: permissionConfig?.getMode() }); // 不传 model：claude 统一走全局 env（改模型=全局生效）；permissionMode=权限档（P1-1）
-  transcript.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined });
+  const reserved = reserveClaudeSession({
+    session,
+    update: (sid, patch) => store.update(sid, patch),
+    transcriptExists: (claudeSessionId) => existsSync(sessionFile(cwd, claudeSessionId)),
+  });
+  const ptyRes = ptyHost.ensure(id, { cwd, ...reserved, permissionMode: permissionConfig?.getMode() }); // 不传 model：claude 统一走全局 env（改模型=全局生效）；permissionMode=权限档（P1-1）
+  transcript.ensure(id, { cwd, claudeSessionId: reserved.claudeSessionId });
   // M2 修复：submit 内部处理"未就绪"——pty 刚起时消息进队列，claude TUI 就绪后自动补发，
   // 不再固定延迟 12s（慢机/大历史也不会吞消息）。isNew 时也直接 submit（排队等就绪）。
   const ok = ptyHost.submit(id, claudePrompt);
@@ -274,8 +281,13 @@ export function sessionsHandler(ctx) {
       if (!session) return sendJson(res, 404, { error: '会话不存在' });
       const cwd = session.cwd || config.defaultCwd;
       if (ctx.ptyHost?.available) {
-        ctx.ptyHost.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined, permissionMode: ctx.permissionConfig?.getMode() });
-        ctx.transcript?.ensure(id, { cwd, claudeSessionId: session.claudeSessionId || undefined });
+        const reserved = reserveClaudeSession({
+          session,
+          update: (sid, patch) => store.update(sid, patch),
+          transcriptExists: (claudeSessionId) => existsSync(sessionFile(cwd, claudeSessionId)),
+        });
+        ctx.ptyHost.ensure(id, { cwd, ...reserved, permissionMode: ctx.permissionConfig?.getMode() });
+        ctx.transcript?.ensure(id, { cwd, claudeSessionId: reserved.claudeSessionId });
       }
       return sendJson(res, 200, { ok: true });
     }

@@ -119,7 +119,7 @@ bus.on('pty:confirm-fail', ({ sid, text }) => {
 });
 
 // 终端 WS 通道（upgrade 挂载在 server.on('upgrade')）
-const terminal = createTerminalChannel({ ptyHost, transcript, store, config, isLocalRequest });
+const terminal = createTerminalChannel({ ptyHost, transcript, store, config, permissionConfig: permissionConfigService, isLocalRequest });
 // —— 权限体系 P1-2：注入 PermissionRequest hook（写 ~/.claude/settings.json，保留用户 PreToolUse）+ 审批服务 ——
 ensurePermissionHook();
 const permissionService = permissionHandler({

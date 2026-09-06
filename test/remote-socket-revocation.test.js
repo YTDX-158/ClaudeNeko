@@ -59,6 +59,7 @@ test('socket registry destroys tracked sockets once and forgets closed sockets',
 });
 
 test('terminal revocation closes remote WebSockets but preserves local WebSockets', async () => {
+  const session = { id: 'session-1', cwd: process.cwd() };
   const channel = createTerminalChannel({
     ptyHost: {
       ensure: () => ({ isNew: false }),
@@ -66,7 +67,10 @@ test('terminal revocation closes remote WebSockets but preserves local WebSocket
       submit() {}, write() {}, resize() {}, touch() {}, kill() {},
     },
     transcript: { ensure() {} },
-    store: { get: () => ({ id: 'session-1', cwd: process.cwd() }) },
+    store: {
+      get: () => session,
+      update: (_id, patch) => Object.assign(session, patch),
+    },
     config: { defaultCwd: process.cwd() },
     isLocalRequest: () => true,
   });

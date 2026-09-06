@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { logger } from './logger.js';
-import { toClaudePermissionMode } from './permissionConfig.js'; // 权限体系 P1-1：按档传 claude --permission-mode
+import { buildClaudeArgs } from './claudeLaunch.js';
 
 // ESM 加载原生 CommonJS 模块（node-pty）必须用 createRequire
 const require = createRequire(import.meta.url);
@@ -94,7 +94,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
 
   /** 确保某会话有常驻 pty；没有则懒启动
    *  @param {string} [permissionMode] 权限档 ask|smart|bypass（缺省不传 = 跟随 claude 全局 settings，兼容旧行为） */
-  function ensure(sid, { cwd, claudeSessionId, model, permissionMode } = {}) {
+  function ensure(sid, { cwd, claudeSessionId, isNewClaudeSession, model, permissionMode } = {}) {
     if (!pty) return { isNew: false, available: false };
     const existing = ptys.get(sid);
     if (existing) {
@@ -104,12 +104,7 @@ export function createPtyHost({ claudeBin, bus, onData }) {
     // 启动 claude TUI：有会话则 --resume 续接，否则新会话
     const file = claudeBin && existsSync(claudeBin) ? claudeBin : 'claude.cmd';
     logger.info('ptyHost', `ensure sid=${sid} file=${file} resume=${claudeSessionId || '无'} cwd=${cwd}`);
-    const args = [];
-    if (claudeSessionId) args.push('--resume', claudeSessionId);
-    if (model) args.push('--model', model);
-    // 权限体系 P1-1：按档显式传 --permission-mode（P0 实锤：全局 bypass 吞权限请求→hook 不触发；
-    // 档①②必须 default 让请求发生+PermissionRequest hook 触发；档③完全访问才 bypass）
-    if (permissionMode) args.push('--permission-mode', toClaudePermissionMode(permissionMode));
+    const args = buildClaudeArgs({ claudeSessionId, isNewClaudeSession, model, permissionMode });
     let child;
     try {
       const childEnv = cleanClaudeEnv(process.env);
