@@ -226,6 +226,7 @@ export function sessionsHandler(ctx) {
         parentId,
         branchFromMsg: fromMsgId,
         branchContextInjected: false,
+        branchContextPending: false,
         effort: parent.effort || undefined, // 分支继承父会话思考档位
       });
       // 分支复制消息时剥离 usage：避免同一批 token 在父+分支各计一次（成本统计双重计数）
