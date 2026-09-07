@@ -14,6 +14,13 @@
 import { randomUUID } from 'node:crypto';
 import { sendJson, readBody } from '../lib/util.js';
 
+const CLAUDE_SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function shortClaudeSessionLabel(value) {
+  const sessionId = typeof value === 'string' ? value : '';
+  return CLAUDE_SESSION_ID_RE.test(sessionId) ? sessionId.slice(0, 8).toLowerCase() : 'invalid';
+}
+
 /** 「以后都行」生成精确 claude 规则（粒度防宽·雷③）——从 tool_input 抽具体目标，不落整类工具。
  *  Bash → 命令首 token+*（Bash(ipconfig*)）；写类 → 文件路径+*；联网 → 工具级（P1-5 细化域名） */
 function buildRule(req) {
@@ -105,9 +112,10 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
   async function handleRequest(req, res) {
     const body = await readBody(req);
     if (!body) return sendJson(res, 400, { error: '空请求体' });
-    const sid = sidForClaudeSession(body.session_id);
+    const validClaudeSession = typeof body.session_id === 'string' && CLAUDE_SESSION_ID_RE.test(body.session_id);
+    const sid = validClaudeSession ? sidForClaudeSession(body.session_id) : null;
     if (!sid) {
-      const shortSession = String(body.session_id || '').slice(0, 8) || 'missing';
+      const shortSession = shortClaudeSessionLabel(body.session_id);
       // 仅记录短标识用于关联排障；禁止记录工具参数、cwd、提示词、密钥或完整 Claude UUID。
       logger?.warn?.('permission', `权限请求找不到对应会话 claudeSession=${shortSession}`);
       return sendJson(res, 404, { error: '找不到对应会话' });

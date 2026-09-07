@@ -21,9 +21,6 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from './logger.js';
 
-/** 诊断日志时间格式化（毫秒 → HH:MM:SS，仅供排雷日志） */
-const fmtTs = (ms) => (ms ? new Date(ms).toLocaleTimeString('zh-CN', { hour12: false }) : '?');
-
 /**
  * 把 jsonl 行的 timestamp 解析成 epoch 毫秒。
  * ⚠ 9-03 修复：jsonl 的 timestamp 实测是 ISO 字符串（"2026-09-02T22:07:04.618Z"），
@@ -42,25 +39,24 @@ export function encodeProjectDir(cwd) {
 }
 
 /** 当前项目在 ~/.claude/projects 下的会话目录 */
-function projectDir(cwd) {
-  return join(homedir(), '.claude', 'projects', encodeProjectDir(cwd));
+function projectDir(cwd, projectsRoot = join(homedir(), '.claude', 'projects')) {
+  return join(projectsRoot, encodeProjectDir(cwd));
 }
 
 /**
- * 定位「afterTs 之后创建/修改」的会话 jsonl。
+ * 定位「afterTs 之后创建」的会话 jsonl。
  * ⚠ 关键修复（8-26 P1 实测发现）：新会话无 claudeSessionId 时，若扫全目录会命中
  * 当前正在用的会话 jsonl（mtime 最新），把别人历史全量回放进新会话（数据污染）。
  * 所以必须用 baseline 过滤：只认 ensure 时刻之后新建的文件——新 pty 起的 claude
- * 必然新建一个 jsonl，mtime >= baseline。
+ * 必然新建一个 jsonl，birthtime >= baseline。
  * @param {string} cwd 项目目录
  * @param {number} afterTs ensure 时刻（毫秒），只认「创建时间」>= 它的文件
  * @param {Set<string>} excludeIds 排除的 claudeSessionId（store 已有会话），防命中活跃会话
- * ⚠ 用 birthtime（创建时间）而非 mtime：当前活跃会话（如 CLI 本会话）的 jsonl mtime 一直在更新，
- *   baseline 过滤挡不住；但它是 ensure 之前就存在的，birthtime < baseline，天然被排除。
+ * ⚠ 只信可靠的 birthtime（创建时间）：ctime/mtime 都会因旧活跃会话写入而变化，不能用于接纳。
  */
 /** Legacy binding reads a bounded prefix and compares parsed user rows exactly. */
 const TRANSCRIPT_BINDING_READ_CAP = 8 * 1024 * 1024;
-const SESSION_BIRTH_TOLERANCE_MS = 1000;
+const CLAUDE_SESSION_FILE_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.jsonl$/i;
 
 export function normalizeUserText(text) {
   return String(text ?? '').replace(/\r\n?/g, '\n').trim();
@@ -77,10 +73,8 @@ export function fileContainsUserMessage(file, submittedText) {
       const probe = Buffer.alloc(probeLen);
       const bytesRead = readSync(fd, probe, 0, probeLen, 0);
       let content = probe.subarray(0, bytesRead).toString('utf8');
-      if (bytesRead < size) {
-        const lastNewline = content.lastIndexOf('\n');
-        content = lastNewline >= 0 ? content.slice(0, lastNewline + 1) : '';
-      }
+      const lastNewline = content.lastIndexOf('\n');
+      content = lastNewline >= 0 ? content.slice(0, lastNewline + 1) : '';
       for (const line of content.split('\n')) {
         if (!line.trim()) continue;
         try {
@@ -103,12 +97,10 @@ export function fileContainsUserMessage(file, submittedText) {
   }
 }
 
-export function isCandidateSession(stats, afterTs, toleranceMs = SESSION_BIRTH_TOLERANCE_MS) {
+export function isCandidateSession(stats, afterTs) {
   if (!Number.isFinite(afterTs)) return false;
   const birthtime = Number(stats?.birthtimeMs);
-  const ctime = Number(stats?.ctimeMs);
-  const createdAt = Number.isFinite(birthtime) && birthtime > 0 ? birthtime : ctime;
-  return Number.isFinite(createdAt) && createdAt >= afterTs - toleranceMs;
+  return Number.isFinite(birthtime) && birthtime > 0 && birthtime >= afterTs;
 }
 
 /**
@@ -119,58 +111,75 @@ export function isCandidateSession(stats, afterTs, toleranceMs = SESSION_BIRTH_T
  * @param {number} afterTs ensure 时刻（毫秒）
  * @param {Set<string>} excludeIds 排除的 claudeSessionId（store 已有会话）
  * @param {string} fingerprint 最近提交的完整文本；空则不确定，不探测（返回 null）
+ * @param {Function} onDiag 不含提示文本的诊断回调
+ * @param {{projectsRoot?: string}} options 测试可注入隔离的 Claude projects 根目录
  */
-export function findLatestSession(cwd, afterTs, excludeIds, fingerprint, onDiag) {
-  const dir = projectDir(cwd);
-  if (!existsSync(dir)) { onDiag?.({ error: '目录不存在', total: 0 }); return null; }
+export function findLatestSession(cwd, afterTs, excludeIds, fingerprint, onDiag, { projectsRoot } = {}) {
+  const dir = projectDir(cwd, projectsRoot);
+  if (!existsSync(dir)) { onDiag?.({ error: '目录不存在', total: 0, candidates: [], truncatedCandidates: 0 }); return null; }
   let files;
   try {
-    files = readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+    files = readdirSync(dir).filter((file) => CLAUDE_SESSION_FILE_RE.test(file));
   } catch {
-    onDiag?.({ error: '读取目录失败', total: 0 });
+    onDiag?.({ error: '读取目录失败', total: 0, candidates: [], truncatedCandidates: 0 });
     return null;
   }
-  if (!files.length) { onDiag?.({ error: '无 jsonl', total: 0 }); return null; }
+  if (!files.length) { onDiag?.({ error: '无合法会话 jsonl', total: 0, candidates: [], truncatedCandidates: 0 }); return null; }
   const fp = normalizeUserText(fingerprint);
   if (!fp) {
     // 无指纹（还没发消息）→ 不猜不绑（此时本会话的 jsonl 也未必生成）
-    onDiag?.({ error: '无指纹(尚未发消息)不探测', total: files.length });
+    onDiag?.({ error: '无指纹(尚未发消息)不探测', total: files.length, candidates: [], truncatedCandidates: 0 });
     return null;
   }
-  // 候选：排除已知 ID，且创建时间在 baseline 的小容差范围内。
+  // 候选：排除已知 ID，且可靠创建时间不早于 baseline。
+  const knownSessionIds = new Set(
+    [...(excludeIds ?? [])].filter((id) => typeof id === 'string').map((id) => id.toLowerCase()),
+  );
   const candidates = [];
   for (const f of files) {
-    const sessionId = f.replace(/\.jsonl$/, '');
-    const excluded = !!excludeIds?.has(sessionId); // 排除已知会话
+    const sessionId = CLAUDE_SESSION_FILE_RE.exec(f)?.[1];
+    if (!sessionId) continue;
+    const excluded = knownSessionIds.has(sessionId.toLowerCase()); // 排除已知会话
     if (excluded) continue;
     const full = join(dir, f);
     try {
       const st = statSync(full);
-      const birth = st.birthtimeMs || st.ctimeMs; // Windows 有 birthtime；退化用 ctime
+      const birth = st.birthtimeMs;
       const mtime = st.mtimeMs;
       if (!isCandidateSession(st, afterTs)) continue;
-      candidates.push({ id: sessionId.slice(0, 8), file: full, sessionId, birth, mtime });
+      candidates.push({
+        id: sessionId.slice(0, 8).toLowerCase(),
+        file: full,
+        sessionId,
+        birth,
+        mtime,
+        truncated: st.size > TRANSCRIPT_BINDING_READ_CAP,
+      });
     } catch {
       // 文件被占/删除，跳过
     }
   }
   candidates.sort((a, b) => b.birth - a.birth);
   const exactMatches = candidates.filter((candidate) => fileContainsUserMessage(candidate.file, fp));
+  const diagnostic = {
+    baseline: afterTs,
+    total: files.length,
+    candidates: candidates.map((candidate) => candidate.id),
+    truncatedCandidates: candidates.filter((candidate) => candidate.truncated).length,
+  };
   if (exactMatches.length > 1) {
     onDiag?.({
-      baseline: afterTs,
-      total: files.length,
+      ...diagnostic,
       error: 'ambiguous exact matches',
-      candidates: candidates.map((candidate) => candidate.id),
     });
     return null;
   }
   if (exactMatches.length === 1) {
     const match = exactMatches[0];
-    onDiag?.({ baseline: afterTs, total: files.length, matched: match.id, candidates: candidates.map((x) => `${x.id}(创建${fmtTs(x.birth)}/改${fmtTs(x.mtime)})`) });
+    onDiag?.({ ...diagnostic, matched: match.id });
     return { mt: match.mtime, file: match.file, sessionId: match.sessionId };
   }
-  onDiag?.({ baseline: afterTs, total: files.length, error: '候选均不含指纹', candidates: candidates.map((x) => `${x.id}(创建${fmtTs(x.birth)}/改${fmtTs(x.mtime)})`) });
+  onDiag?.({ ...diagnostic, error: '候选均不含精确 user 文本' });
   return null;
 }
 

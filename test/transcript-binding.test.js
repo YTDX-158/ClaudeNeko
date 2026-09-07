@@ -63,56 +63,97 @@ test('does not parse a JSONL row truncated by the 8 MiB read cap', (t) => {
   assert.equal(fileContainsUserMessage(file, prompt), false);
 });
 
-test('rejects an old session even when its mtime is current', () => {
-  assert.equal(isCandidateSession({ birthtimeMs: 1_000, ctimeMs: 1_000, mtimeMs: 20_000 }, 10_000), false);
-  assert.equal(isCandidateSession({ birthtimeMs: 9_500, ctimeMs: 9_500, mtimeMs: 9_500 }, 10_000), true);
+test('does not parse a syntactically complete final row without a newline', (t) => {
+  const file = path.join(makeTempDir(t), 'session.jsonl');
+  const prompt = 'unterminated-final-row';
+  fs.writeFileSync(file, JSON.stringify({ type: 'user', message: { content: prompt } }));
+
+  assert.equal(fileContainsUserMessage(file, prompt), false);
 });
 
-test('falls back to ctime when birthtime is unavailable', () => {
-  assert.equal(isCandidateSession({ birthtimeMs: 0, ctimeMs: 9_500, mtimeMs: 1_000 }, 10_000), true);
+test('rejects an old session even when its mtime is current', () => {
+  assert.equal(isCandidateSession({ birthtimeMs: 1_000, ctimeMs: 1_000, mtimeMs: 20_000 }, 10_000), false);
+  assert.equal(isCandidateSession({ birthtimeMs: 9_999, ctimeMs: 20_000, mtimeMs: 20_000 }, 10_000), false);
+  assert.equal(isCandidateSession({ birthtimeMs: 10_000, ctimeMs: 1_000, mtimeMs: 1_000 }, 10_000), true);
+});
+
+test('fails closed when birthtime is unavailable', () => {
+  assert.equal(isCandidateSession({ ctimeMs: 20_000, mtimeMs: 20_000 }, 10_000), false);
+  assert.equal(isCandidateSession({ birthtimeMs: 0, ctimeMs: 20_000, mtimeMs: 20_000 }, 10_000), false);
   assert.equal(isCandidateSession({ birthtimeMs: 0, ctimeMs: 1_000, mtimeMs: 20_000 }, 10_000), false);
 });
 
 test('known session IDs are excluded from legacy discovery', (t) => {
-  const home = makeTempDir(t);
-  const oldProfile = process.env.USERPROFILE;
-  process.env.USERPROFILE = home;
-  t.after(() => {
-    if (oldProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = oldProfile;
-  });
+  const projectsRoot = makeTempDir(t);
   const cwd = 'D:\\legacy-project';
-  const dir = path.join(home, '.claude', 'projects', encodeProjectDir(cwd));
+  const dir = path.join(projectsRoot, encodeProjectDir(cwd));
   fs.mkdirSync(dir, { recursive: true });
   const prompt = 'exact known-id exclusion';
-  writeRows(path.join(dir, 'known.jsonl'), [{ type: 'user', message: { content: prompt } }]);
-  writeRows(path.join(dir, 'available.jsonl'), [{ type: 'user', message: { content: prompt } }]);
+  const knownId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const availableId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  writeRows(path.join(dir, `${knownId}.jsonl`), [{ type: 'user', message: { content: prompt } }]);
+  writeRows(path.join(dir, `${availableId}.jsonl`), [{ type: 'user', message: { content: prompt } }]);
 
-  const match = findLatestSession(cwd, Date.now() - 2_000, new Set(['known']), prompt);
-  assert.equal(match?.sessionId, 'available');
+  const match = findLatestSession(cwd, Date.now() - 2_000, new Set([knownId.toUpperCase()]), prompt, undefined, { projectsRoot });
+  assert.equal(match?.sessionId, availableId);
 });
 
 test('multiple exact matches are ambiguous and diagnostics do not expose the prompt', (t) => {
-  const home = makeTempDir(t);
-  const oldProfile = process.env.USERPROFILE;
-  process.env.USERPROFILE = home;
-  t.after(() => {
-    if (oldProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = oldProfile;
-  });
+  const projectsRoot = makeTempDir(t);
   const cwd = 'D:\\ambiguous-project';
-  const dir = path.join(home, '.claude', 'projects', encodeProjectDir(cwd));
+  const dir = path.join(projectsRoot, encodeProjectDir(cwd));
   fs.mkdirSync(dir, { recursive: true });
   const prompt = 'private ambiguous prompt';
-  writeRows(path.join(dir, 'first.jsonl'), [{ type: 'user', message: { content: prompt } }]);
-  writeRows(path.join(dir, 'second.jsonl'), [{ type: 'user', message: { content: prompt } }]);
+  writeRows(path.join(dir, '33333333-3333-4333-8333-333333333333.jsonl'), [{ type: 'user', message: { content: prompt } }]);
+  writeRows(path.join(dir, '44444444-4444-4444-8444-444444444444.jsonl'), [{ type: 'user', message: { content: prompt } }]);
   let diagnostic;
 
   const match = findLatestSession(cwd, Date.now() - 2_000, new Set(), prompt, (value) => {
     diagnostic = value;
-  });
+  }, { projectsRoot });
 
   assert.equal(match, null);
   assert.match(diagnostic?.error ?? '', /ambiguous/i);
+  assert.deepEqual(diagnostic?.candidates?.sort(), ['33333333', '44444444']);
+  assert.equal(JSON.stringify(diagnostic).includes(prompt), false);
+});
+
+test('legacy discovery ignores non-UUID filenames and never diagnoses them', (t) => {
+  const projectsRoot = makeTempDir(t);
+  const cwd = 'D:\\invalid-id-project';
+  const dir = path.join(projectsRoot, encodeProjectDir(cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  const prompt = 'private invalid filename prompt';
+  writeRows(path.join(dir, 'FORGED-not-a-uuid.jsonl'), [{ type: 'user', message: { content: prompt } }]);
+  writeRows(path.join(dir, 'aaaaaaaa-aaaa-0aaa-0aaa-aaaaaaaaaaaa.jsonl'), [{ type: 'user', message: { content: prompt } }]);
+  let diagnostic;
+
+  const match = findLatestSession(cwd, Date.now() - 2_000, new Set(), prompt, (value) => {
+    diagnostic = value;
+  }, { projectsRoot });
+
+  assert.equal(match, null);
+  assert.deepEqual(diagnostic?.candidates, []);
+  assert.equal(JSON.stringify(diagnostic).includes('FORGED'), false);
+});
+
+test('legacy diagnostics report candidates whose scan was bounded at 8 MiB', (t) => {
+  const projectsRoot = makeTempDir(t);
+  const cwd = 'D:\\bounded-project';
+  const dir = path.join(projectsRoot, encodeProjectDir(cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  const prompt = 'bounded exact prompt';
+  const sessionId = '55555555-5555-4555-8555-555555555555';
+  const file = path.join(dir, `${sessionId}.jsonl`);
+  const row = `${JSON.stringify({ type: 'user', message: { content: prompt } })}\n`;
+  fs.writeFileSync(file, `${row}${'x'.repeat(8 * 1024 * 1024)}\n`);
+  let diagnostic;
+
+  const match = findLatestSession(cwd, Date.now() - 2_000, new Set(), prompt, (value) => {
+    diagnostic = value;
+  }, { projectsRoot });
+
+  assert.equal(match?.sessionId, sessionId);
+  assert.equal(diagnostic?.truncatedCandidates, 1);
   assert.equal(JSON.stringify(diagnostic).includes(prompt), false);
 });

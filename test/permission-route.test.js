@@ -47,6 +47,47 @@ test('an unmapped hook request logs only a short Claude session prefix', async (
   assert.equal(warnings[0].includes('Write'), false);
 });
 
+test('an invalid unmapped session id cannot inject control characters into logs', async () => {
+  const warnings = [];
+  const service = permissionHandler({
+    store: { list: () => [] },
+    permissionConfig: { getMode: () => 'ask' },
+    logger: { warn(...args) { warnings.push(args.join(' ')); } },
+  });
+  const res = responseRecorder();
+
+  await service.router(request({
+    session_id: '1234\r\nFORGED\x1b[31m',
+    tool_name: 'Write',
+  }), res, new URL('http://localhost/api/permission/request'));
+
+  assert.equal(res.status, 404);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /claudeSession=invalid/);
+  assert.equal(warnings[0].includes('FORGED'), false);
+  assert.equal(warnings[0].includes('\r'), false);
+  assert.equal(warnings[0].includes('\n'), false);
+  assert.equal(warnings[0].includes('\x1b'), false);
+});
+
+test('a non-RFC UUID shape is logged as invalid', async () => {
+  const warnings = [];
+  const service = permissionHandler({
+    store: { list: () => [] },
+    permissionConfig: { getMode: () => 'ask' },
+    logger: { warn(...args) { warnings.push(args.join(' ')); } },
+  });
+  const res = responseRecorder();
+
+  await service.router(request({
+    session_id: 'aaaaaaaa-aaaa-0aaa-0aaa-aaaaaaaaaaaa',
+  }), res, new URL('http://localhost/api/permission/request'));
+
+  assert.equal(res.status, 404);
+  assert.match(warnings[0], /claudeSession=invalid/);
+  assert.equal(warnings[0].includes('aaaaaaaa'), false);
+});
+
 test('a mapped hook request returns an id, broadcasts a card, and marks the session pending', async () => {
   const claudeSessionId = '87654321-4321-4321-8321-cba987654321';
   const broadcasts = [];
