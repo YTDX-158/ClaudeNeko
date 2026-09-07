@@ -272,6 +272,7 @@ export function sessionsHandler(ctx) {
       if (ctx.ptyHost?.isRunning(id)) {
         ctx.ptyHost.interrupt(id); // Esc 中断当前生成（TUI 内可再继续）
       }
+      ctx.permissionService?.cancelBySid?.(id);
       busyLock.release(id); // B1：统一走 busyLock（内建清 5min timer，防旧 timer 误删新锁）
       return sendJson(res, 200, { ok: true });
     }

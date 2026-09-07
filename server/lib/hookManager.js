@@ -16,28 +16,45 @@ import { logger } from './logger.js';
 const SERVER_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..'); // server/
 const HOOK_SCRIPT = path.join(SERVER_DIR, 'permission_hook.cjs');
 
-function desiredHooks() {
-  return {
-    PermissionRequest: [
-      { hooks: [{ type: 'command', command: `node "${HOOK_SCRIPT}"` }] },
-    ],
-  };
+function desiredEntry(hookScript) {
+  return { hooks: [{ type: 'command', command: `node "${hookScript}"` }] };
+}
+
+function isNekoPermissionEntry(entry) {
+  return Array.isArray(entry?.hooks) && entry.hooks.some((hook) => (
+    hook?.type === 'command'
+    && typeof hook.command === 'string'
+    && /permission_hook\.cjs(?:["']|\s|$)/i.test(hook.command)
+  ));
 }
 
 /** 确保 ~/.claude/settings.json 的 hooks.PermissionRequest 指向本 server 转发脚本。
  *  读-改-写（保留用户全部字段 incl. env/key/PreToolUse）；返回 true=本次写入过。 */
-export function ensurePermissionHook() {
-  const p = settingsPath(os.homedir());
-  const cfg = readSettings(os.homedir());
-  const want = desiredHooks();
-  const has = cfg.hooks && JSON.stringify(cfg.hooks.PermissionRequest) === JSON.stringify(want.PermissionRequest);
-  if (has) return false;
+export function ensurePermissionHook({ home = os.homedir(), hookScript = HOOK_SCRIPT } = {}) {
+  const p = settingsPath(home);
+  const cfg = readSettings(home);
+  const desired = desiredEntry(hookScript);
+  const current = Array.isArray(cfg.hooks?.PermissionRequest) ? cfg.hooks.PermissionRequest : [];
+  const merged = [];
+  let inserted = false;
+  for (const entry of current) {
+    if (!isNekoPermissionEntry(entry)) {
+      merged.push(entry);
+      continue;
+    }
+    if (!inserted) {
+      merged.push(desired);
+      inserted = true;
+    }
+  }
+  if (!inserted) merged.push(desired);
+  if (JSON.stringify(current) === JSON.stringify(merged)) return false;
   cfg.hooks = cfg.hooks || {};
-  cfg.hooks.PermissionRequest = want.PermissionRequest;
+  cfg.hooks.PermissionRequest = merged;
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const tmp = `${p}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf-8');
   fs.renameSync(tmp, p);
-  logger.info('hookManager', `已注入/更新 PermissionRequest hook → ${HOOK_SCRIPT}`);
+  logger.info('hookManager', `已注入/更新 PermissionRequest hook → ${hookScript}`);
   return true;
 }

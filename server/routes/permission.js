@@ -22,16 +22,29 @@ function shortClaudeSessionLabel(value) {
 }
 
 /** 「以后都行」生成精确 claude 规则（粒度防宽·雷③）——从 tool_input 抽具体目标，不落整类工具。
- *  Bash → 命令首 token+*（Bash(ipconfig*)）；写类 → 文件路径+*；联网 → 工具级（P1-5 细化域名） */
+ *  Bash → 完整命令；Write/Edit/MultiEdit → 完整文件路径；其他工具暂按工具名。 */
+function cleanText(value, maxLength = Infinity) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function bashCommand(input) {
+  if (typeof input?.command === 'string') return cleanText(input.command);
+  if (Array.isArray(input?.args)) return cleanText(input.args.join(' '));
+  return '';
+}
+
 function buildRule(req) {
   const t = req.tool_name || '';
   const input = req.tool_input || {};
   if (t === 'Bash') {
-    const cmd = String(input.command || (Array.isArray(input.args) ? input.args[0] : '') || '').trim().split(/[\s;&|<>]/)[0];
-    if (cmd) return `Bash(${cmd}*)`;
+    const cmd = bashCommand(input);
+    if (cmd) return `Bash(${cmd})`;
   }
   const fp = input.file_path || input.path;
-  if ((t === 'Write' || t === 'Edit' || t === 'MultiEdit') && fp) return `${t}(${fp}*)`;
+  if ((t === 'Write' || t === 'Edit' || t === 'MultiEdit') && fp) return `${t}(${cleanText(fp)})`;
   return t; // 其余兜底工具名级
 }
 
@@ -51,11 +64,35 @@ function ruleMatches(rule, req) {
   const [, tool, pat] = m;
   if (t !== tool) return false;
   const target = tool === 'Bash'
-    ? String(input.command || (Array.isArray(input.args) ? input.args[0] : '') || '').trim().split(/[\s;&|<>]/)[0]
-    : (input.file_path || input.path || '');
-  const star = pat.endsWith('*');
-  const core = star ? pat.slice(0, -1) : pat;
-  return star ? target.startsWith(core) : target === core;
+    ? bashCommand(input)
+    : cleanText(input.file_path || input.path || '');
+  return target === pat;
+}
+
+function isDangerous(req) {
+  if (req.tool_name !== 'Bash') return false;
+  const cmd = bashCommand(req.tool_input || {}).toLowerCase();
+  return DANGEROUS_PREFIXES.some((prefix) => cmd.startsWith(prefix.toLowerCase()));
+}
+
+function requestDto(id, req) {
+  const toolName = cleanText(req.tool_name || '', 200);
+  const input = req.tool_input || {};
+  let summary = '';
+  if (toolName === 'Bash') summary = bashCommand(input);
+  else if (toolName === 'Write' || toolName === 'Edit' || toolName === 'MultiEdit') {
+    summary = cleanText(input.file_path || input.path || '');
+  } else {
+    const keys = Object.keys(input).slice(0, 12).map((key) => cleanText(key, 40)).filter(Boolean);
+    summary = keys.length ? `参数: ${keys.join(', ')}` : toolName;
+  }
+  return {
+    id,
+    tool_name: toolName,
+    summary: cleanText(summary, 200),
+    dangerous: isDangerous(req),
+    alwaysScope: cleanText(buildRule(req), 200),
+  };
 }
 
 /** smartDecide：档②替我审批的自动判定。命中黑名单/黑白名单规则 → 返回 decision；否则返回 null（上浮弹卡） */
@@ -63,11 +100,9 @@ function smartDecide(req, permissionConfig) {
   const cfg = permissionConfig?.getRules ? permissionConfig.getRules() : null;
   const allow = cfg?.allow || [];
   const deny = cfg?.deny || [];
-  const input = req.tool_input || {};
   // ① 内置危险黑名单（Bash 命令前缀）
   if (req.tool_name === 'Bash') {
-    const cmd = String(input.command || (Array.isArray(input.args) ? input.args[0] : '') || '').trim().toLowerCase();
-    if (DANGEROUS_PREFIXES.some((d) => cmd.startsWith(d.toLowerCase()))) {
+    if (isDangerous(req)) {
       return { behavior: 'deny', message: '检测到高风险系统操作，已自动拒绝（如需执行请改用「请求批准」模式或临时直接操作）' };
     }
   }
@@ -78,14 +113,40 @@ function smartDecide(req, permissionConfig) {
   return null; // 拿不准 → 上浮弹卡
 }
 
-export function permissionHandler({ store, terminal, permissionConfig, isLocalRequest, logger, onPendingChange, onModeChangeStart, onModeChange }) {
-  const pending = new Map(); // id -> { sid, req:{tool_name,tool_input,session_id,cwd}, decision:null, ts }
+export function permissionHandler({
+  store,
+  terminal,
+  permissionConfig,
+  isLocalRequest,
+  logger,
+  onPendingChange,
+  onModeChangeStart,
+  onModeChange,
+  now = Date.now,
+  setTimeoutFn = setTimeout,
+  clearTimeoutFn = clearTimeout,
+  pendingTtlMs = 15 * 60 * 1000,
+}) {
+  const pending = new Map(); // id -> { sid, req:{tool_name,tool_input,session_id,cwd}, decision, ts, timer }
   let modeChangeTail = Promise.resolve(); // 权限切换串行化：避免并发请求交叉停机/覆盖配置
 
-  /** N2：会话 pty 关闭/被 kill → 清该会话所有未决请求（防泄漏 + 防 hook 卡到兜底超时） */
+  function removePending(id, { broadcast = false, notify = true } = {}) {
+    const record = pending.get(id);
+    if (!record) return null;
+    pending.delete(id);
+    try { clearTimeoutFn(record.timer); } catch {}
+    if (broadcast) terminal?.broadcast(record.sid, { t: 'perm-closed', p: { id } });
+    if (notify) notifyPending(record.sid);
+    return record;
+  }
+
+  /** N2：会话 pty 关闭/被 kill → 清该会话所有请求（防泄漏 + 防 hook 卡到兜底超时） */
   function cancelBySid(sid) {
     for (const [id, p] of pending) {
-      if (p.sid === sid && !p.decision) pending.delete(id);
+      if (p.sid !== sid) continue;
+      pending.delete(id);
+      try { clearTimeoutFn(p.timer); } catch {}
+      terminal?.broadcast(sid, { t: 'perm-closed', p: { id } });
     }
     notifyPending(sid); // 清空后同步 ptyHost（通常 pty 已死 rec 不存在 → no-op，双保险）
   }
@@ -93,7 +154,7 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
   function listPendingBySid(sid) {
     return [...pending.entries()]
       .filter(([, p]) => p.sid === sid && !p.decision)
-      .map(([id, p]) => ({ id, tool_name: p.req.tool_name, tool_input: p.req.tool_input }));
+      .map(([id, p]) => requestDto(id, p.req));
   }
 
   /** 通知 ptyHost 该会话权限挂起状态（listPendingBySid 排除已决 → 反映真实未决数；
@@ -124,7 +185,7 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     // 档②替我审批（P1-5）：黑白名单/危险黑名单先判——命中直接给决定（不弹卡），拿不准才上浮弹卡
     const mode = permissionConfig?.getMode?.() || 'smart';
     const autoDecision = mode === 'smart' ? smartDecide(body, permissionConfig) : null;
-    pending.set(id, {
+    const record = {
       sid,
       req: {
         tool_name: body.tool_name || '',
@@ -133,11 +194,15 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
         cwd: body.cwd || '',
       },
       decision: autoDecision,
-      ts: Date.now(),
-    });
+      ts: now(),
+      timer: null,
+    };
+    pending.set(id, record);
+    record.timer = setTimeoutFn(() => removePending(id, { broadcast: true }), pendingTtlMs);
+    record.timer?.unref?.();
     if (!autoDecision) {
       // 需人工审批 → 推卡片给该会话前端（tool_input 可能巨大/含敏感 → 只传摘要长度，前端再截断渲染）
-      terminal?.broadcast(sid, { t: 'perm', p: { id, tool_name: body.tool_name || '', hasInput: !!(body.tool_input && Object.keys(body.tool_input).length) } });
+      terminal?.broadcast(sid, { t: 'perm', p: requestDto(id, body) });
     }
     logger?.info('permission', `权限请求 id=${id} sid=${sid} tool=${body.tool_name || ''} mode=${mode} ${autoDecision ? '自动:' + autoDecision.behavior : '上浮'}`);
     notifyPending(sid); // 请求入队 → 通知 ptyHost（autoDecision 时无未决 → false，人工上浮 → true）
@@ -149,7 +214,12 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     if (!id) return sendJson(res, 400, { error: '缺 id' });
     const p = pending.get(id);
     if (!p) return sendJson(res, 404, { error: '请求不存在或已关闭' });
-    if (p.decision) return sendJson(res, 200, { status: 'decided', decision: p.decision });
+    if (p.decision) {
+      const decision = p.decision;
+      sendJson(res, 200, { status: 'decided', decision });
+      removePending(id);
+      return;
+    }
     return sendJson(res, 200, { status: 'pending' });
   }
 
@@ -163,18 +233,25 @@ export function permissionHandler({ store, terminal, permissionConfig, isLocalRe
     if (!body || !body.id) return sendJson(res, 400, { error: '缺 id' });
     const p = pending.get(body.id);
     if (!p) return sendJson(res, 404, { error: '请求不存在或已处理' });
+    const action = body.action; // 'once' | 'always' | 'deny'
+    if (!['once', 'always', 'deny'].includes(action)) {
+      return sendJson(res, 400, { error: 'invalid action; expected once, always, or deny' });
+    }
     if (p.decision) return sendJson(res, 200, { ok: true }); // 幂等：已处理不再覆盖(N4)
 
-    const action = body.action; // 'once' | 'always' | 'deny'
     let decision;
     if (action === 'always') {
       // 「以后都行」：写规则到 ClaudeNeko permissionConfig（smart 判定读它，下次同类自动放行）；
       // ⚠ decision 只给纯 behavior:'allow'——实测 updatedPermissions 字段会让 claude 解析失败、decision 失效
-      const rule = typeof body.rule === 'string' && body.rule ? body.rule : buildRule(p.req);
-      decision = { behavior: 'allow' };
-      if (rule) {
-        try { permissionConfig?.addAllow(rule); } catch {}
+      const rule = buildRule(p.req);
+      if (!rule) return sendJson(res, 400, { error: '无法为此请求生成权限规则' });
+      try {
+        permissionConfig?.addAllow(rule);
+      } catch (error) {
+        logger?.warn?.('permission', `权限规则保存失败 id=${body.id}: ${error?.message || error}`);
+        return sendJson(res, 503, { error: '权限规则保存失败，请重试' });
       }
+      decision = { behavior: 'allow' };
     } else if (action === 'deny') {
       decision = { behavior: 'deny', message: body.message || '用户拒绝了此操作' };
     } else {

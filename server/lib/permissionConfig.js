@@ -58,11 +58,39 @@ export function createPermissionConfig({ dataDir }) {
       const d = read(); d.mode = mode; write(d); return this.get();
     },
     /** 档②黑白名单（P1-5）/ 卡片「总是允许」写入（P1-3）：allow/deny 为工具规则串数组 */
-    getRules() { const d = read(); return { allow: d.allow || [], deny: d.deny || [] }; },
-    addAllow(rule) { const d = read(); if (!d.allow.includes(rule)) d.allow.push(rule); write(d); return d.allow; },
-    removeAllow(rule) { const d = read(); d.allow = (d.allow || []).filter((x) => x !== rule); write(d); return d.allow; },
-    addDeny(rule) { const d = read(); if (!d.deny.includes(rule)) d.deny.push(rule); write(d); return d.deny; },
-    removeDeny(rule) { const d = read(); d.deny = (d.deny || []).filter((x) => x !== rule); write(d); return d.deny; },
+    getRules() {
+      const d = read();
+      return {
+        allow: Array.isArray(d.allow) ? d.allow : [],
+        deny: Array.isArray(d.deny) ? d.deny : [],
+      };
+    },
+    addAllow(rule) {
+      const d = read();
+      d.allow = Array.isArray(d.allow) ? d.allow : [];
+      if (!d.allow.includes(rule)) d.allow.push(rule);
+      write(d);
+      return d.allow;
+    },
+    removeAllow(rule) {
+      const d = read();
+      d.allow = (Array.isArray(d.allow) ? d.allow : []).filter((x) => x !== rule);
+      write(d);
+      return d.allow;
+    },
+    addDeny(rule) {
+      const d = read();
+      d.deny = Array.isArray(d.deny) ? d.deny : [];
+      if (!d.deny.includes(rule)) d.deny.push(rule);
+      write(d);
+      return d.deny;
+    },
+    removeDeny(rule) {
+      const d = read();
+      d.deny = (Array.isArray(d.deny) ? d.deny : []).filter((x) => x !== rule);
+      write(d);
+      return d.deny;
+    },
     /** respond 接口防伪造的共享密钥（P1-2 雷6）：首次生成存文件，前端从 /api/permission/secret 取 */
     getSecret() {
       const d = read();

@@ -16,12 +16,15 @@ const HOST = process.env.NEKO_PERMISSION_HOST || '127.0.0.1';
 const PORT = Number(process.env.NEKO_PERMISSION_PORT || 4000);
 // A 方案「没人理一直等」；15min 兜底防僵尸（claude 原生菜单此时早已等很久，用户可在终端处理）
 const TOTAL_TIMEOUT_MS = Number(process.env.NEKO_PERMISSION_TIMEOUT || 900000);
-const POLL_INTERVAL_MS = 1500;
+const POLL_INTERVAL_MS = Number(process.env.NEKO_PERMISSION_POLL_INTERVAL || 1500);
+
+let pollTimer = null;
+let finished = false;
 
 let input = '';
 process.stdin.on('data', (d) => (input += d.toString()));
 process.stdin.on('end', () => run(input));
-setTimeout(() => exitEmpty(), TOTAL_TIMEOUT_MS);
+const totalTimer = setTimeout(() => exitEmpty(), TOTAL_TIMEOUT_MS);
 
 function run(raw) {
   let req;
@@ -45,21 +48,20 @@ function run(raw) {
           decision,
         },
       };
-      process.stdout.write(JSON.stringify(out));
-      process.exit(0);
+      finish(JSON.stringify(out));
     });
   });
 }
 
 /** 轮询 wait 直到 server 返回 decision 或超时（A 方案=一直等到用户点） */
 function pollWait(id, cb) {
-  const timer = setInterval(() => {
+  pollTimer = setInterval(() => {
     httpRequest('GET', `/api/permission/wait?id=${encodeURIComponent(id)}`, null, (code, body) => {
+      if (code === 404) return exitEmpty();
       if (code !== 200 || !body) return; // 网络抖一下继续轮询
       let d;
       try { d = JSON.parse(body); } catch {}
       if (d && d.status === 'decided' && d.decision) {
-        clearInterval(timer);
         cb(d.decision);
       }
     });
@@ -87,6 +89,14 @@ function httpRequest(method, path, body, cb) {
 
 /** 空输出 = claude 走原生权限询问（优雅降级，绝不阻塞） */
 function exitEmpty() {
-  process.stdout.write('');
+  finish('');
+}
+
+function finish(output) {
+  if (finished) return;
+  finished = true;
+  clearTimeout(totalTimer);
+  if (pollTimer) clearInterval(pollTimer);
+  process.stdout.write(output);
   process.exit(0);
 }

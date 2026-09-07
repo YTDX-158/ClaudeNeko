@@ -122,7 +122,11 @@ bus.on('pty:confirm-fail', ({ sid, text }) => {
 // 终端 WS 通道（upgrade 挂载在 server.on('upgrade')）
 const terminal = createTerminalChannel({ ptyHost, transcript, store, config, permissionConfig: permissionConfigService, isLocalRequest });
 // —— 权限体系 P1-2：注入 PermissionRequest hook（写 ~/.claude/settings.json，保留用户 PreToolUse）+ 审批服务 ——
-ensurePermissionHook();
+try {
+  ensurePermissionHook();
+} catch (error) {
+  logger.warn('hookManager', `hook 安装失败，服务将继续启动: ${error?.message || error}`);
+}
 const permissionService = permissionHandler({
   store, terminal, permissionConfig: permissionConfigService, isLocalRequest, logger,
   // 🔴P1 遗留修复 9-06：权限挂起/解除 → 通知 ptyHost 暂停/恢复确认重发（防等批权限时误重发同条消息）
@@ -139,7 +143,7 @@ const configRouter = configHandler({ modelConfig, configService, detectEnv, read
 const mediaConfigRouter = mediaConfigHandler({ mediaConfig: mediaConfigService, readBody, imageModels: config.media.imageModels, videoModels: config.media.videoModels });
 const systemRouter = systemHandler({ config, appVersion: APP_VERSION, getAutoStartEnabled, setAutoStart, readBody, isLocalRequest });
 const mediaRouter = mediaHandler({ media, mediaConfig: mediaConfigService, store, ptyHost, isLocalRequest });
-const sessionsRouter = sessionsHandler({ store, config, busyLock, media, isLocalRequest, ptyHost, transcript, terminal, permissionConfig: permissionConfigService });
+const sessionsRouter = sessionsHandler({ store, config, busyLock, media, isLocalRequest, ptyHost, transcript, terminal, permissionConfig: permissionConfigService, permissionService });
 const statsRouter = statsHandler({ store, isLocalRequest }); // 成本统计（独立路由）
 const searchRouter = searchHandler({ store, isLocalRequest }); // 消息搜索（独立路由）
 const exportRouter = exportHandler({ store, isLocalRequest }); // 会话导出（独立路由）
