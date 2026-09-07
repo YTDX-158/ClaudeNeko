@@ -214,8 +214,8 @@ const Composer = forwardRef(function Composer({
 
       {Array.isArray(permPending) && permPending.length > 0 && (
         <div className="perm-cards">
-          {permPending.map((p) => (
-            <PermCard key={p.id} perm={p} onRespond={(a) => onPermRespond?.(p.id, a)} />
+          {permPending.map((p, index) => (
+            <PermCard key={p.id} perm={p} autoFocus={index === 0} onRespond={(a) => onPermRespond?.(p.id, a)} />
           ))}
         </div>
       )}

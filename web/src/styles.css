@@ -2187,6 +2187,9 @@ body {
 .perm-card-msg { font-size:13px; color:var(--text,#ddd); line-height:1.5; }
 .perm-card-msg b { color:var(--text,#fff); }
 .perm-card-hint { color:var(--dim,#999); margin-left:4px; }
+.perm-card-summary { margin-top:5px; overflow-wrap:anywhere; }
+.perm-card-risk { margin-top:5px; color:#ef8f80; font-weight:600; }
+.perm-card-scope { margin-top:5px; color:var(--dim,#999); font-size:12px; }
 .perm-card-actions { display:flex; gap:8px; margin-top:9px; }
 .perm-btn-deny { background:#8b1f1a !important; border-color:#a93226 !important; }
 .perm-btn-once { background:#4a4a5a !important; }

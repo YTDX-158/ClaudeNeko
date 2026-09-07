@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { wsChannel } from '../ws.js';
+import { mergePendingPermissions, reconcilePendingSnapshot } from '../permissionUi.js';
 
 /**
  * 单会话消息 + 终端模式发送/中断。
@@ -33,6 +34,10 @@ export function useChatStream(sessionId, onModelUpdate) {
   // 权限体系 P1-3：当前会话未决的权限审批卡片
   const [pendingPerms, setPendingPerms] = useState([]);
   const pendingPermsRef = useRef([]);
+  const pendingLoadRef = useRef(0);
+  const activeSessionRef = useRef(sessionId);
+  const closedPermIdsRef = useRef(new Set());
+  activeSessionRef.current = sessionId;
   useEffect(() => { pendingPermsRef.current = pendingPerms; }, [pendingPerms]);
   // 供轮询闭包读取的最新值（避免在 effect 依赖里塞入 streaming/sessionId 导致重建定时器）
   const streamingRef = useRef(false);
@@ -53,6 +58,31 @@ export function useChatStream(sessionId, onModelUpdate) {
     recoveringRef.current = recovering;
   }, [recovering]);
 
+  const restorePendingPermissions = useCallback(async () => {
+    if (!sessionId) return;
+    const requestedSessionId = sessionId;
+    const loadId = ++pendingLoadRef.current;
+    const idsAtRequestStart = new Set(pendingPermsRef.current.map((permission) => permission.id));
+    try {
+      const { pending = [] } = await api.getPendingPermissions(requestedSessionId);
+      if (loadId !== pendingLoadRef.current || activeSessionRef.current !== requestedSessionId) return;
+      setPendingPerms((current) => {
+        const next = reconcilePendingSnapshot(
+          current,
+          pending,
+          idsAtRequestStart,
+          closedPermIdsRef.current,
+        );
+        pendingPermsRef.current = next;
+        return next;
+      });
+    } catch (e) {
+      if (loadId === pendingLoadRef.current && activeSessionRef.current === requestedSessionId) {
+        setError(e?.message || '恢复待审批请求失败');
+      }
+    }
+  }, [sessionId]);
+
   // 切换会话：重新加载历史，并记录后端 updatedAt 供同步比对
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +94,8 @@ export function useChatStream(sessionId, onModelUpdate) {
     setStreaming(false);
     setThinking(false); // 切会话重置"生成中"指示
     setPendingPerms([]); // 权限体系 P1-3：切会话清未决审批卡片
+    pendingPermsRef.current = [];
+    closedPermIdsRef.current = new Set();
     replayedSet.clear(); // M16：replayedSet 随会话清理（防只增不减；历史消息靠 replay 标记不重放）
     lastUpdatedAtRef.current = null;
     if (!sessionId) return;
@@ -88,15 +120,18 @@ export function useChatStream(sessionId, onModelUpdate) {
       .catch((e) => {
         if (!cancelled) setError(e.message);
       });
+    restorePendingPermissions();
     return () => {
       cancelled = true;
+      pendingLoadRef.current += 1;
     };
-  }, [sessionId]);
+  }, [sessionId, restorePendingPermissions]);
 
   // WS 事件订阅：assistant 回填占位 / 追加新气泡；user 事件不渲染（后端认领）；tool 可选
   useEffect(() => {
     if (!sessionId) return;
     const unsub = wsChannel.subscribe(sessionId, {
+      onOpen: restorePendingPermissions,
       onChatEvent: (ev) => {
         if (ev.kind === 'assistant') {
           // M5 去重：replayedSet（重放过）或消息数组里已有同 claudeMessageId → 跳过
@@ -157,15 +192,27 @@ export function useChatStream(sessionId, onModelUpdate) {
       // 权限体系 P1-3：新权限请求 → 入未决列表；已处理 → 移除
       onPerm: (p) => {
         if (!p || !p.id) return;
-        setPendingPerms((prev) => (prev.some((x) => x.id === p.id) ? prev : [...prev, p]));
+        closedPermIdsRef.current.delete(p.id);
+        setPendingPerms((prev) => {
+          const next = mergePendingPermissions(prev, [p]);
+          pendingPermsRef.current = next;
+          return next;
+        });
       },
       onPermClosed: ({ id } = {}) => {
-        if (id) setPendingPerms((prev) => prev.filter((x) => x.id !== id));
+        if (id) {
+          closedPermIdsRef.current.add(id);
+          setPendingPerms((prev) => {
+            const next = prev.filter((x) => x.id !== id);
+            pendingPermsRef.current = next;
+            return next;
+          });
+        }
       },
     });
     wsChannel.connect(sessionId); // 确保 WS 连到当前会话
     return () => unsub();
-  }, [sessionId]);
+  }, [sessionId, restorePendingPermissions]);
 
   // 多页面同步：本页空闲时每 3s 轮询当前会话 updatedAt，变了就拉最新消息（兜底）
   useEffect(() => {
@@ -287,6 +334,9 @@ export function useChatStream(sessionId, onModelUpdate) {
     setStreaming(false);
     streamingRef.current = false;
     setThinking(false); // 停止 → 熄灭"生成中"胶囊
+    for (const permission of pendingPermsRef.current) closedPermIdsRef.current.add(permission.id);
+    setPendingPerms([]); // 后端 perm-closed 是最终状态；先乐观收起当前卡片，避免继续误点。
+    pendingPermsRef.current = [];
     // M8：移除没等到回复的空占位气泡（text 空 + 原本 streaming）。
     // 技能占位 text 非空（"正在生成中…"）不受影响，只有聊天占位（text ''）被清。
     setMessages((prev) => prev.filter((m) => !(m.streaming && !m.text)));
@@ -307,8 +357,17 @@ export function useChatStream(sessionId, onModelUpdate) {
     try {
       if (!_permSecret) _permSecret = (await api.getPermissionSecret()).secret;
       await api.respondPermission(id, action, _permSecret);
+      closedPermIdsRef.current.add(id);
+      setPendingPerms((prev) => {
+        const next = prev.filter((permission) => permission.id !== id);
+        pendingPermsRef.current = next;
+        return next;
+      });
+      return true;
     } catch (e) {
+      if (e?.status === 401 || e?.status === 403) _permSecret = null;
       setError(e?.message || '审批响应失败');
+      return false;
     }
   }, []);
 

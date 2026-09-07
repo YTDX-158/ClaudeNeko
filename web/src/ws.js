@@ -55,17 +55,21 @@ function handleMessage(raw) {
 
 function open() {
   if (!shouldConnect || !currentSid) return;
+  const sid = currentSid;
   let sock;
   try {
-    sock = new WebSocket(wsUrl(currentSid));
+    sock = new WebSocket(wsUrl(sid));
   } catch {
     return;
   }
   ws = sock;
   sock.onopen = () => {
+    if (ws !== sock || currentSid !== sid) return;
     wasEverOpen = true;
+    // 初次连接和每次重连都通知订阅者；聊天订阅据此恢复后端未决权限卡片。
+    for (const s of subscribers) if (s.sid === sid) s.onOpen?.();
     // 重连后若终端正开 → 自动重新 attach 拿当前屏
-    const wantTerm = [...subscribers].some((s) => s.sid === currentSid && s.wantTerm);
+    const wantTerm = [...subscribers].some((s) => s.sid === sid && s.wantTerm);
     if (wantTerm) wsChannel.send({ t: 'attach' });
   };
   sock.onmessage = (e) => handleMessage(e.data);
