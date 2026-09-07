@@ -22,11 +22,16 @@ import { readBody } from '../util.js';
 import { logger } from '../logger.js';
 
 const AUTH_COOKIE = 'neko_auth';
+// A paired remote device may fetch /api/permission/secret and call
+// /api/permission/respond to approve or deny one pending request at a time.
+// Permission policy control is a separate privilege: config stays blocked for
+// every method so a remote approver cannot enable bypass or rewrite rules.
 const REMOTE_BLOCKED_PATHS = new Set([
   '/api/balance', // 余额与供应商凭据：仅本机可用（首轮 04-01）
   '/api/log',
   '/api/log/download',
   '/api/media/download',
+  '/api/permission/config',
 ]);
 
 /** 跟踪长连接并在凭据撤销时幂等断开。 */
