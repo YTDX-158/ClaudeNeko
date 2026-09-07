@@ -13,7 +13,7 @@
 const http = require('http');
 
 const HOST = process.env.NEKO_PERMISSION_HOST || '127.0.0.1';
-const PORT = Number(process.env.NEKO_PERMISSION_PORT || 4000);
+const PORT = Number(process.env.NEKO_PERMISSION_PORT || process.env.PORT || 4000);
 // A 方案「没人理一直等」；15min 兜底防僵尸（claude 原生菜单此时早已等很久，用户可在终端处理）
 const TOTAL_TIMEOUT_MS = Number(process.env.NEKO_PERMISSION_TIMEOUT || 900000);
 const POLL_INTERVAL_MS = Number(process.env.NEKO_PERMISSION_POLL_INTERVAL || 1500);
