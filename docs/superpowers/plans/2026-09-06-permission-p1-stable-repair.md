@@ -296,3 +296,40 @@ Write the exact commands, test totals, build result, real-session filename evide
 git add docs/superpowers/plans/2026-09-06-permission-p1-stable-repair.md docs/权限P1稳健修复验证_20260906.md
 git commit -m "docs(permission): record P1 repair verification"
 ```
+
+### Task 5: Close newly audited P1 safety and recovery gaps
+
+**Files:**
+- Modify: `server/lib/permissionConfig.js`
+- Modify: `server/routes/permission.js`
+- Modify: `server/lib/hookManager.js`
+- Modify: `server/server.js`
+- Modify: `server/lib/remote/proxy.js`
+- Modify: `server/permission_hook.cjs`
+- Modify: `web/src/hooks/useChatStream.js`
+- Modify: `web/src/components/PermCard.jsx`
+- Modify: tests for permission state, remote policy, hook merge, and frontend behavior
+
+- [x] **Step 1: Reproduce audited P1 failures with tests**
+
+Cover fresh-install “always allow”, decided-request consumption and expiry, cancel propagation, hook merge/startup failure, remote policy escalation, card replay/retry, and rule-scope visibility.
+
+- [x] **Step 2: Make permission state bounded and truthful**
+
+Initialize rule arrays defensively, propagate persistence failures, consume decisions after hook retrieval, expire abandoned requests, and cancel pending requests when the user stops a turn.
+
+- [x] **Step 3: Preserve user hooks and keep startup recoverable**
+
+Merge only ClaudeNeko’s hook entry without deleting unrelated `PermissionRequest` hooks. A corrupt or unwritable user settings file must produce a clear warning while the server remains available.
+
+- [x] **Step 4: Restore cards and make approval retryable**
+
+Reload pending cards on session load/reconnect, await approval requests, re-enable buttons after failure, display a bounded operation summary, and expose appropriate dialog/live-region semantics.
+
+- [x] **Step 5: Enforce the remote permission boundary**
+
+Block remote reads/writes of permission configuration. Preserve the explicitly intended paired-device surface for retrieving the approval secret and responding to one pending request at a time, without allowing mode escalation or rule changes.
+
+- [x] **Step 6: Verify, review, and commit**
+
+Run targeted tests, the full suite, production build, `git diff --check`, and independent spec/quality review before committing.
