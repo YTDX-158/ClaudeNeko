@@ -2,9 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
+  canPersistPermissionForHost,
   mergePendingPermissions,
+  isActiveSocketEvent,
   permissionCardCopy,
   reconcilePendingSnapshot,
+  releaseClosedSnapshotIds,
+  shouldTrackClosedPermission,
+  runPermissionCancel,
   runPermissionResponse,
 } from '../web/src/permissionUi.js';
 
@@ -102,6 +107,44 @@ test('approval stays busy while its promise is pending and reports explicit fals
   assert.deepEqual(busyStates, [true, false]);
 });
 
+test('a failed stop request does not hide permissions that are still pending on the server', async () => {
+  let closed = false;
+  await assert.rejects(
+    runPermissionCancel(
+      () => Promise.reject(new Error('offline')),
+      () => { closed = true; },
+    ),
+    /offline/,
+  );
+  assert.equal(closed, false);
+});
+
+test('messages from an old websocket cannot be delivered to the newly active session', () => {
+  const oldSocket = {};
+  const newSocket = {};
+  assert.equal(isActiveSocketEvent(oldSocket, 'A', newSocket, 'B'), false);
+  assert.equal(isActiveSocketEvent(newSocket, 'B', newSocket, 'B'), true);
+});
+
+test('completed snapshot tombstones are released without deleting newer closures', () => {
+  assert.deepEqual(
+    [...releaseClosedSnapshotIds(new Set(['old', 'new']), new Set(['old']))],
+    ['new'],
+  );
+});
+
+test('permission closure tombstones exist only while a stale snapshot can still arrive', () => {
+  assert.equal(shouldTrackClosedPermission(0), false);
+  assert.equal(shouldTrackClosedPermission(1), true);
+});
+
+test('persistent permission actions are offered only on loopback pages', () => {
+  assert.equal(canPersistPermissionForHost('localhost'), true);
+  assert.equal(canPersistPermissionForHost('127.0.0.1'), true);
+  assert.equal(canPersistPermissionForHost('::1'), true);
+  assert.equal(canPersistPermissionForHost('remote.example.com'), false);
+});
+
 test('websocket and chat hook retain reconnect, session identity, and accessible dialog contracts', async () => {
   const [wsSource, hookSource, cardSource, composerSource] = await Promise.all([
     readFile(new URL('../web/src/ws.js', import.meta.url), 'utf8'),
@@ -113,6 +156,7 @@ test('websocket and chat hook retain reconnect, session identity, and accessible
   assert.match(wsSource, /onOpen\?\./);
   assert.match(hookSource, /getPendingPermissions\(requestedSessionId\)/);
   assert.match(hookSource, /pendingLoadRef/);
+  assert.match(hookSource, /activePendingLoadsRef/);
   assert.match(cardSource, /role="alertdialog"/);
   assert.match(cardSource, /aria-live="assertive"/);
   assert.match(cardSource, /aria-labelledby=/);

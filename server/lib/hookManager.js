@@ -20,16 +20,25 @@ function desiredEntry(hookScript) {
   return { hooks: [{ type: 'command', command: `node "${hookScript}"` }] };
 }
 
-function isNekoPermissionEntry(entry) {
-  return Array.isArray(entry?.hooks) && entry.hooks.some((hook) => (
-    hook?.type === 'command'
-    && typeof hook.command === 'string'
-    && /permission_hook\.cjs(?:["']|\s|$)/i.test(hook.command)
-  ));
+function normalizedHookScript(command) {
+  if (typeof command !== 'string') return '';
+  const match = command.trim().match(/^node(?:\.exe)?\s+(["']?)(.+?)\1\s*$/i);
+  if (!match) return '';
+  return match[2].replace(/\\/g, '/').replace(/\/{2,}/g, '/').toLowerCase();
+}
+
+function normalizedScriptPath(value) {
+  return String(value || '').replace(/\\/g, '/').replace(/\/{2,}/g, '/').toLowerCase();
+}
+
+function isCurrentNekoHook(hook, hookScript) {
+  return hook?.type === 'command'
+    && normalizedHookScript(hook.command) === normalizedScriptPath(hookScript);
 }
 
 /** 确保 ~/.claude/settings.json 的 hooks.PermissionRequest 指向本 server 转发脚本。
- *  读-改-写（保留用户全部字段 incl. env/key/PreToolUse）；返回 true=本次写入过。 */
+ *  读-改-写（保留用户全部字段 incl. env/key/PreToolUse）；返回 true=本次写入过。
+ *  只识别路径与当前脚本完全一致的条目；无法验证来源的旧路径宁可保留，避免误删用户 Hook。 */
 export function ensurePermissionHook({ home = os.homedir(), hookScript = HOOK_SCRIPT } = {}) {
   const p = settingsPath(home);
   const cfg = readSettings(home);
@@ -38,14 +47,18 @@ export function ensurePermissionHook({ home = os.homedir(), hookScript = HOOK_SC
   const merged = [];
   let inserted = false;
   for (const entry of current) {
-    if (!isNekoPermissionEntry(entry)) {
-      merged.push(entry);
+    const hooks = Array.isArray(entry?.hooks) ? entry.hooks : [];
+    const remainingHooks = hooks.filter((hook) => !isCurrentNekoHook(hook, hookScript));
+    const containsCurrent = remainingHooks.length !== hooks.length;
+    if (containsCurrent) {
+      if (remainingHooks.length > 0) merged.push({ ...entry, hooks: remainingHooks });
+      if (!inserted) {
+        merged.push(desired);
+        inserted = true;
+      }
       continue;
     }
-    if (!inserted) {
-      merged.push(desired);
-      inserted = true;
-    }
+    merged.push(entry);
   }
   if (!inserted) merged.push(desired);
   if (JSON.stringify(current) === JSON.stringify(merged)) return false;

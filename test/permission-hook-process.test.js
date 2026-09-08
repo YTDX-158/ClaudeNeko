@@ -104,3 +104,60 @@ test('permission hook inherits the server PORT when no dedicated override is set
   assert.equal(exitCode, 0);
   assert.equal(requestCount, 1);
 });
+
+test('permission hook keeps at most one slow wait request in flight', async (t) => {
+  let activeWaits = 0;
+  let maxActiveWaits = 0;
+  const server = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/api/permission/request') {
+      req.resume();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 'slow-id' }));
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/api/permission/wait?id=slow-id') {
+      activeWaits += 1;
+      maxActiveWaits = Math.max(maxActiveWaits, activeWaits);
+      setTimeout(() => {
+        activeWaits -= 1;
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'done' }));
+      }, 100);
+      return;
+    }
+    res.writeHead(500);
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+
+  const child = spawn(process.execPath, [HOOK], {
+    windowsHide: true,
+    env: {
+      ...process.env,
+      NEKO_PERMISSION_PORT: String(server.address().port),
+      NEKO_PERMISSION_TIMEOUT: '2000',
+      NEKO_PERMISSION_POLL_INTERVAL: '10',
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  child.stdin.end(JSON.stringify({
+    session_id: '12345678-1234-4234-8234-123456789abc',
+    tool_name: 'Write',
+    tool_input: { file_path: 'C:\\slow.txt' },
+  }));
+
+  await new Promise((resolve, reject) => {
+    const watchdog = setTimeout(() => {
+      child.kill();
+      reject(new Error('permission hook did not exit'));
+    }, 3000);
+    child.once('error', reject);
+    child.once('exit', () => {
+      clearTimeout(watchdog);
+      resolve();
+    });
+  });
+
+  assert.equal(maxActiveWaits, 1);
+});

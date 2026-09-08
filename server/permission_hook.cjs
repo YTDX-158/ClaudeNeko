@@ -55,31 +55,40 @@ function run(raw) {
 
 /** 轮询 wait 直到 server 返回 decision 或超时（A 方案=一直等到用户点） */
 function pollWait(id, cb) {
-  pollTimer = setInterval(() => {
+  const poll = () => {
+    if (finished) return;
     httpRequest('GET', `/api/permission/wait?id=${encodeURIComponent(id)}`, null, (code, body) => {
+      if (finished) return;
       if (code === 404) return exitEmpty();
-      if (code !== 200 || !body) return; // 网络抖一下继续轮询
-      let d;
-      try { d = JSON.parse(body); } catch {}
-      if (d && d.status === 'decided' && d.decision) {
-        cb(d.decision);
+      if (code === 200 && body) {
+        let d;
+        try { d = JSON.parse(body); } catch {}
+        if (d && d.status === 'decided' && d.decision) return cb(d.decision);
       }
+      pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
     });
-  }, POLL_INTERVAL_MS);
+  };
+  poll();
 }
 
 /** 原生 HTTP 请求（GET 无 body；POST 带 JSON body） */
 function httpRequest(method, path, body, cb) {
+  let settled = false;
+  const done = (code, responseBody) => {
+    if (settled) return;
+    settled = true;
+    cb(code, responseBody);
+  };
   const req = http.request(
     { host: HOST, port: PORT, path, method, timeout: 10000 },
     (res) => {
       let data = '';
       res.on('data', (c) => (data += c));
-      res.on('end', () => cb(res.statusCode, data));
+      res.on('end', () => done(res.statusCode, data));
     },
   );
-  req.on('error', () => cb(null, null));
-  req.on('timeout', () => { req.destroy(); cb(null, null); });
+  req.on('error', () => done(null, null));
+  req.on('timeout', () => { req.destroy(); done(null, null); });
   if (body) {
     req.setHeader('Content-Type', 'application/json');
     req.setHeader('Content-Length', Buffer.byteLength(body));
@@ -96,7 +105,7 @@ function finish(output) {
   if (finished) return;
   finished = true;
   clearTimeout(totalTimer);
-  if (pollTimer) clearInterval(pollTimer);
+  if (pollTimer) clearTimeout(pollTimer);
   process.stdout.write(output);
   process.exit(0);
 }

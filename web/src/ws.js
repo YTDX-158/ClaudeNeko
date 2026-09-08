@@ -13,6 +13,8 @@
  * 多订阅者（聊天视图 + 终端视图可能同时开）：subscribe 分发。
  */
 
+import { isActiveSocketEvent } from './permissionUi.js';
+
 let ws = null;
 let currentSid = null;
 let retryTimer = null;
@@ -72,7 +74,10 @@ function open() {
     const wantTerm = [...subscribers].some((s) => s.sid === sid && s.wantTerm);
     if (wantTerm) wsChannel.send({ t: 'attach' });
   };
-  sock.onmessage = (e) => handleMessage(e.data);
+  sock.onmessage = (e) => {
+    if (!isActiveSocketEvent(sock, sid, ws, currentSid)) return;
+    handleMessage(e.data);
+  };
   sock.onclose = () => {
     // H4 修复：只用局部 sock 判断，若当前模块级 ws 已是新连接（切 sid 后 open 过）则不碰它
     if (ws !== sock) return;

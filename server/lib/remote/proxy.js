@@ -32,6 +32,8 @@ const REMOTE_BLOCKED_PATHS = new Set([
   '/api/log/download',
   '/api/media/download',
   '/api/permission/config',
+  '/api/permission/request',
+  '/api/permission/wait',
 ]);
 
 /** 跟踪长连接并在凭据撤销时幂等断开。 */
@@ -340,6 +342,8 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing, readRequest
     // 手机请求带公网 Origin 会被 403。代理已通过配对鉴权，转发时应伪装成本机来源。
     if (headers.origin) headers.origin = `http://127.0.0.1:${targetPort}`;
     if (headers.referer) headers.referer = `http://127.0.0.1:${targetPort}/`;
+    // Overwrite any client-supplied value: business routes use this only to reduce paired-remote privileges.
+    headers['x-claudeneko-remote'] = '1';
     const upstream = http.request(
       { host: '127.0.0.1', port: targetPort, path: req.url, method, headers },
       (up) => {

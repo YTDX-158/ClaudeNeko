@@ -1,5 +1,24 @@
 const SUMMARY_LIMIT = 200;
 
+export function isActiveSocketEvent(candidateSocket, eventSid, activeSocket, activeSid) {
+  return candidateSocket === activeSocket && eventSid === activeSid;
+}
+
+export function releaseClosedSnapshotIds(currentClosedIds, appliedClosedIds) {
+  const next = new Set(currentClosedIds || []);
+  for (const id of appliedClosedIds || []) next.delete(id);
+  return next;
+}
+
+export function shouldTrackClosedPermission(pendingLoadCount) {
+  return Number(pendingLoadCount) > 0;
+}
+
+export function canPersistPermissionForHost(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
 const TOOL_LABELS = {
   Read: '读取文件',
   Write: '写入文件',
@@ -77,4 +96,11 @@ export async function runPermissionResponse(onRespond, action, setBusy) {
   } finally {
     setBusy(false);
   }
+}
+
+/** Only close local cards after the server confirms that cancellation succeeded. */
+export async function runPermissionCancel(cancelRequest, onSuccess) {
+  const result = await cancelRequest();
+  onSuccess?.(result);
+  return result;
 }

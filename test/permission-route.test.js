@@ -21,11 +21,11 @@ function responseRecorder() {
   };
 }
 
-async function route(service, { method = 'POST', path = '/api/permission/request', body, secret } = {}) {
+async function route(service, { method = 'POST', path = '/api/permission/request', body, secret, headers = {} } = {}) {
   const req = body === undefined ? Readable.from([]) : request(body);
   req.method = method;
   req.url = path;
-  req.headers = secret ? { 'x-neko-secret': secret } : {};
+  req.headers = { ...headers, ...(secret ? { 'x-neko-secret': secret } : {}) };
   const res = responseRecorder();
   await service.router(req, res, new URL(`http://localhost${path}`));
   return res;
@@ -311,6 +311,120 @@ test('always creates exact rules from the server-held Bash command and file path
     'Edit(C:\\safe folder\\exact.txt)',
     'MultiEdit(C:\\safe folder\\exact.txt)',
   ]);
+});
+
+test('always fails closed when an exact Bash command or file path is unavailable', async () => {
+  for (const [tool_name, tool_input] of [
+    ['Bash', {}],
+    ['Bash', { command: '   ' }],
+    ['Write', {}],
+    ['Edit', { file_path: 42 }],
+    ['MultiEdit', { path: '' }],
+  ]) {
+    const { service, claudeSessionId, rules, broadcasts } = mappedService();
+    const created = await route(service, { body: { session_id: claudeSessionId, tool_name, tool_input } });
+    const responded = await route(service, {
+      path: '/api/permission/respond',
+      body: { id: created.body.id, action: 'always' },
+      secret: 'secret',
+    });
+    const waited = await route(service, {
+      method: 'GET', path: `/api/permission/wait?id=${created.body.id}`,
+    });
+
+    assert.equal(responded.status, 400);
+    assert.deepEqual(rules, []);
+    assert.deepEqual(waited.body, { status: 'pending' });
+    assert.equal(broadcasts.some(([, message]) => message.t === 'perm-closed'), false);
+  }
+});
+
+test('exact Bash rules do not collide when a newline changes command semantics', async () => {
+  const safeRule = 'Bash(echo safe echo changed)';
+  const { service, claudeSessionId, broadcasts } = mappedService({
+    permissionConfig: {
+      getMode: () => 'smart',
+      getRules: () => ({ allow: [safeRule], deny: [] }),
+    },
+  });
+
+  const created = await route(service, { body: {
+    session_id: claudeSessionId,
+    tool_name: 'Bash',
+    tool_input: { command: 'echo safe\necho changed' },
+  } });
+
+  assert.equal(created.status, 200);
+  assert.equal(broadcasts.some(([, message]) => message.t === 'perm'), true);
+});
+
+test('permission cards render Bash line breaks visibly instead of flattening command semantics', async () => {
+  const { service, claudeSessionId, broadcasts } = mappedService();
+  await route(service, { body: {
+    session_id: claudeSessionId,
+    tool_name: 'Bash',
+    tool_input: { command: 'echo safe\ncurl https://example.invalid' },
+  } });
+
+  const card = broadcasts.find(([, message]) => message.t === 'perm')[1].p;
+  assert.match(card.summary, /echo safe\\ncurl/);
+  assert.match(card.alwaysScope, /echo safe\\ncurl/);
+  assert.equal(card.summary.includes('echo safe curl'), false);
+});
+
+test('paired remote approval cannot persist an always rule', async () => {
+  const { service, claudeSessionId, rules } = mappedService();
+  const created = await route(service, { body: {
+    session_id: claudeSessionId,
+    tool_name: 'Bash',
+    tool_input: { command: 'npm test' },
+  } });
+  const responded = await route(service, {
+    path: '/api/permission/respond',
+    body: { id: created.body.id, action: 'always' },
+    secret: 'secret',
+    headers: { 'x-claudeneko-remote': '1' },
+  });
+  const waited = await route(service, {
+    method: 'GET', path: `/api/permission/wait?id=${created.body.id}`,
+  });
+
+  assert.equal(responded.status, 403);
+  assert.deepEqual(rules, []);
+  assert.deepEqual(waited.body, { status: 'pending' });
+});
+
+test('permission request capacity rejects excess pending records', async () => {
+  const { service, claudeSessionId } = mappedService({ maxPending: 1, maxPendingPerSid: 1 });
+  const first = await route(service, { body: {
+    session_id: claudeSessionId, tool_name: 'Write', tool_input: { file_path: 'C:\\one.txt' },
+  } });
+  const second = await route(service, { body: {
+    session_id: claudeSessionId, tool_name: 'Write', tool_input: { file_path: 'C:\\two.txt' },
+  } });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 429);
+});
+
+test('oversized exact targets are shown as a bounded summary but are not retained for always rules', async () => {
+  const { service, claudeSessionId, broadcasts, rules } = mappedService();
+  const command = `echo ${'x'.repeat(20 * 1024)}`;
+  const created = await route(service, { body: {
+    session_id: claudeSessionId,
+    tool_name: 'Bash',
+    tool_input: { command },
+  } });
+  const card = broadcasts.find(([, message]) => message.t === 'perm')[1].p;
+  const responded = await route(service, {
+    path: '/api/permission/respond',
+    body: { id: created.body.id, action: 'always' },
+    secret: 'secret',
+  });
+
+  assert.equal(card.summary.length <= 200, true);
+  assert.equal(responded.status, 400);
+  assert.deepEqual(rules, []);
 });
 
 test('exact rules preserve meaningful spaces in commands and file paths', async () => {

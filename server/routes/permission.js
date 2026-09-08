@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { sendJson, readBody } from '../lib/util.js';
 
 const CLAUDE_SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_RULE_TARGET_LENGTH = 16 * 1024;
 
 function shortClaudeSessionLabel(value) {
   const sessionId = typeof value === 'string' ? value : '';
@@ -30,9 +31,27 @@ function cleanText(value, maxLength = Infinity) {
     .slice(0, maxLength);
 }
 
+function displayText(value, maxLength = Infinity) {
+  return String(value ?? '')
+    .replace(/\r\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t')
+    .replace(/\x1b/g, '\\x1b')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, (char) => (
+      `\\x${char.charCodeAt(0).toString(16).padStart(2, '0')}`
+    ))
+    .slice(0, maxLength);
+}
+
 function bashCommand(input) {
-  if (typeof input?.command === 'string') return cleanText(input.command);
-  if (Array.isArray(input?.args)) return cleanText(input.args.join(' '));
+  if (typeof input?.command === 'string' && input.command.trim()) return input.command;
+  return '';
+}
+
+function filePath(input) {
+  if (typeof input?.file_path === 'string' && input.file_path.trim()) return input.file_path;
+  if (typeof input?.path === 'string' && input.path.trim()) return input.path;
   return '';
 }
 
@@ -41,10 +60,12 @@ function buildRule(req) {
   const input = req.tool_input || {};
   if (t === 'Bash') {
     const cmd = bashCommand(input);
-    if (cmd) return `Bash(${cmd})`;
+    return cmd ? `Bash(${cmd})` : '';
   }
-  const fp = input.file_path || input.path;
-  if ((t === 'Write' || t === 'Edit' || t === 'MultiEdit') && fp) return `${t}(${cleanText(fp)})`;
+  if (t === 'Write' || t === 'Edit' || t === 'MultiEdit') {
+    const fp = filePath(input);
+    return fp ? `${t}(${fp})` : '';
+  }
   return t; // 其余兜底工具名级
 }
 
@@ -59,20 +80,23 @@ const DANGEROUS_PREFIXES = [
 function ruleMatches(rule, req) {
   const t = req.tool_name || '';
   const input = req.tool_input || {};
-  const m = /^([A-Za-z]+)\((.*)\)$/.exec(rule || '');
-  if (!m) return t === rule;
-  const [, tool, pat] = m;
+  const text = typeof rule === 'string' ? rule : '';
+  const open = text.indexOf('(');
+  if (open < 0) return t === text;
+  if (open === 0 || !text.endsWith(')')) return false;
+  const tool = text.slice(0, open);
+  const pat = text.slice(open + 1, -1);
   if (t !== tool) return false;
   const target = tool === 'Bash'
     ? bashCommand(input)
-    : cleanText(input.file_path || input.path || '');
+    : filePath(input);
   return target === pat;
 }
 
 function isDangerous(req) {
   if (req.tool_name !== 'Bash') return false;
-  const cmd = bashCommand(req.tool_input || {}).toLowerCase();
-  return DANGEROUS_PREFIXES.some((prefix) => cmd.startsWith(prefix.toLowerCase()));
+  const segments = bashCommand(req.tool_input || {}).toLowerCase().split(/[\r\n;&|]+/).map((part) => part.trim());
+  return segments.some((segment) => DANGEROUS_PREFIXES.some((prefix) => segment.startsWith(prefix.toLowerCase())));
 }
 
 function requestDto(id, req) {
@@ -81,7 +105,7 @@ function requestDto(id, req) {
   let summary = '';
   if (toolName === 'Bash') summary = bashCommand(input);
   else if (toolName === 'Write' || toolName === 'Edit' || toolName === 'MultiEdit') {
-    summary = cleanText(input.file_path || input.path || '');
+    summary = filePath(input);
   } else {
     const keys = Object.keys(input).slice(0, 12).map((key) => cleanText(key, 40)).filter(Boolean);
     summary = keys.length ? `参数: ${keys.join(', ')}` : toolName;
@@ -89,9 +113,9 @@ function requestDto(id, req) {
   return {
     id,
     tool_name: toolName,
-    summary: cleanText(summary, 200),
+    summary: displayText(summary, 200),
     dangerous: isDangerous(req),
-    alwaysScope: cleanText(buildRule(req), 200),
+    alwaysScope: displayText(buildRule(req), 200),
   };
 }
 
@@ -126,8 +150,10 @@ export function permissionHandler({
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
   pendingTtlMs = 15 * 60 * 1000,
+  maxPending = 256,
+  maxPendingPerSid = 32,
 }) {
-  const pending = new Map(); // id -> { sid, req:{tool_name,tool_input,session_id,cwd}, decision, ts, timer }
+  const pending = new Map(); // id -> { sid, req:{tool_name,minimal tool_input}, dto, decision, ts, timer }
   let modeChangeTail = Promise.resolve(); // 权限切换串行化：避免并发请求交叉停机/覆盖配置
 
   function removePending(id, { broadcast = false, notify = true } = {}) {
@@ -154,7 +180,20 @@ export function permissionHandler({
   function listPendingBySid(sid) {
     return [...pending.entries()]
       .filter(([, p]) => p.sid === sid && !p.decision)
-      .map(([id, p]) => requestDto(id, p.req));
+      .map(([, p]) => p.dto);
+  }
+
+  function retainRequest(body) {
+    const toolName = cleanText(body.tool_name || '', 200);
+    const toolInput = {};
+    if (toolName === 'Bash') {
+      const command = bashCommand(body.tool_input || {});
+      if (command && command.length <= MAX_RULE_TARGET_LENGTH) toolInput.command = command;
+    } else if (toolName === 'Write' || toolName === 'Edit' || toolName === 'MultiEdit') {
+      const targetPath = filePath(body.tool_input || {});
+      if (targetPath && targetPath.length <= MAX_RULE_TARGET_LENGTH) toolInput.file_path = targetPath;
+    }
+    return { tool_name: toolName, tool_input: toolInput };
   }
 
   /** 通知 ptyHost 该会话权限挂起状态（listPendingBySid 排除已决 → 反映真实未决数；
@@ -181,18 +220,20 @@ export function permissionHandler({
       logger?.warn?.('permission', `权限请求找不到对应会话 claudeSession=${shortSession}`);
       return sendJson(res, 404, { error: '找不到对应会话' });
     }
+    const sidPending = [...pending.values()].filter((record) => record.sid === sid).length;
+    if (pending.size >= maxPending || sidPending >= maxPendingPerSid) {
+      logger?.warn?.('permission', `权限请求过多 sid=${sid}`);
+      return sendJson(res, 429, { error: '待审批请求过多，请先处理已有请求' });
+    }
     const id = randomUUID();
     // 档②替我审批（P1-5）：黑白名单/危险黑名单先判——命中直接给决定（不弹卡），拿不准才上浮弹卡
     const mode = permissionConfig?.getMode?.() || 'smart';
     const autoDecision = mode === 'smart' ? smartDecide(body, permissionConfig) : null;
+    const retained = retainRequest(body);
     const record = {
       sid,
-      req: {
-        tool_name: body.tool_name || '',
-        tool_input: body.tool_input || {},
-        session_id: body.session_id || '',
-        cwd: body.cwd || '',
-      },
+      req: retained,
+      dto: requestDto(id, body),
       decision: autoDecision,
       ts: now(),
       timer: null,
@@ -202,7 +243,7 @@ export function permissionHandler({
     record.timer?.unref?.();
     if (!autoDecision) {
       // 需人工审批 → 推卡片给该会话前端（tool_input 可能巨大/含敏感 → 只传摘要长度，前端再截断渲染）
-      terminal?.broadcast(sid, { t: 'perm', p: requestDto(id, body) });
+      terminal?.broadcast(sid, { t: 'perm', p: record.dto });
     }
     logger?.info('permission', `权限请求 id=${id} sid=${sid} tool=${body.tool_name || ''} mode=${mode} ${autoDecision ? '自动:' + autoDecision.behavior : '上浮'}`);
     notifyPending(sid); // 请求入队 → 通知 ptyHost（autoDecision 时无未决 → false，人工上浮 → true）
@@ -236,6 +277,9 @@ export function permissionHandler({
     const action = body.action; // 'once' | 'always' | 'deny'
     if (!['once', 'always', 'deny'].includes(action)) {
       return sendJson(res, 400, { error: 'invalid action; expected once, always, or deny' });
+    }
+    if (req.headers['x-claudeneko-remote'] === '1' && action === 'always') {
+      return sendJson(res, 403, { error: '远程设备只能批准一次或拒绝，不能保存长期规则' });
     }
     if (p.decision) return sendJson(res, 200, { ok: true }); // 幂等：已处理不再覆盖(N4)
 
