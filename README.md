@@ -1,6 +1,6 @@
 # ClaudeNeko 🐱
 
-> 🏷 **v2.4.12** · 📦 [下载成品](https://github.com/YTDX-158/ClaudeNeko/releases) · 🐙 [仓库](https://github.com/YTDX-158/ClaudeNeko)
+> 🏷 **v2.4.13** · 📦 [下载成品](https://github.com/YTDX-158/ClaudeNeko/releases) · 🐙 [仓库](https://github.com/YTDX-158/ClaudeNeko)
 
 > 在浏览器中驱动 Claude Code CLI 的本地智能对话界面——整合深度可定制皮肤、WebGL 流体背景与双吉祥物互动，带来沉浸式的 AI 聊天体验。
 
@@ -80,7 +80,7 @@
 - **安装器** exe —— 向导安装，自动建桌面快捷方式
 - **SFX** exe —— 双击自解压并启动
 
-👉 **去 [Releases 页](https://github.com/YTDX-158/ClaudeNeko/releases) 下载最新版**（v2.4.12+）
+👉 **去 [Releases 页](https://github.com/YTDX-158/ClaudeNeko/releases) 下载最新版**（v2.4.13+）
 
 或想改代码 / 跑源码，看下方"环境要求"。
 

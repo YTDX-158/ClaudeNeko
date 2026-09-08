@@ -79,9 +79,20 @@ def ensure_deps(refresh):
     nm = os.path.join(CACHE, "node_modules")
     if refresh and os.path.isdir(CACHE):
         shutil.rmtree(CACHE)
-    if os.path.isdir(nm):
+    # 9-08 修复：缓存命中前验证关键包完整性（package.json 存在）。实测 CACHE 曾整个损坏
+    #（135 包 0 个 package.json、仅 1.7M）→ 打包出坏安装器 → 朋友 jimp 缺入口崩溃。
+    # 只查"目录存在"不够，必须验 package.json。
+    _required = ("jimp", "node-pty", "ws")
+    def _cache_ok():
+        return os.path.isdir(nm) and all(
+            os.path.isfile(os.path.join(nm, p, "package.json")) for p in _required
+        )
+    if _cache_ok():
         log("依赖缓存命中（--refresh 强制重装）")
         return
+    if os.path.isdir(nm):
+        log("⚠️ 依赖缓存损坏（缺关键包 package.json），强制重装")
+        shutil.rmtree(nm)
     os.makedirs(CACHE, exist_ok=True)
     shutil.copy(os.path.join(PROJECT, "package.json"), os.path.join(CACHE, "package.json"))
     run("npm install --omit=dev", CACHE)
