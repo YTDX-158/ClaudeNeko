@@ -87,6 +87,21 @@ def read_version():
         return json.load(f)["version"]
 
 
+def check_iss_version(version):
+    """9-08 加固：升版漏改 iss AppVersion → 安装器编出旧版号。打包前强制校验 iss 与 package.json 一致。"""
+    with open(ISS, encoding="utf-8") as f:
+        txt = f.read()
+    m = re.search(r'#define\s+AppVersion\s+"([^"]+)"', txt)
+    if not m:
+        log(f"❌ 找不到 {os.path.basename(ISS)} 里的 #define AppVersion，打包中止")
+        sys.exit(1)
+    if m.group(1) != version:
+        log(f"❌ 版本不一致：package.json = {version}，但 {os.path.basename(ISS)} AppVersion = {m.group(1)}")
+        log(f"   升版时漏改 iss 了？请同步 {os.path.basename(ISS)} 顶部的 #define AppVersion 后重跑")
+        sys.exit(1)
+    log(f"✓ iss AppVersion 与 package.json 一致（v{version}）")
+
+
 def _load_green_pack():
     """按路径加载 green-pack.py（文件名带连字符，importlib 加载）"""
     spec = importlib.util.spec_from_file_location(
@@ -187,6 +202,7 @@ def main():
 
     version = read_version()
     log(f"当前版本: v{version}")
+    check_iss_version(version)  # 9-08 加固：iss AppVersion 必须与 package.json 一致，否则停
 
     # ① 归档旧版（默认开，可 --skip-archive 跳过）
     if not args.skip_archive:
