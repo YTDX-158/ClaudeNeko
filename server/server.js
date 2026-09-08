@@ -14,7 +14,7 @@ import { pruneMedia } from './lib/mediaStore.js';
 import { createPtyHost } from './lib/ptyHost.js';
 import { createEventBus } from './lib/bus.js';
 import { createTranscriptService } from './lib/transcript.js';
-import { sendJson, readBody, serveStatic } from './lib/util.js';
+import { sendJson, readBody, serveStatic, isAllowedHost } from './lib/util.js';
 import { systemHandler } from './routes/system.js';
 import { mediaHandler } from './routes/media.js';
 import { sessionsHandler } from './routes/sessions.js';
@@ -385,6 +385,12 @@ function isLocalRequest(req) {
 /* ---------- 服务 ---------- */
 
 const server = http.createServer(async (req, res) => {
+  // N-01 防 DNS rebinding：非 loopback Host（任意网页域名被解析到本机后同源打进来）
+  // 在最前直接拒——在构造 URL / 进路由之前。合法本地访问 Host 天然是 127.0.0.1/localhost，不受影响。
+  if (!isAllowedHost(req, config.port)) {
+    sendJson(res, 403, { error: '来源校验失败' });
+    return;
+  }
   const url = new URL(req.url, `http://${req.headers.host ?? '127.0.0.1'}`);
   try {
     if (url.pathname.startsWith('/api/')) {

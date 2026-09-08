@@ -19,8 +19,39 @@ import { reserveClaudeSession } from '../lib/claudeLaunch.js';
 import { logger } from '../lib/logger.js';
 import { createSocketRegistry } from '../lib/remote/proxy.js';
 import { sessionFile } from '../lib/transcript.js';
+import { isAllowedHost } from '../lib/util.js';
 
 const TERM_BUF_MAX = 2 * 1024 * 1024; // 回放缓冲上限（最近 2MB 原始字节，够滚回看多次生成的完整输出；原 64KB 太小）
+// —— N-03 终端流背压（慢客户端防内存无限占）——
+// pty 实时流高频广播，若某客户端读不动（远程弱网/暂停），直接 ws.send 会让发送队列无限堆积。
+// 方案：超软水位丢实时帧 + 打 termStalled 标记（TUI 全量重绘，丢帧无损，靠快照对齐）；
+// 缓冲充分回落 → 补一帧 term-replay（复用 attach 同步窗通路）恢复；硬水位仍涨 → 关连接。
+const TERM_HIGH_WATER = 1 * 1024 * 1024; // 终端流软水位：单客户端发送队列超 1MB → 开始丢实时帧
+const TERM_LOW_WATER = 256 * 1024; // 队列回落到 256KB 以下 → 补 term-replay 恢复实时流（防 HIGH 边缘抖动反复 replay）
+const WS_HARD_WATER = 8 * 1024 * 1024; // 硬水位：发送队列 > 8MB = 客户端彻底不读，close(1013) 断开防泄漏
+// —— N-02 WS 入站上限 ——
+const WS_MAX_PAYLOAD = 1 * 1024 * 1024; // 单帧上限 1MiB（与 HTTP readBody 对齐，防 100MiB 默认把超大帧直送 PTY）
+const WS_TEXT_MAX = 256 * 1024; // send/i 业务文本独立上限（聊天/终端写都不可能超大）
+
+/**
+ * N-03 背压：termOnly 广播时单个客户端的发送决策（纯函数，表驱动可单测）。
+ * @param ws 需含 { bufferedAmount, termStalled }
+ * @returns {{action:'send'|'drop'|'skip'|'replay'|'close'}}
+ *   close  — 发送队列超硬水位（>8MB）= 客户端彻底不读 → 断开防泄漏
+ *   drop   — 超软水位（>1MB）→ 丢实时帧，置 termStalled 等快照
+ *   skip   — 已丢过帧且缓冲仍在回落（LOW~HIGH 间）→ 不补不快照，继续丢
+ *   replay — 已丢过帧且缓冲充分回落（<LOW）→ 补一帧完整画面恢复
+ *   send   — 正常实时发送
+ */
+export function decideTermFlow(ws) {
+  if (ws.bufferedAmount > WS_HARD_WATER) return { action: 'close' };
+  if (ws.bufferedAmount > TERM_HIGH_WATER) return { action: 'drop' };
+  if (ws.termStalled) {
+    if (ws.bufferedAmount < TERM_LOW_WATER) return { action: 'replay' };
+    return { action: 'skip' };
+  }
+  return { action: 'send' };
+}
 const SYNC_WINDOW_MS = 200; // attach 同步窗：200ms 内 drop 实时流，等快照稳定再发（tmux-web 默认值）
 // —— 死锁自愈（8-29 单色+c 根治）：claude 偶发「TUI 渲染死锁」——
 // 取证实锤：claude 进程活着（启动输出>1KB 触发就绪、内存 300MB），但当前画面 termBuf 只有 1 字节"C"，
@@ -44,7 +75,8 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, perm
   // 远程链路（cloudflared 隧道）对 permessage-deflate 压缩帧的转发不可靠（实测手机端
   // WS 数据损坏：聊天靠 HTTP 轮询兜底仍显示但 streaming 卡死、终端完全空白）。
   // 禁用后帧全明文，浏览器端不再协商压缩，cloudflared 字节透传即安全。
-  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+  // N-02：maxPayload 1MiB —— 无它 ws 默认放 100MiB 单帧进来，超大帧会一路进 JSON.parse 直送 PTY
+  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: WS_MAX_PAYLOAD });
   const clients = new Set(); // 所有 ws 连接（ws.sid, ws.wantTerm）
   const remoteClients = createSocketRegistry({
     disconnect(ws) {
@@ -98,17 +130,36 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, perm
     const payload = JSON.stringify(obj);
     const now = Date.now();
     for (const ws of clients) {
-      if (ws.sid === sid && ws.readyState === 1) {
-        if (opts?.termOnly) {
-          if (!ws.wantTerm) continue; // 没 attach 的不收终端流
-          if (ws.syncUntil && now < ws.syncUntil) continue; // 同步窗内 drop 实时流（等快照稳定）
+      if (ws.sid !== sid || ws.readyState !== 1) continue;
+      if (opts?.termOnly) {
+        if (!ws.wantTerm) continue; // 没 attach 的不收终端流
+        if (ws.syncUntil && now < ws.syncUntil) continue; // 同步窗内 drop 实时流（等快照稳定）
+        const dec = decideTermFlow(ws);
+        if (dec.action === 'close') {
+          ws.termStalled = false;
+          try { ws.close(1013, '客户端读取过慢'); } catch { /* 已关 */ }
+          continue;
         }
-        ws.lastActivity = Date.now(); // M14：发送内容也算活动（claude TUI 持续输出会刷新）
-        try {
-          ws.send(payload);
-        } catch {
-          // 已断
+        if (dec.action === 'drop') { ws.termStalled = true; continue; } // 超软水位 → 丢实时帧
+        if (dec.action === 'skip') continue; // 已丢帧缓冲未回落 → 不补不快照
+        if (dec.action === 'replay') {
+          // 缓冲已充分回落 → 补一帧完整画面再恢复实时流（复用 attach 同步窗通路，载荷 ≤ TERM_BUF_MAX）
+          ws.termStalled = false;
+          ws.lastActivity = now;
+          try { ws.send(JSON.stringify({ t: 'term-replay', d: getTermBuffer(sid) })); } catch { /* 已断 */ }
+          continue; // 本次实时帧不再发（term-replay 已含最新画面）
         }
+      } else if (ws.bufferedAmount > WS_HARD_WATER) {
+        // 聊天事件（非 termOnly）不丢帧不降级，只受硬水位保护
+        ws.termStalled = false;
+        try { ws.close(1013, '客户端读取过慢'); } catch { /* 已关 */ }
+        continue;
+      }
+      ws.lastActivity = now; // M14：发送内容也算活动（claude TUI 持续输出会刷新）
+      try {
+        ws.send(payload);
+      } catch {
+        // 已断
       }
     }
   }
@@ -198,6 +249,12 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, perm
 
   /** WS upgrade 入口：仅 /ws + 有 sid + isLocalRequest 才接管 */
   function upgradeHandler(req, socket, head) {
+    // N-01 防 DNS rebinding：upgrade 同样只认 loopback Host（恶意域名解析到本机后浏览器能发起 WS，
+    // 但不带合法 Host；远程经 proxy 转发时 Host 已被改写成本机，放行）
+    if (!isAllowedHost(req, config.port)) {
+      socket.destroy();
+      return;
+    }
     let u;
     try {
       u = new URL(req.url, 'http://x');
@@ -246,8 +303,10 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, perm
     // 回放对话历史：客户端按 claudeMessageId 去重，重连不重复渲染
     // （历史消息由前端 3s 轮询 / listMessages 拉取，这里不重复推全量）
 
-    ws.on('message', (raw) => {
+    ws.on('message', (raw, isBinary) => {
       ws.lastActivity = Date.now(); // M14：收到任何消息都刷新活动
+      // N-02 schema 校验：协议纯 JSON 文本；binary / 非 string / 超长业务字段一律丢弃（不直送 PTY）
+      if (isBinary) return;
       let m;
       try {
         m = JSON.parse(raw.toString());
@@ -255,9 +314,9 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, perm
         return;
       }
       if (m.t === 'send') {
-        ptyHost.submit(sid, m.text);
+        if (typeof m.text === 'string' && m.text.length <= WS_TEXT_MAX) ptyHost.submit(sid, m.text);
       } else if (m.t === 'i') {
-        ptyHost.write(sid, m.d);
+        if (typeof m.d === 'string' && m.d.length <= WS_TEXT_MAX) ptyHost.write(sid, m.d);
       } else if (m.t === 'r') {
         ptyHost.resize(sid, m.c, m.r);
       } else if (m.t === 'attach') {

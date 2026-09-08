@@ -1,5 +1,5 @@
 ; =====================================================
-; ClaudeNeko 安装器（Inno Setup 6）· v2.4.9
+; ClaudeNeko 安装器（Inno Setup 6）· v2.4.10
 ; 全中文向导 + 桌面快捷方式 + 安装后可选立即启动
 ; v2.4.8（9-05）：目录页可选(DisableDirPage=no) + 装前关进程拦截(A7)
 ;   + 目录可写校验(A9) + 换目录数据自动迁移(server\data+media)(A1-A10) + 计划任务重指向(A12)
@@ -8,7 +8,7 @@
 ; =====================================================
 
 #define AppName "ClaudeNeko"
-#define AppVersion "2.4.9"
+#define AppVersion "2.4.10"
 #define AppExeName "启动ClaudeNeko.bat"
 
 [Setup]

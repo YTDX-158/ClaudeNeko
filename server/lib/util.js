@@ -16,6 +16,34 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
+/**
+ * authority 校验（N-01 · 防 DNS rebinding）：只认发到本机 loopback 的 Host。
+ * 攻击网页让自家域名解析到 127.0.0.1 后同源请求本服务时 Host = 攻击域名；
+ * 这里在请求最前就拒绝非 loopback Host（远程经 proxy.js 转发时已把 Host 改写为 127.0.0.1:port，不受影响）。
+ * @param req  request（读 req.headers.host）
+ * @param allowedPort 配置端口；Host 若带端口须与之相等，不带端口放行（HTTP/1.0 客户端）
+ */
+export function isAllowedHost(req, allowedPort) {
+  const host = req?.headers?.host;
+  if (typeof host !== 'string' || !host) return false;
+  let name = host;
+  let port = null;
+  const bracketed = host.match(/^(\[[^\]]*\])(?::(\d+))?$/); // [::1] / [::1]:4000
+  if (bracketed) {
+    name = bracketed[1];
+    port = bracketed[2] != null ? Number(bracketed[2]) : null;
+  } else {
+    const plain = host.match(/^([^:]+)(?::(\d+))?$/);
+    if (!plain) return false; // user@host 等畸形 Host
+    name = plain[1];
+    port = plain[2] != null ? Number(plain[2]) : null;
+  }
+  const okName = name === '127.0.0.1' || name.toLowerCase() === 'localhost' || name === '[::1]';
+  if (!okName) return false;
+  if (port !== null && allowedPort != null && port !== allowedPort) return false;
+  return true;
+}
+
 export function sendJson(res, status, body) {
   res.on('error', () => {}); // 客户端断开（EPIPE）不崩进程（审查② 通用兜底）
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
