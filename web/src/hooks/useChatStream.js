@@ -262,15 +262,28 @@ export function useChatStream(sessionId, onModelUpdate) {
                 return msgsByKey.get(m.claudeMessageId || m.id) || m;
               });
               // 补 msgs 里 prev 完全没有的（终端直接打的 user / 新 assistant）——追加末尾
-              // A1 修复：用户消息判重只用 text（不用 ts）——前端乐观 ts 与后端落盘 ts 时钟不同，
-              // 用 ts 会导致每次轮询把同一条 user 当新消息追加（重复气泡）
+              // N-04：用户消息身份——权威消息用稳定 id（同文本两条各自 id 不互吞），
+              //   未转正的乐观 tmp（tmp-u-*）/ 无 id 老消息退回 u:text（A1：不用 ts——前后端时钟不同）
+              const userKey = (m) => {
+                const id = m.id || m.claudeMessageId;
+                if (typeof id === 'string' && id.startsWith('tmp-')) return `u:${m.text ?? ''}`;
+                return id || `u:${m.text ?? ''}`;
+              };
               const seen = new Set(prev.map((m) => {
-                if (m.role === 'user') return `u:${m.text ?? ''}`; // 用户消息按 text 判重
+                if (m.role === 'user') return userKey(m);
                 return m.claudeMessageId || m.id;
               }));
               for (const m of msgs) {
-                const key = m.role === 'user' ? `u:${m.text ?? ''}` : (m.claudeMessageId || m.id);
+                const key = m.role === 'user' ? userKey(m) : (m.claudeMessageId || m.id);
                 if (!seen.has(key)) {
+                  // N-04 防重：后端权威 user 到了、但 prev 还有同 text 的未转正 tmp（POST 在飞）→ 跳过，
+                  // 由 send() 把 tmp 转正成该权威 id，避免「tmp + 权威」双显
+                  if (m.role === 'user') {
+                    const pendingTmp = prev.some((p) =>
+                      p.role === 'user' && typeof p.id === 'string' && p.id.startsWith('tmp-') &&
+                      (p.text ?? '') === (m.text ?? ''));
+                    if (pendingTmp) continue;
+                  }
                   seen.add(key);
                   // 修复（8-30）：轮询兜底拉进的新 assistant 也标 replay（与 WS 事件一致）——
                   // 否则 WS 与轮询竞速时"WS 先到才有打字机、轮询先到则直接显示"，
@@ -318,6 +331,7 @@ export function useChatStream(sessionId, onModelUpdate) {
       const streamMsg = { id: `tmp-s-${Date.now()}`, role: 'assistant', text: '', thinking: '', streaming: true };
       setMessages((prev) => [...prev, userMsg, streamMsg]);
 
+      let localMessageId = null;
       try {
         // 快速 POST（后端注入 pty 后立即返回，不读 SSE）
         // A2：检查 res.ok——409/500 等非 2xx 不会让 fetch 抛错，必须显式抛错走清理路径（防占位永久转圈）
@@ -331,6 +345,9 @@ export function useChatStream(sessionId, onModelUpdate) {
           try { detail = (await res.json()).error ?? ''; } catch { /* 非 JSON */ }
           throw new Error(detail || `发送失败（HTTP ${res.status}）`);
         }
+        // N-04：成功也读 body——拿 localMessageId 把乐观 tmp 转正成后端稳定 id
+        const j = await res.json().catch(() => ({}));
+        localMessageId = j?.localMessageId || null;
       } catch (e) {
         if (e.name !== 'AbortError') {
           setError(e.message);
@@ -339,6 +356,11 @@ export function useChatStream(sessionId, onModelUpdate) {
           setThinking(false); // 发送失败 → 熄灭胶囊
           setMessages((prev) => prev.filter((m) => m.id !== streamMsg.id)); // 失败移除占位
         }
+      }
+      // N-04：POST 成功 → 乐观 userMsg 转正为后端权威 id。轮询合并从此用 id 判重，
+      // 不再靠 text 当唯一桥（同文本第二条不会再被吞）。
+      if (localMessageId) {
+        setMessages((prev) => prev.map((m) => (m.id === userMsg.id ? { ...m, id: localMessageId } : m)));
       }
       // 注意：streaming 状态在 assistant 事件（或超时兜底）才清除，
       // 与旧 SSE 模式不同——POST 返回不代表生成完成

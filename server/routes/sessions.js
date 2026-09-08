@@ -110,6 +110,16 @@ function maybeSummarizeEarlyHistory(session, slice, store, config) {
     .catch(() => {});
 }
 
+/** N-08：当前全局模型（env.ANTHROPIC_MODEL）每次需要时惰性读。
+ *  原实现构造期一次捕获 → 运行中切模型后新会话/列表仍显示旧模型直到重启。同步小文件读，代价可忽略。 */
+function readCurrentModel() {
+  try {
+    return configService.readSettings().env?.ANTHROPIC_MODEL || null;
+  } catch {
+    return null;
+  }
+}
+
 /** 发消息：注入常驻 pty（TUI），落盘 user 消息，busy 锁在 assistant 事件/超时释放。 */
 async function handleMessage(ctx, req, res, url) {
   const { store, config, busyLock, ptyHost, transcript, terminal, permissionConfig } = ctx;
@@ -198,13 +208,12 @@ async function handleMessage(ctx, req, res, url) {
   // 快速返回（不再 SSE 流式；assistant 结果由 transcript 轮询 → WS 事件推送）
   // busy 锁不在此释放：交给 server.js handleTranscriptEvent（assistant 事件 → busyLock.release）
   // 或 busyLock 内建 5 分钟超时兜底
-  sendJson(res, 200, { ok: true, sessionId: id });
+  // N-04：回显 localMessageId——前端用它把乐观 tmp 消息转正成后端稳定 id（去重不再靠 text，防同文本第二条被吞）
+  sendJson(res, 200, { ok: true, sessionId: id, localMessageId });
 }
 
 export function sessionsHandler(ctx) {
   const { store, config, busyLock } = ctx;
-  // 当前全局模型（env.ANTHROPIC_MODEL）：新建/分支会话用它，让右上角显示=实际调用，切模型实时生效
-  const currentModel = (() => { try { return configService.readSettings().env?.ANTHROPIC_MODEL || null; } catch { return null; } })();
   return async (req, res, url) => {
     const { pathname } = url;
     const method = req.method;
@@ -212,7 +221,9 @@ export function sessionsHandler(ctx) {
     if (method === 'GET' && pathname === '/api/sessions') {
       if (!ctx.isLocalRequest(req)) return sendJson(res, 403, { error: '来源校验失败' });
       // 缺 model 的旧会话补「当前全局模型」（env.ANTHROPIC_MODEL）——补写死 defaultModel 会让旧会话永远显示旧模型名（切 pro 不生效）
-      const sessions = store.list().map((s) => ({ ...s, model: s.model || currentModel || config.defaultModel }));
+      // N-08：每次请求惰性读一次（列表内所有会话共用同一份，避免逐会话重复读文件）
+      const fallbackModel = readCurrentModel() || config.defaultModel;
+      const sessions = store.list().map((s) => ({ ...s, model: s.model || fallbackModel }));
       return sendJson(res, 200, { sessions });
     }
 
@@ -230,7 +241,7 @@ export function sessionsHandler(ctx) {
       const branchPoint = msgs[idx];
       const title = (branchPoint.text ?? '').trim().slice(0, 15) || `从「${(parent.title ?? '源会话').slice(0, 8)}」分支`;
       const session = store.create({
-        model: parent.model || currentModel || config.defaultModel, // 分支：优先继承父，否则当前全局模型
+        model: parent.model || readCurrentModel() || config.defaultModel, // 分支：优先继承父，否则当前全局模型（N-08 惰性读）
         cwd: parent.cwd || config.defaultCwd,
         title: title || '新会话',
         parentId,
@@ -258,7 +269,7 @@ export function sessionsHandler(ctx) {
         }
       }
       const session = store.create({
-        model: body.model || currentModel || config.defaultModel, // 动态读当前全局模型：右上角显示=实际，切模型实时生效
+        model: body.model || readCurrentModel() || config.defaultModel, // N-08 惰性读当前全局模型：切模型实时生效
         cwd: body.cwd || config.defaultCwd,
         // 建会话 effort 只接受 low/max（标准档=不传）
         effort: body.effort === 'low' || body.effort === 'max' ? body.effort : undefined,

@@ -84,12 +84,14 @@ export function configHandler(ctx) {
 
     // ---- 写 env（全局默认切换） ----
     if (method === 'PUT' && pathname === '/api/config') {
+      // N-06：先 readBody 再查 busy——原「先查 busy 再 await readBody」留了最长 30s 竞态窗口
+      //（等 body 期间新任务可能启动，随后写配置 + killAll 会误杀它）。现在检查与写入之间无 await，窗口归零。
+      const body = await ctx.readBody(req);
       // 有任务在跑（会话回复中 / 媒体生成中）→ 拒绝切换，提示先停止（避免 kill 打断正在进行的任务）
       const hasBusyTask = (store && busyLock && store.list().some((s) => busyLock.has(s.id))) || media?.hasActive?.();
       if (hasBusyTask) {
         return sendJson(res, 409, { error: '有任务正在运行，请先「⛔ 结束」停止后再切换模型' });
       }
-      const body = await ctx.readBody(req);
       const { baseUrl, authToken, model } = body || {};
       if (!baseUrl || !authToken || !model) {
         return sendJson(res, 400, { error: '需要 baseUrl + authToken + model 三个字段' });
@@ -122,12 +124,13 @@ export function configHandler(ctx) {
       return sendJson(res, 200, { ok: true });
     }
     if (method === 'POST' && pathname === '/api/config/profiles/apply') {
+      // N-06：先 readBody 再查 busy（消除 30s 竞态窗口，见 PUT /api/config 注）
+      const body = await ctx.readBody(req);
       // 有任务在跑 → 拒绝应用档案（同样防打断）
       const hasBusyTask = (store && busyLock && store.list().some((s) => busyLock.has(s.id))) || media?.hasActive?.();
       if (hasBusyTask) {
         return sendJson(res, 409, { error: '有任务正在运行，请先「⛔ 结束」停止后再应用档案' });
       }
-      const body = await ctx.readBody(req);
       const { name } = body || {};
       const p = modelConfig.getProfile(name);
       if (!p) return sendJson(res, 404, { error: '档案不存在' });
@@ -157,11 +160,12 @@ export function configHandler(ctx) {
     }
     // ---- 存档案并应用（一个请求原子完成：存档 + 写 env + 标记 current + 重启 pty） ----
     if (method === 'POST' && pathname === '/api/config/profiles/save-apply') {
+      // N-06：先 readBody 再查 busy（消除 30s 竞态窗口，见 PUT /api/config 注）
+      const body = await ctx.readBody(req);
       const hasBusyTask = (store && busyLock && store.list().some((s) => busyLock.has(s.id))) || media?.hasActive?.();
       if (hasBusyTask) {
         return sendJson(res, 409, { error: '有任务正在运行，请先「⛔ 结束」停止后再保存' });
       }
-      const body = await ctx.readBody(req);
       const { name, baseUrl, model, authToken } = body || {};
       if (!name || !baseUrl || !authToken || !model) {
         return sendJson(res, 400, { error: '需要 name + baseUrl + authToken + model' });

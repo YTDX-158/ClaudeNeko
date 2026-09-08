@@ -37,6 +37,10 @@ DELIVERY_DIR = os.path.join(PROJECT, "交付物")  # D盘家底：项目交付�
 # 组装时 server/ 下要剔除的目录与文件（运行时数据 / 媒体 / 日志）
 SERVER_EXCLUDE_DIRS = ("data", "media")
 EXCLUDE_EXT = (".log",)
+# N-10（9-08）：私密/缓存文件永不进绿色包——.build_local.env 是本机配置（gitignore 不入库），
+# __pycache__/*.pyc 是运行产物。copytree ignore（主）+ zip 名过滤（第二道保险）双防。
+PRIVATE_NAMES = (".build_local.env", ".env", ".build_local")
+COPY_IGNORE = shutil.ignore_patterns(*PRIVATE_NAMES, "__pycache__", "*.pyc")
 
 # 要复制到绿色包根目录的启动器 + 文档 + 配置
 ROOT_FILES = [
@@ -131,9 +135,9 @@ def assemble(build_root):
         if os.path.isfile(src):
             shutil.copy(src, os.path.join(dst, name))
 
-    # docs / scripts
+    # docs / scripts（N-10：copytree 带 ignore，私密/缓存文件不进组装目录）
     for d in COPY_DIRS:
-        shutil.copytree(os.path.join(PROJECT, d), os.path.join(dst, d))
+        shutil.copytree(os.path.join(PROJECT, d), os.path.join(dst, d), ignore=COPY_IGNORE)
     return dst
 
 
@@ -149,6 +153,8 @@ def make_zip(dst, version):
             for f in files:
                 if f.lower().endswith(EXCLUDE_EXT):
                     continue
+                if f in PRIVATE_NAMES or f.endswith(".pyc") or f.endswith(".pyo"):
+                    continue  # N-10 第二道保险：zip 层再滤私密/编译产物（防 assemble 遗漏）
                 p = os.path.join(root, f)
                 arc = "ClaudeNeko/" + os.path.relpath(p, dst).replace(os.sep, "/")
                 zf.write(p, arc)

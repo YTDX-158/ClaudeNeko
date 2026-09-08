@@ -140,16 +140,31 @@ export default function ChatWindow({ session, model, chat, onBranch, onEffortCha
   // 技能包发送：生图/生视频（异步轮询）
   // 生成中 → genCards 临时气泡；完成后 → 落盘 + 转成 AI 消息气泡进消息流
   const handleGenSend = async (req) => {
+    const pid = `gen-p-${Date.now()}`;
+    const label = { image: '[🎨 生图]', video: '[🎬 生视频]' }[req.skill] || '';
     // 用户提示词作为用户消息进会话（触发命名 + 对话完整）
+    // N-05：提示词必须先落盘成功才开始计费生成——原 fire-and-forget 静默吞错，落盘失败仍照常生成烧钱、
+    // 刷新后记录缺失。失败 → 明确错误气泡并 return（不生成、不扣费）。结果落盘失败仍允许降级本地显示（finish 内）。
     const userText = (req.prompt || '').trim();
     if (userText && session?.id) {
+      try {
+        await api.appendMediaMessage(session.id, { text: userText, role: 'user' });
+      } catch (e) {
+        if (chat.addMessage) {
+          chat.addMessage({
+            id: `gen-e-${Date.now()}`,
+            role: 'assistant',
+            text: `❌ ${label} 未开始：提示词保存失败（${e.message || '网络错误'}），未生成未扣费`,
+            ts: Date.now(),
+            streaming: false,
+          });
+        }
+        return;
+      }
       const umsg = { id: `gen-u-${Date.now()}`, role: 'user', text: userText, ts: Date.now() };
-      api.appendMediaMessage(session.id, { text: userText, role: 'user' }).catch(() => {});
       if (chat.addMessage) chat.addMessage(umsg);
     }
     // 生成中占位（消息流内，带用户生成要求 + spinner）
-    const pid = `gen-p-${Date.now()}`;
-    const label = { image: '[🎨 生图]', video: '[🎬 生视频]' }[req.skill] || '';
     const placeholder = { id: pid, role: 'assistant', text: `正在生成中（${userText}）`, streaming: true, ts: Date.now() };
     if (chat.addMessage) chat.addMessage(placeholder);
     let tick = null; // 生视频计时器（外层持有，所有失败路径都清理，防泄漏）
