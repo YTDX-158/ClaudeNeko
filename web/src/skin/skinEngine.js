@@ -206,7 +206,9 @@ let wallpaperEl = null;
 let wallpaperOverrideDispose = null;
 
 function readWallpaperKind() {
-  return readStorage(STORAGE_KIND) || 'image'; // 默认按 image 处理（dataURL）
+  // 缺省=出厂流体（9-08 修复：原缺省 'image' 是历史遗留——clear 清 kind 键后误判 image
+  // 致 FluidCanvas 隐藏流体背景成裸态；现缺省回 fluid，与 FACTORY_DEFAULTS 一致）
+  return readStorage(STORAGE_KIND) || 'fluid';
 }
 /** 读取 0..1 的透明度，非法/缺失时用默认值。 */
 function readAlpha(key, def) {
@@ -488,11 +490,13 @@ export const skinEngine = {
       notify();
     },
     clear() {
-      writeStorage(STORAGE_KIND, null);
+      // 清除自定义壁纸（图片/URL/渐变）→ 回到出厂默认「流体」背景
+      // （9-08 修复：原把 kind 删成 null，readWallpaperKind 缺省误判 'image' → 流体 canvas 被隐藏成裸态）
+      writeStorage(STORAGE_KIND, 'fluid');
       writeStorage(STORAGE_WALLPAPER, null);
       writeStorage(STORAGE_URL, null);
       writeStorage(STORAGE_GRADIENT, null);
-      teardownWallpaper();
+      applyWallpaper();
       notify();
     },
   },
@@ -630,17 +634,18 @@ export const skinEngine = {
   /* ---- 一键恢复默认：按管辖范围分开（外观 vs 功能开关）。只清 localStorage，刷新由调用方做（便于功能恢复先调服务端 API） ---- */
   resetAll(kind = 'appearance') {
     try {
-      for (let i = localStorage.length - 1; i >= 0; i--) {
+      // 先收集再统一删除（9-08 修复：原递减循环边删边遍历会让键前移、遇功能键跳过时索引错位 → 每轮漏删 1 个外观键，
+      // 残留键被 init 误判"已有外观设置"而跳过出厂注入 → 恢复默认后 kind/skin 全空 → 灰白）
+      const toRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (!k) continue;
-        if (kind === 'functions') {
-          // 功能：只删猫猫/claude娘 开关（包含法）
-          if (FUNCTION_KEYS.has(k)) localStorage.removeItem(k);
-        } else if (k.startsWith('dsw-dream-skin:') && !FUNCTION_KEYS.has(k)) {
-          // 外观：删全部皮肤键但保留功能开关（排除法）→ 未来新增外观键天然被覆盖
-          localStorage.removeItem(k);
-        }
+        const isFunc = FUNCTION_KEYS.has(k);
+        const isSkinKey = k.startsWith('dsw-dream-skin:');
+        // functions=删功能开关（包含法）；appearance=删外观键保留功能开关（排除法）→ 未来新增外观键天然被覆盖
+        if (kind === 'functions' ? isFunc : (isSkinKey && !isFunc)) toRemove.push(k);
       }
+      for (const k of toRemove) localStorage.removeItem(k);
     } catch {
       /* localStorage 禁用时忽略 */
     }
