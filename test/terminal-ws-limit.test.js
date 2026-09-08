@@ -46,13 +46,13 @@ function waitClose(ws) {
   });
 }
 
-test('an over-limit frame (>1MiB) is closed with 1009', async () => {
+test('an over-limit frame (>2MiB) is closed with 1009', async () => {
   const s = await setup();
   let ws;
   try {
     ws = await s.connect();
     const closed = waitClose(ws);
-    ws.send(Buffer.alloc(2 * 1024 * 1024)); // 2MiB 单帧 > maxPayload 1MiB
+    ws.send(Buffer.alloc(3 * 1024 * 1024)); // 3MiB 单帧 > maxPayload 2MiB
     const code = await closed;
     assert.equal(code, 1009);
   } finally {
@@ -86,13 +86,13 @@ test('oversized send/i text and non-string fields are rejected; valid ones pass'
     assert.equal(s.calls.submit.length, 1);
     assert.equal(s.calls.submit[0][1], '合法消息'); // submit(sid, text)
 
-    // 超长 send（>256KB）应被拒，不达 pty
-    ws.send(JSON.stringify({ t: 'send', text: 'x'.repeat(300 * 1024) }));
+    // 超长 send（>1MiB 业务上限）应被拒，不达 pty（仍 < 2MiB 帧上限，能到 handler 被业务校验拦）
+    ws.send(JSON.stringify({ t: 'send', text: 'x'.repeat(1024 * 1024 + 1) }));
     // 非 string send 应被拒
     ws.send(JSON.stringify({ t: 'send', text: 12345 }));
-    // 超长 i（>256KB）应被拒
-    ws.send(JSON.stringify({ t: 'i', d: 'y'.repeat(300 * 1024) }));
-    await new Promise((r) => setTimeout(r, 100));
+    // 超长 i（>1MiB）应被拒
+    ws.send(JSON.stringify({ t: 'i', d: 'y'.repeat(1024 * 1024 + 1) }));
+    await new Promise((r) => setTimeout(r, 150));
     assert.equal(s.calls.submit.length, 1, '超长/非 string send 不得进 pty');
     assert.equal(s.calls.write.length, 0, '超长 i 不得进 pty');
 
@@ -101,6 +101,12 @@ test('oversized send/i text and non-string fields are rejected; valid ones pass'
     await new Promise((r) => setTimeout(r, 60));
     assert.equal(s.calls.write.length, 1);
     assert.equal(s.calls.write[0][1], 'ok');
+
+    // 接近上限的合法大文本（900KB）应通过——防"超长粘贴被误吞"回归（9-08 放宽到 1MiB）
+    ws.send(JSON.stringify({ t: 'send', text: 'z'.repeat(900 * 1024) }));
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(s.calls.submit.length, 2);
+    assert.equal(s.calls.submit[1][1].length, 900 * 1024);
   } finally {
     ws?.terminate();
     await s.close();

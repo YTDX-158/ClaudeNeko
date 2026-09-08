@@ -30,8 +30,11 @@ const TERM_HIGH_WATER = 1 * 1024 * 1024; // 终端流软水位：单客户端发
 const TERM_LOW_WATER = 256 * 1024; // 队列回落到 256KB 以下 → 补 term-replay 恢复实时流（防 HIGH 边缘抖动反复 replay）
 const WS_HARD_WATER = 8 * 1024 * 1024; // 硬水位：发送队列 > 8MB = 客户端彻底不读，close(1013) 断开防泄漏
 // —— N-02 WS 入站上限 ——
-const WS_MAX_PAYLOAD = 1 * 1024 * 1024; // 单帧上限 1MiB（与 HTTP readBody 对齐，防 100MiB 默认把超大帧直送 PTY）
-const WS_TEXT_MAX = 256 * 1024; // send/i 业务文本独立上限（聊天/终端写都不可能超大）
+// 帧硬上限 2MiB（ws 默认 100MiB 太宽；2MiB 给 1MiB 业务文本留 JSON 包装余量）
+const WS_MAX_PAYLOAD = 2 * 1024 * 1024;
+// send/i 业务文本上限 1MiB（与 HTTP readBody 对齐；9-08 从 256KB 放宽——超长粘贴大段文本/代码不能被误吞，
+// 真到 1MiB 才拒。超过的单帧超 maxPayload 直接被断，双重防线）
+const WS_TEXT_MAX = 1 * 1024 * 1024;
 
 /**
  * N-03 背压：termOnly 广播时单个客户端的发送决策（纯函数，表驱动可单测）。
@@ -115,7 +118,10 @@ export function createTerminalChannel({ ptyHost, transcript, store, config, perm
     const now = Date.now();
     for (const w of clients) {
       if (w.lastActivity === undefined) w.lastActivity = now;
-      if (now - w.lastActivity > IDLE_CLOSE_MS) {
+      // N-03 补：只关「无活动且无发送积压」的僵尸。有积压（bufferedAmount>0）说明连接还在慢慢消费
+      //（弱网手机被背压丢帧中）——它由 N-03 硬水位 close 或自身消化兜底，不能被心跳误踢；
+      // 真死连接要么积压涨到硬水位被断，要么积压耗尽后靠这里清理。
+      if (now - w.lastActivity > IDLE_CLOSE_MS && w.bufferedAmount === 0) {
         try { w.close(); } catch { /* 已关 */ }
       }
     }
