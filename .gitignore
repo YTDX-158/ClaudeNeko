@@ -15,3 +15,4 @@ dist_installer/
 installer_src/
 __pycache__/
 .build_local.env
+ClaudeNekoNode.exe

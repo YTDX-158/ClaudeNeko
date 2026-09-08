@@ -209,6 +209,7 @@ export function createPairHandler({
     }
     const nonce = headerValue(req.headers, 'x-neko-pair-nonce');
     if (!nonceStore.consume(nonce, source)) {
+      logger.info('remote', `配对 nonce 校验失败 POST source=${source} nonce=${String(nonce).slice(0, 6)}`);
       sendPairJson(res, 403, { ok: false, error: '配对页面已失效，请刷新后重试' });
       return;
     }
@@ -246,6 +247,7 @@ function pairHtml(nonce) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ClaudeNeko 远程配对</title>
+<link rel="icon" href="data:,">
 <style>
   body{font-family:system-ui,sans-serif;background:#111827;color:#f3f4f6;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
   .card{background:#1f2937;border-radius:16px;padding:32px;max-width:340px;width:100%;text-align:center}
@@ -322,8 +324,19 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing, readRequest
     // 2) 校验凭证：未配对 → 返回配对页（连页面都不给看）
     const session = getCookie(req.headers.cookie || '', AUTH_COOKIE);
     if (!session || !pairing.hasSession(sha256(session))) {
+      // 只对「人看的配对页」（文档导航）发 nonce 并返回页面；favicon 等子资源请求直接 404——
+      // 否则浏览器自动请求 favicon 也走这里 issue 新 nonce，顶掉页面内嵌的 nonce → 配对永远"页面已失效"（9-08 实锤：13:53:54/55 两次 GET 替换 nonce）
+      const accept = headerValue(req.headers, 'accept') || '';
+      const isDocNav = url === '/' || accept.includes('text/html');
+      if (!isDocNav) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('not found');
+        return;
+      }
+      const src = getPairSource(req);
+      const nonce = nonceStore.issue(src);
       res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-      res.end(pairHtml(nonceStore.issue(getPairSource(req))));
+      res.end(pairHtml(nonce));
       return;
     }
 
