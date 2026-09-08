@@ -206,10 +206,12 @@ def compile_installer(version):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="ClaudeNeko 一键打包（绿色包+SFX+安装器）")
+    ap = argparse.ArgumentParser(description="ClaudeNeko 一键打包（绿色包+安装器）")
     ap.add_argument("--test", action="store_true", help="每步带冒烟")
     ap.add_argument("--no-installer", action="store_true", help="跳过安装器")
     ap.add_argument("--skip-archive", action="store_true", help="不归档旧版")
+    # 9-08 放弃 SFX 自解压包（定位尴尬 + 英文按钮坑）：默认不打，--with-sfx 才打
+    ap.add_argument("--with-sfx", action="store_true", help="额外打 SFX 自解压包（默认跳过）")
     args = ap.parse_args()
 
     version = read_version()
@@ -238,14 +240,17 @@ def main():
     zip_path = os.path.join(DELIVERY_DIR, sorted(zips)[-1])
     log(f"绿色包: {os.path.basename(zip_path)}")
 
-    # ③ 打 SFX
-    log("→ 打 SFX (sfx-pack.py)")
-    sfx_args = [sys.executable, os.path.join("scripts", "sfx-pack.py"), "--zip", zip_path]
-    if args.test:
-        sfx_args.append("--test")
-    r = subprocess.run(sfx_args, cwd=PROJECT)
-    if r.returncode != 0:
-        log("❌ SFX 失败"); sys.exit(1)
+    # ③ 打 SFX（9-08 放弃：默认跳过，--with-sfx 才打）
+    if args.with_sfx:
+        log("→ 打 SFX (sfx-pack.py)")
+        sfx_args = [sys.executable, os.path.join("scripts", "sfx-pack.py"), "--zip", zip_path]
+        if args.test:
+            sfx_args.append("--test")
+        r = subprocess.run(sfx_args, cwd=PROJECT)
+        if r.returncode != 0:
+            log("❌ SFX 失败"); sys.exit(1)
+    else:
+        log("跳过 SFX (已放弃自解压包，--with-sfx 可恢复)")
 
     # ④ 安装器（可跳过）
     if args.no_installer:
@@ -269,7 +274,7 @@ def main():
     # ⑤ 检查单
     print("\n=== build-all 完成 · 检查单 ===")
     print(f"版本: v{version}")
-    print(" 1. 三件套是否在 交付物/ + 桌面待处理/：")
+    print(" 1. 两件套（绿色包+安装器）是否在 交付物/ + 桌面待处理/：")
     for f in sorted(os.listdir(DELIVERY_DIR)):
         if "v" + version in f:
             print(f"    ✅ {f}")
