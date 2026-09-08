@@ -122,7 +122,10 @@ def archive_old_versions(current_version):
         log("交付物目录不存在，跳过归档")
         return
     os.makedirs(ARCHIVE_DIR, exist_ok=True)
-    # 交付物目录 + 桌面待处理 两处都扫
+    # 交付物目录 + 桌面待处理 两处都扫（两处是同一内容双份）。
+    # ⚠️ 9-08 教训：若两处都归档，004 已有同名 → 加时间戳 → 每版累积一份重复（实测清出 855MB 冗余）。
+    # → seen 去重：同文件名只归档第一处来源，第二处副本直接删除。
+    seen = set()
     for base in (DELIVERY_DIR, DESKTOP_TMP):
         if not os.path.isdir(base):
             continue
@@ -137,12 +140,21 @@ def archive_old_versions(current_version):
             if fv == current_version:
                 continue  # 当前版本保留在交付物/桌面
             src = os.path.join(base, f)
+            if f in seen:
+                # 同内容副本已在上一处归档 → 直接删（防 004 累积重复）
+                try:
+                    os.remove(src)
+                    log(f"删除重复副本: {f} (v{fv})")
+                except OSError:
+                    pass
+                continue
             dst = os.path.join(ARCHIVE_DIR, f)
             if os.path.exists(dst):
-                # 归档区已有同名：加时间戳避免覆盖
+                # 归档区已有同名（罕见：真正不同内容）：加时间戳避免覆盖
                 name, ext = os.path.splitext(f)
                 dst = os.path.join(ARCHIVE_DIR, f"{name}_{time.strftime('%Y%m%d%H%M%S')}{ext}")
             shutil.move(src, dst)
+            seen.add(f)
             log(f"归档旧版: {f} (v{fv}) → 004 归档")
 
 
