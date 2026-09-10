@@ -90,8 +90,8 @@ function findClaudeBin() {
 
   throw new Error(
     '未找到 Claude Code（claude.exe）。\n' +
-      '请先装好 Claude Code：运行 ClaudeInstall 一键安装器 →\n' +
-      '  https://github.com/YTDX-158/ClaudeInstall/releases\n' +
+      '请先装好 Claude Code：运行 ClaudeInstall 一键安装器\n' +
+      '  下载：https://wwbkn.lanzoum.com/b01giav0jc（密码 YTDX666）\n' +
       '或设置环境变量 CLAUDE_BIN 指向 claude.exe 的绝对路径。',
   );
 }

@@ -22,9 +22,10 @@ End Function
 If Not HasClaude() Then
     msg = "未检测到 Claude Code（claude）。" & vbCrLf & vbCrLf & _
           "ClaudeNeko 需要先装好 Claude Code 才能使用。" & vbCrLf & vbCrLf & _
-          "点「确定」打开下载页（ClaudeInstall 一键安装器）。"
+          "点「确定」打开下载页（ClaudeInstall 一键安装器）" & vbCrLf & _
+          "下载密码：YTDX666"
     If MsgBox(msg, vbOKCancel + vbExclamation, "ClaudeNeko") = vbOK Then
-        sh.Run "https://github.com/YTDX-158/ClaudeInstall/releases", 1, False
+        sh.Run "https://wwbkn.lanzoum.com/b01giav0jc", 1, False
     End If
     WScript.Quit
 End If
