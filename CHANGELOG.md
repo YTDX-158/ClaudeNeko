@@ -1,5 +1,12 @@
 # 更新日志
 
+## v2.4.14（2026-09-10 · 新增：缺 Claude Code 时的友好引导）
+> 没装 Claude Code 的用户，以前双击 ClaudeNeko 会「毫无反应」（后台报错只写进日志）；现在会明确弹窗告诉你缺什么、去哪装。
+
+### 🆕 启动前检测 + 引导
+- `launcher.vbs`：启动前检测 claude（`CLAUDE_BIN` / npm 全局路径 / npm bin shim），缺失则弹窗提示并一键打开下载页（ClaudeInstall）
+- `server/lib/settings.js`：找不到 claude.exe 的报错改为可操作指引（附下载链接），不再只说「设置环境变量 CLAUDE_BIN」
+
 ## v2.4.13（2026-09-08 · 紧急修复：安装器依赖缓存损坏）
 > 修复安装后一启动就崩的问题——打包缓存里 node_modules 缺 package.json，导致 jimp 图片库入口解析失败。
 

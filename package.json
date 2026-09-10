@@ -1,6 +1,6 @@
 {
   "name": "claudeneko",
-  "version": "2.4.13",
+  "version": "2.4.14",
   "private": true,
   "type": "module",
   "description": "ClaudeNeko：在浏览器中驱动 Claude Code CLI 的本地智能对话界面——双吉祥物互动、深度可定制皮肤、实时余额查询",

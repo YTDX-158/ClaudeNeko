@@ -88,7 +88,12 @@ function findClaudeBin() {
     // 忽略，下面统一抛错
   }
 
-  throw new Error('未找到 claude.exe，请设置环境变量 CLAUDE_BIN 指向其绝对路径');
+  throw new Error(
+    '未找到 Claude Code（claude.exe）。\n' +
+      '请先装好 Claude Code：运行 ClaudeInstall 一键安装器 →\n' +
+      '  https://github.com/YTDX-158/ClaudeInstall/releases\n' +
+      '或设置环境变量 CLAUDE_BIN 指向 claude.exe 的绝对路径。',
+  );
 }
 
 /**
