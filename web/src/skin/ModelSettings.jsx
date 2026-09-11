@@ -12,7 +12,8 @@ import { api } from '../api.js';
 // 供应商模板（候选点击 → 自动带出 baseUrl；供应商名也可自由手输当自定义）
 // 注：qwen 的 baseUrl 为既有配置，存疑未核实，暂不动（另案处理）
 const PROVIDERS = [
-  { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/anthropic', models: ['deepseek-v4-flash[1m]', 'deepseek-v4-pro[1m]'] },
+  // 注：模型名后缀 [1m] 是给 Claude Code CLI 的上下文窗口声明（1M），不是版本标记，勿去掉
+  { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/anthropic', models: ['deepseek-flash[1m]', 'deepseek-v4-pro[1m]'] },
   { id: 'qwen', label: '通义(Qwen)', baseUrl: 'https://dashscope.aliyuncs.com/api/v2/apps/anthropic', models: [] },
   { id: 'zhipu', label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/anthropic', models: ['glm-5.2', 'glm-5-turbo'] },
   { id: 'kimi', label: 'Kimi', baseUrl: 'https://api.moonshot.cn/anthropic', models: ['kimi-k3', 'kimi-k2.6'] },

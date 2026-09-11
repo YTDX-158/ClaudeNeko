@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
  * 直接传完整模型串给 --model，由 API 端解析。
  */
 const MODELS = [
-  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
-  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+  { id: 'deepseek-flash[1m]', label: 'DeepSeek V4.1 Flash' },
+  { id: 'deepseek-v4-pro[1m]', label: 'DeepSeek V4 Pro（9-14 后路由到 Flash）' },
 ];
 
 const DEFAULT_PORT = 4000;

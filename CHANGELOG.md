@@ -1,5 +1,23 @@
 # 更新日志
 
+## v2.4.17（2026-09-11 · 修正 v2.4.16 误删的 `[1m]` 后缀）
+> v2.4.16 把模型名改成 `deepseek-flash`、**去掉了 `[1m]` 后缀——那是错的**。后缀不是版本标记，是给 Claude Code CLI 的**上下文窗口声明**。本版加回。
+
+### 🔧 后缀回滚
+- **实测依据（A/B）**：`deepseek-flash[1m]` → CLI 正常；`deepseek-flash` → CLI 报 `[claude-code:unrecognized_model]` 并 "assumes 200k tokens"，auto-compact 会提前触发（本可到 1M）
+- **回滚点**：`server/lib/settings.js` 模型列表 · `web/src/skin/ModelSettings.jsx` 供应商预设 · `README.md` 配置示例 —— 全部恢复 `deepseek-flash[1m]` / `deepseek-v4-pro[1m]`
+- ⚠️ v2.4.16 **从未外发**（包打好后被冒烟验证拦下），无用户受影响
+
+## v2.4.16（2026-09-11 · 模型名跟进 DeepSeek 官方改名）
+> DeepSeek 于 9-10 发布 **V4.1-Flash**，旧模型名 `deepseek-v4-flash` 已退役（官方仍兼容路由，但不保证长期）。全部模型名跟进为官方新名 **`deepseek-flash`**。
+
+### 🔄 模型名跟进
+- `server/lib/settings.js`：模型列表 `deepseek-v4-flash[1m]` → `deepseek-flash[1m]`，label 改「DeepSeek V4.1 Flash」；`deepseek-v4-pro[1m]` 标注「9-14 后路由到 Flash」
+- `web/src/skin/ModelSettings.jsx`：供应商预设的模型候选 `['deepseek-v4-flash[1m]', 'deepseek-v4-pro[1m]']` → `['deepseek-flash[1m]', 'deepseek-v4-pro[1m]']`
+- `README.md`：配置示例的 `ANTHROPIC_MODEL` 同步为新名
+- ⚠️ **`[1m]` 后缀必须保留**：它不是版本标记，而是**给 Claude Code CLI 的上下文窗口声明**——CLI 不认识该模型名时会按 200k 假设上下文、让 auto-compact 提前触发（本可到 1M）。CLI 原话："if the model accepts more, append [1m] to the model name for 1M"。**改名时只换模型名，后缀随新名一起写**
+- 新模型还**原生支持图片**（本版未接入，视觉仍走豆包）
+
 ## v2.4.15（2026-09-10 · 下载链接换成国内网盘）
 > 缺 Claude Code 时的引导弹窗 / 报错里的下载链接，从 GitHub 换成**蓝奏云网盘**（国内直连、免登录下载），并写明下载密码。
 
