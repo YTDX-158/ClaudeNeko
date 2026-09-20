@@ -27,13 +27,29 @@ const AUTH_COOKIE = 'neko_auth';
 // Permission policy control is a separate privilege: config stays blocked for
 // every method so a remote approver cannot enable bypass or rewrite rules.
 const REMOTE_BLOCKED_PATHS = new Set([
-  '/api/balance', // 余额与供应商凭据：仅本机可用（首轮 04-01）
+  '/api/balance', // 余额与供应商凭据：仅服务端可用（首轮 04-01）
   '/api/log',
   '/api/log/download',
-  '/api/media/download',
+  // ⚠️ '/api/media/download' 已于 9-20 移除：该路径并不存在。
+  //    真实下载路径是 /api/media/<id>/download（见 routes/media.js:183），
+  //    所以这条从来就没拦住过任何请求（9-20 实测确认）。
+  //    —— 它原本的注释意图是「防 SSRF 下载」，但「拦路径」本就是错的姿势：
+  //       真正的 SSRF 面是 mediaGen.downloadToMedia(url) 里那个 fetch，
+  //       而那里的 url 只来自平台 API 响应（生图 j.data[0].url / 视频 extractVideoUrl(j)），
+  //       baseUrl 也是 settings 预设写死的（/api/media/config 注释：无自定义条目拼接）
+  //       → 用户无法把请求指到任意地址，当前没有 SSRF 开口。
+  //    ⚠️ 触发条件：今后若新增「自定义 baseUrl」或「从 URL 导入媒体」，
+  //       那时才需要真正的防护（校验目标域名白名单），而不是回到这里加路径。
   '/api/permission/config',
   '/api/permission/request',
   '/api/permission/wait',
+  // 9-20 修：远程开关必须服务端操作。
+  //   这三个原先没有任何校验 —— 既不在本名单，业务层 isLocalRequest 又会被
+  //   代理层重写 Origin 成 localhost 绕过（那正是远程能正常用的机制）。
+  //   后果：已配对的远程设备可关掉远程自己，并顺带清空配对码与全部已配对会话。
+  '/api/remote/on',
+  '/api/remote/off',
+  '/api/remote/regenerate-code',
 ]);
 
 /** 跟踪长连接并在凭据撤销时幂等断开。 */
@@ -343,7 +359,17 @@ export function startRemoteProxy({ port, targetPort = 4000, pairing, readRequest
     // 3) 远程禁用高危操作（删数据 / SSRF 下载 / force-stop）
     if (isBlocked(method, url)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: '远程模式已禁用该功能（安全保护）' }));
+      // 9-20 拆分文案：error 给用户看（要短，会显示在吉祥物气泡等窄位置），
+      // detail 给排查用（保留原有的完整说明）。此前只有一句长文案，
+      // 且前端普遍丢弃它 → 用户只看到"失败"，误以为坏了（实际是有意的安全保护）。
+      res.end(JSON.stringify({
+        // 9-20 措辞：「本机」→「服务端」。原词有歧义 ——
+        // 手机连过来时，那台手机也觉得自己是"本机"，"仅本机可用"从远端读自相矛盾。
+        // 「服务端」永远指跑着 ClaudeNeko 的那台，且比"启动端"更好懂。
+        error: '仅服务端可用',
+        detail: '远程模式已禁用该功能（安全保护）',
+        code: 'REMOTE_BLOCKED',
+      }));
       return;
     }
 

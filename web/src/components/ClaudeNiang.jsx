@@ -144,6 +144,12 @@ function ClaudeNiang({ status = 'idle' }) {
         const data = await res.json();
         if (data.ok && data.total_balance != null) {
           text = `余额 ¥${Number(data.total_balance).toFixed(2)}`;
+        } else if (data?.error) {
+          // 9-20：远程模式下 /api/balance 会被代理层前置拦截（403），
+          // 后端已给出「仅服务端可用」这类明确原因 —— 直接显示它。
+          // 此前这里丢弃了 error，用户只看到笼统的"余额查询失败"，
+          // 会误以为是 bug（实际是有意的安全保护）。
+          text = data.error;
         }
       } catch {
         // 网络/解析异常 → 保持"余额查询失败"
