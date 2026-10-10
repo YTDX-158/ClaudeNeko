@@ -16,3 +16,5 @@ installer_src/
 __pycache__/
 .build_local.env
 ClaudeNekoNode.exe
+
+_旧版本_历史稿/
